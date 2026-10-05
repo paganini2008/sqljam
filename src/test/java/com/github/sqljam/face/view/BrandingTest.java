@@ -30,9 +30,11 @@ import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.face.Banner;
+import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
 /**
@@ -52,6 +54,8 @@ class BrandingTest {
     @Start
     void start(Stage stage) {
         this.stage = stage;
+        stage.setScene(new Scene(new StackPane(), 200, 100));
+        stage.show();
         FxTestSupport.createContext(dir);
     }
 
@@ -107,5 +111,12 @@ class BrandingTest {
         Stage window = (Stage) about.getDialogPane().getScene().getWindow();
         assertEquals(Branding.ICON_SIZES.length, FxTestSupport.call(() -> window.getIcons().size()).intValue());
         FxTestSupport.run(about::close);
+        assertSame(stage, about.getOwner());
+
+        // An owner without a scene is not set, JavaFX would fail with a NullPointerException
+        Alert withoutOwner = FxTestSupport.call(() -> Dialogs.createAbout(new Stage()));
+        assertNull(withoutOwner.getOwner());
+        Alert noOwner = FxTestSupport.call(() -> Dialogs.createAbout(null));
+        assertNull(noOwner.getOwner());
     }
 }

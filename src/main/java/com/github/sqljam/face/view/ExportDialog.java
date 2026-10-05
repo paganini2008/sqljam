@@ -143,7 +143,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
 
     public ExportDialog(Window owner, AppContext context, DbNode node) {
         this.context = context;
-        initOwner(owner);
+        Dialogs.initOwner(this, owner);
         Branding.applyIcons(this);
         setTitle(Messages.get("export.title"));
         setHeaderText(Messages.get("export.header"));

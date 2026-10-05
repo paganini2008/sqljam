@@ -98,7 +98,7 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
 
     public ImportPackageDialog(Window owner, AppContext context, DbNode node) {
         this.context = context;
-        initOwner(owner);
+        Dialogs.initOwner(this, owner);
         Branding.applyIcons(this);
         setTitle(Messages.get("import.title"));
         setHeaderText(Messages.get("import.header"));
