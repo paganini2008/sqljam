@@ -9,7 +9,7 @@
 一个 Java 17 + JavaFX 的桌面导入导出工具，支持 **MySQL、PostgreSQL、Oracle、SQL Server、H2、SQLite** 等数据库任意互导：
 可以**直接导入目标库**，也可以导出为带描述文件的 **SQL 导出包**，之后再成对导入。
 
-![SqlJam 主界面](../assets/main-dark.png)
+![SqlJam 主界面](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
 
 ## 2. 解决什么问题？
 
@@ -50,11 +50,11 @@ bin/
 
 启动时显示启动画面，同时加载配置、数据源和 JDBC 驱动：
 
-<p align="center"><img src="../assets/splash.png" alt="SqlJam 启动画面" width="520"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/splash.png" alt="SqlJam 启动画面" width="520"></p>
 
 | 1. 登录数据源 | 2. 导出向导 | 3. 进度 |
 |---|---|---|
-| ![login](../assets/login.png) | ![export](../assets/export-wizard.png) | ![progress](../assets/progress.png) |
+| ![login](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/login.png) | ![export](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/export-wizard.png) | ![progress](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/progress.png) |
 
 ## 4. Requirements
 
@@ -79,7 +79,7 @@ JDBC 驱动全部打进 fat jar，无需额外下载。
 
 ## 5. How It Works
 
-![工作原理](../assets/architecture.png)
+![工作原理](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/architecture.png)
 
 ```mermaid
 flowchart LR
@@ -166,7 +166,7 @@ importer.exportDdlAndData();
 
 ## 8. Performance
 
-![Benchmark](../assets/benchmark.png)
+![Benchmark](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/benchmark.png)
 
 | 场景（20 万行 × 6 列） | 耗时 | 行/秒 |
 |---|---|---|

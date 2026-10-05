@@ -9,7 +9,7 @@
 A Java 17 + JavaFX desktop tool that copies tables between **MySQL, PostgreSQL, Oracle, SQL Server, H2, SQLite** and more, in any direction:
 **import directly** into a target database, or save a self-describing **SQL export package** and import it later.
 
-![SqlJam main window](../assets/main-dark.png)
+![SqlJam main window](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
 
 ## 2. What Problem Does It Solve?
 
@@ -50,11 +50,11 @@ bin/
 
 A splash screen shows the loading of the configuration, the data sources and the JDBC drivers:
 
-<p align="center"><img src="../assets/splash.png" alt="SqlJam splash screen" width="520"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/splash.png" alt="SqlJam splash screen" width="520"></p>
 
 | 1. Log in to a data source | 2. Export wizard | 3. Progress |
 |---|---|---|
-| ![login](../assets/login.png) | ![export](../assets/export-wizard.png) | ![progress](../assets/progress.png) |
+| ![login](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/login.png) | ![export](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/export-wizard.png) | ![progress](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/progress.png) |
 
 ## 4. Requirements
 
@@ -79,7 +79,7 @@ All JDBC drivers are bundled in the fat jar.
 
 ## 5. How It Works
 
-![How it works](../assets/architecture.png)
+![How it works](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/architecture.png)
 
 ```mermaid
 flowchart LR
@@ -166,7 +166,7 @@ All settings live in `bin/sqljam.properties` next to the runnable jar. Settings 
 
 ## 8. Performance
 
-![Benchmark](../assets/benchmark.png)
+![Benchmark](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/benchmark.png)
 
 | Scenario (200,000 rows × 6 columns) | Time | Rows/s |
 |---|---|---|
