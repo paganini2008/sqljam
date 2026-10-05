@@ -36,6 +36,7 @@ public class ConnectionDialog extends Dialog<ConnectionProfile> {
 
     public ConnectionDialog(Window owner, AppContext context, ConnectionProfile profile) {
         initOwner(owner);
+        Branding.applyIcons(this);
         boolean editing = profile != null;
         setTitle(Messages.get(editing ? "connection.edit.title" : "connection.new.title"));
         setHeaderText(getTitle());

@@ -23,6 +23,7 @@ import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.face.service.TransferService;
 import com.github.sqljam.impexp.ScriptImporter;
 import javafx.application.Platform;
+import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
@@ -38,6 +39,7 @@ import javafx.scene.control.TabPane;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.ToolBar;
 import javafx.scene.control.Tooltip;
+import javafx.scene.image.ImageView;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.input.KeyCodeCombination;
@@ -47,6 +49,7 @@ import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
+import javafx.scene.text.TextAlignment;
 import javafx.stage.Window;
 
 /**
@@ -92,12 +95,14 @@ public class MainView extends BorderPane {
     }
 
     private VBox createWelcome() {
-        Label title = new Label("SqlJam");
-        title.getStyleClass().add("welcome-title");
         Label hint = new Label(Messages.get("welcome.hint"));
         hint.getStyleClass().add("muted");
         hint.setWrapText(true);
-        VBox welcome = new VBox(12, Icons.of("fth-database"), title, hint);
+        hint.setTextAlignment(TextAlignment.CENTER);
+        ImageView logo = Branding.logoView(170);
+        logo.setId("welcomeLogo");
+        // The logo shows the name, no title is needed
+        VBox welcome = new VBox(16, logo, hint);
         welcome.getStyleClass().add("welcome");
         welcome.setAlignment(Pos.CENTER);
         welcome.setMaxWidth(420);
@@ -145,8 +150,7 @@ public class MainView extends BorderPane {
         Menu viewMenu = new Menu(Messages.get("menu.view"), null, themeMenu, new SeparatorMenuItem(), refresh);
 
         MenuItem about = new MenuItem(Messages.get("action.about"), Icons.of(Icons.INFO));
-        about.setOnAction(event -> Dialogs.showInfo(getWindow(), Messages.get("about.title"),
-                Messages.get("about.message")));
+        about.setOnAction(event -> Dialogs.showAbout(getWindow()));
         Menu helpMenu = new Menu(Messages.get("menu.help"), null, about);
         MenuBar menuBar = new MenuBar(fileMenu, viewMenu, helpMenu);
         menuBar.setUseSystemMenuBar(true);
@@ -188,7 +192,12 @@ public class MainView extends BorderPane {
         Button importButton = toolButton(Icons.IMPORT, "action.importScripts",
                 () -> showImportDialog(connectionTree.getSelectedNode()));
         importButton.setText(Messages.get("action.import"));
-        return new ToolBar(toolButton(Icons.ADD, "action.newConnection", this::newConnection), editButton,
+        ImageView mark = Branding.logoMarkView(22);
+        mark.setId("toolbarLogo");
+        StackPane markBox = new StackPane(mark);
+        markBox.setPadding(new Insets(0, 4, 0, 6));
+        return new ToolBar(markBox, new javafx.scene.control.Separator(),
+                toolButton(Icons.ADD, "action.newConnection", this::newConnection), editButton,
                 deleteButton, toolButton(Icons.REFRESH, "action.refresh", connectionTree::refreshSelected),
                 new javafx.scene.control.Separator(), exportButton, importButton);
     }

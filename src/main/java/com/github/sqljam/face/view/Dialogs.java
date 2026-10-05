@@ -20,10 +20,12 @@ import java.io.StringWriter;
 import java.util.Optional;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.face.Banner;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 import javafx.stage.Window;
@@ -46,6 +48,7 @@ public final class Dialogs {
         }
         Alert alert = new Alert(Alert.AlertType.ERROR);
         alert.initOwner(owner);
+        Branding.applyIcons(alert);
         alert.setTitle(title);
         alert.setHeaderText(title);
         alert.setContentText(StringUtils.abbreviate(StringUtils.defaultIfBlank(cause.getMessage(),
@@ -72,15 +75,38 @@ public final class Dialogs {
     public static void showInfo(Window owner, String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.initOwner(owner);
+        Branding.applyIcons(alert);
         alert.setTitle(title);
         alert.setHeaderText(title);
         alert.setContentText(message);
         alert.showAndWait();
     }
 
+    /**
+     * About dialog with the logo and the version
+     */
+    public static Alert createAbout(Window owner) {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.initOwner(owner);
+        Branding.applyIcons(alert);
+        alert.setTitle(Messages.get("about.title"));
+        alert.setHeaderText(Messages.format("about.header", Banner.getVersion()));
+        alert.setContentText(Messages.get("about.message"));
+        ImageView logo = Branding.logoView(96);
+        logo.setId("aboutLogo");
+        alert.setGraphic(logo);
+        alert.getDialogPane().setPrefWidth(460);
+        return alert;
+    }
+
+    public static void showAbout(Window owner) {
+        createAbout(owner).showAndWait();
+    }
+
     public static boolean confirm(Window owner, String title, String message) {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
         alert.initOwner(owner);
+        Branding.applyIcons(alert);
         alert.setTitle(title);
         alert.setHeaderText(title);
         alert.setContentText(message);

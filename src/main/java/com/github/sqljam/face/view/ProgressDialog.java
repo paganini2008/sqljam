@@ -95,6 +95,7 @@ public class ProgressDialog {
         this.context = context;
         this.totalTables = totalTables;
         stage.initOwner(owner);
+        Branding.applyIcons(stage);
         stage.initModality(Modality.NONE);
         stage.setTitle(title);
         statusLabel.setId("progressStatus");

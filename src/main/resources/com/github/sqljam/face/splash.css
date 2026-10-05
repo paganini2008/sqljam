@@ -1,0 +1,61 @@
+/* Splash screen, shown before the theme is applied */
+
+.splash {
+    -fx-background-color: transparent;
+    -fx-padding: 12;
+}
+
+.splash-card {
+    -fx-background-color: linear-gradient(to bottom right, #0b1226 0%, #141a3a 55%, #2a1446 100%);
+    -fx-background-radius: 18;
+    -fx-border-color: rgba(122, 162, 255, 0.28);
+    -fx-border-radius: 18;
+    -fx-border-width: 1;
+    -fx-padding: 28 32 22 32;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.55), 24, 0.2, 0, 6);
+}
+
+.splash-slogan {
+    -fx-text-fill: #c9d4f5;
+    -fx-font-size: 14px;
+}
+
+.splash-status {
+    -fx-text-fill: #8f9bbf;
+    -fx-font-size: 12px;
+}
+
+.splash-version {
+    -fx-text-fill: #6f7aa0;
+    -fx-font-size: 12px;
+}
+
+.splash-progress {
+    -fx-pref-height: 6;
+}
+
+.splash-progress > .track {
+    -fx-background-color: rgba(255, 255, 255, 0.10);
+    -fx-background-radius: 3;
+    -fx-background-insets: 0;
+}
+
+.splash-progress > .bar {
+    -fx-background-color: linear-gradient(to right, #1ec8ff 0%, #4f7bff 50%, #d63cff 100%);
+    -fx-background-radius: 3;
+    -fx-background-insets: 0;
+    -fx-padding: 3;
+}
+
+/* Windows which can not be transparent (some Linux desktops) */
+
+.splash.opaque {
+    -fx-padding: 0;
+    -fx-background-color: #0b1226;
+}
+
+.splash.opaque .splash-card {
+    -fx-background-radius: 0;
+    -fx-border-radius: 0;
+    -fx-effect: null;
+}

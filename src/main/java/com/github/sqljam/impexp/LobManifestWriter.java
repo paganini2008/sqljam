@@ -23,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Pattern;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
@@ -173,8 +174,23 @@ public class LobManifestWriter implements Closeable {
         }
     }
 
+    /**
+     * Windows reserved device names, which can not be file names even with an extension
+     */
+    private static final Pattern WINDOWS_RESERVED_NAME = Pattern.compile("(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])");
+
+    /**
+     * File name of a table or column which is valid on Windows, macOS and Linux, so that an export package can be
+     * moved between them
+     */
     static String toFileName(String name) {
-        return name.replaceAll("[\\\\/:*?\"<>|\\s]", "_");
+        String fileName = name.replaceAll("[\\\\/:*?\"<>|\\s]", "_");
+        // Windows drops trailing dots and spaces
+        fileName = fileName.replaceAll("[. ]+$", "_");
+        if (WINDOWS_RESERVED_NAME.matcher(fileName).matches()) {
+            fileName = fileName + "_";
+        }
+        return fileName;
     }
 
     public int getFileCount() {

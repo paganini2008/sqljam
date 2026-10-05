@@ -9,7 +9,7 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 
 ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
 ![JavaFX](https://img.shields.io/badge/JavaFX-17-1f6feb)
-![Tests](https://img.shields.io/badge/tests-292%20passed-3fb950)
+![Tests](https://img.shields.io/badge/tests-303%20passed-3fb950)
 ![Coverage](https://img.shields.io/badge/coverage-91%25%20lines-3fb950)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Cross-database](https://img.shields.io/badge/cross--database%20matrix-passing-3fb950)
@@ -65,11 +65,14 @@ flowchart LR
 
 ## Requirements
 
-| Item | Version |
-|---|---|
-| JDK | 17+ |
-| Maven | 3.8+ (build only) |
-| OS | macOS, Windows, Linux (JavaFX 17 desktop) |
+Only **Java 17+** is needed to run SqlJam. JavaFX and all JDBC drivers are inside the runnable jar. Building from source needs no Maven installation either, the Maven Wrapper (`./mvnw`) is included.
+
+| Platform | Runnable jar | Launcher | Supported |
+|---|---|---|:---:|
+| Windows 10 / 11 (x64) | `sqljam-<version>-win.jar` | `sqljam.bat` | ✅ |
+| macOS Apple Silicon | `sqljam-<version>-mac-aarch64.jar` | `sqljam.sh` | ✅ |
+| macOS Intel | `sqljam-<version>-mac.jar` | `sqljam.sh` | ✅ |
+| Linux x64 (GTK 3) | `sqljam-<version>-linux.jar` | `sqljam.sh` | ✅ |
 
 | Database | Tested on | Supported from |
 |---|---|---|
@@ -80,7 +83,7 @@ flowchart LR
 | H2 | 2.3 | 2.x |
 | SQLite | 3.46 | 3.x |
 
-All JDBC drivers are bundled in the fat jar, no extra downloads.
+All JDBC drivers are bundled, no extra downloads.
 
 ---
 
@@ -89,19 +92,29 @@ All JDBC drivers are bundled in the fat jar, no extra downloads.
 ```bash
 git clone git@github.com:paganini2008/sqljam.git
 cd sqljam
-mvn -DskipTests package                     # output goes to bin/
-java -jar bin/sqljam-1.0.0-SNAPSHOT.jar     # or double click the jar, or: mvn javafx:run
+./mvnw -DskipTests package       # Windows: mvnw.cmd -DskipTests package, output goes to bin/
+bin/sqljam.sh                    # Windows: bin\sqljam.bat, or double click the jar of your platform
 ```
 
 ```text
 bin/
-├── sqljam-1.0.0-SNAPSHOT.jar           # runnable jar, all JDBC drivers inside
-├── sqljam.properties                   # external configuration, edit and restart
+├── sqljam-1.0.0-SNAPSHOT-win.jar           # runnable jar of each platform,
+├── sqljam-1.0.0-SNAPSHOT-mac-aarch64.jar   # JavaFX and all JDBC drivers inside
+├── sqljam-1.0.0-SNAPSHOT-mac.jar
+├── sqljam-1.0.0-SNAPSHOT-linux.jar
+├── sqljam.sh / sqljam.bat                  # launchers, pick the jar of the platform
+├── sqljam.properties                       # configuration, edit and restart
+├── sqljam.vmoptions                        # JVM options, one per line
+├── sqljam.png                              # Dock icon of macOS
 ├── sqljam-1.0.0-SNAPSHOT-sources.jar
 └── sqljam-1.0.0-SNAPSHOT-javadoc.jar
 ```
 
-Keep `sqljam.properties` next to the runnable jar. Copy both files anywhere and the app still finds its configuration, even when started by double click.
+Keep `sqljam.properties` and `sqljam.vmoptions` next to the runnable jar. Copy the folder anywhere and SqlJam still finds them, even when started by double click.
+
+SqlJam starts with a splash screen while it loads the configuration, the data sources and the JDBC drivers:
+
+<p align="center"><img src="docs/assets/splash.png" alt="SqlJam splash screen" width="520"></p>
 
 1. Create a **data source** on the login page and click **Connect**.
 2. Right-click a database or schema → **Export…**
@@ -246,6 +259,8 @@ All settings live in `sqljam.properties`, placed next to the runnable jar in `bi
 | `sqljam.ui.window.width` / `height` | `1280` / `800` | Main window size |
 | `sqljam.banner.mode` | `console` | Startup banner with the version: `console`, `log` or `off` |
 | `sqljam.banner.location` | | Custom banner file, `${sqljam.version}` and `${java.version}` are resolved |
+| `sqljam.splash.enabled` | `true` | Splash screen with the logo while starting |
+| `sqljam.splash.min-duration` | `1200` | Minimum time of the splash screen in ms, so that it does not flash |
 | `sqljam.ui.data.page-size` | `200` | Rows per page in the data viewer |
 | `sqljam.export.page-size` | `5000` | Rows read per page when exporting, tuned by benchmark |
 | `sqljam.export.lob-page-size` | `100` | Rows per page for tables with LOB columns, keeps memory low |
@@ -258,6 +273,16 @@ All settings live in `sqljam.properties`, placed next to the runnable jar in `bi
 | `sqljam.pool.connection-timeout` | `30000` | ms |
 | `sqljam.pool.idle-timeout` | `300000` | ms |
 | `sqljam.pool.max-lifetime` | `1800000` | ms |
+
+JVM options live in `sqljam.vmoptions` next to the runnable jar, one option per line. The launchers pass them to Java, and a jar started by double click restarts itself with them. `JAVA_OPTS` adds more and wins.
+
+```text
+# sqljam.vmoptions (defaults)
+-Xms256m
+-Xmx2g
+-XX:+UseG1GC
+-Dfile.encoding=UTF-8
+```
 
 Export options (UI / `ExportConfiguration`):
 

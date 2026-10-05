@@ -15,26 +15,30 @@
  */
 package com.github.sqljam.face;
 
+import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.AppSettings;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.service.ConnectionStore;
 import com.github.sqljam.face.service.SettingsStore;
 import com.github.sqljam.face.view.AppContext;
+import com.github.sqljam.face.view.Branding;
 import com.github.sqljam.face.view.LoginView;
 import com.github.sqljam.face.view.MainView;
 import com.github.sqljam.face.view.Messages;
 import com.github.sqljam.face.view.ProfileRegistry;
 import com.github.sqljam.face.view.TaskRunner;
 import com.github.sqljam.face.view.ThemeManager;
+import com.github.sqljam.impexp.DbType;
 import javafx.application.Application;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
-import javafx.scene.image.Image;
 import javafx.stage.Stage;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * @Description: SqlJamApplication is the JavaFX application: database connection login page and then the main window
+ * @Description: SqlJamApplication is the JavaFX application: database connection login page and then the main window.
+ *               Configuration, data sources and JDBC drivers are loaded in init() while the splash screen
+ *               ({@link SplashPreloader}) shows the progress.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -46,35 +50,61 @@ public class SqlJamApplication extends Application {
 
     private AppContext context;
     private Stage stage;
+    private SettingsStore settingsStore;
+    private ProfileRegistry profileRegistry;
 
+    /**
+     * Loads everything which does not need the JavaFX thread, the splash screen shows each step
+     */
     @Override
-    public void start(Stage primaryStage) {
-        this.stage = primaryStage;
+    public void init() {
         Thread.setDefaultUncaughtExceptionHandler((thread, e) -> {
             if (log.isErrorEnabled()) {
                 log.error("Uncaught exception in thread {}", thread.getName(), e);
             }
         });
-        SettingsStore settingsStore = new SettingsStore();
-        context = new AppContext(settingsStore, new ProfileRegistry(new ConnectionStore()), getHostServices());
+        notifyPreloader(new SplashPreloader.Status(Messages.get("splash.loadingConfiguration"), 0.15));
+        Config.getInstance();
+        settingsStore = new SettingsStore();
+
+        notifyPreloader(new SplashPreloader.Status(Messages.get("splash.loadingDataSources"), 0.35));
+        profileRegistry = new ProfileRegistry(new ConnectionStore());
+
+        // Loading JDBC drivers takes a while, it is done here instead of at the first connection
+        DbType[] dbTypes = DbType.values();
+        for (int i = 0; i < dbTypes.length; i++) {
+            notifyPreloader(new SplashPreloader.Status(
+                    Messages.format("splash.loadingDriver", dbTypes[i].getDisplayName()),
+                    0.4 + 0.4 * i / dbTypes.length));
+            try {
+                Class.forName(dbTypes[i].getDriverClassName());
+            } catch (ClassNotFoundException | LinkageError e) {
+                if (log.isWarnEnabled()) {
+                    log.warn("JDBC driver is not available: {}", dbTypes[i].getDriverClassName());
+                }
+            }
+        }
+
+        notifyPreloader(new SplashPreloader.Status(Messages.get("splash.preparingUi"), 0.85));
+        Branding.getLogo();
+        Branding.getIcons();
+    }
+
+    @Override
+    public void start(Stage primaryStage) {
+        this.stage = primaryStage;
+        context = new AppContext(settingsStore, profileRegistry, getHostServices());
         AppSettings settings = context.getSettings();
         settings.setTheme(ThemeManager.apply(settings.getTheme()));
 
         stage.setTitle(Messages.get("app.title"));
-        Image icon = loadIcon();
-        if (icon != null) {
-            stage.getIcons().add(icon);
-        }
+        Branding.applyIcons(stage);
         showConnectionLogin();
-        stage.show();
-    }
-
-    private static Image loadIcon() {
-        try {
-            java.io.InputStream in = SqlJamApplication.class.getResourceAsStream("/com/github/sqljam/face/icon.png");
-            return in != null ? new Image(in) : null;
-        } catch (RuntimeException e) {
-            return null;
+        if (SplashPreloader.isActive()) {
+            notifyPreloader(new SplashPreloader.Status(Messages.get("splash.ready"), 1));
+            notifyPreloader(new SplashPreloader.Ready(stage::show));
+        } else {
+            stage.show();
         }
     }
 

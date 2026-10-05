@@ -1,6 +1,8 @@
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/config/Config.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/Banner.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/JvmOptions.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/Launcher.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/SplashPreloader.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/SqlJamApplication.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/model/AppSettings.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/model/ColumnInfo.java
@@ -17,6 +19,7 @@
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/service/SettingsStore.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/service/TransferService.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/AppContext.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/Branding.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/ConnectionDialog.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/ConnectionForm.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/ConnectionTree.java
@@ -33,6 +36,7 @@
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/ProfileRegistry.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/ProgressDialog.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/SessionManager.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/SplashView.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/TableTab.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/TaskRunner.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/ThemeManager.java
