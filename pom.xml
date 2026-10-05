@@ -22,7 +22,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
         <javafx.version>17.0.13</javafx.version>
-        <atlantafx.version>2.0.1</atlantafx.version>
+        <atlantafx.version>3.0.0</atlantafx.version>
         <ikonli.version>12.3.1</ikonli.version>
         <lombok.version>1.18.34</lombok.version>
         <main.class>com.github.sqljam.face.Launcher</main.class>
