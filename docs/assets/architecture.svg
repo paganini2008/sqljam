@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="640" viewBox="0 0 1200 640" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b949e"/>
+    </marker>
+    <marker id="arrowBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#58a6ff"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#3fb950"/>
+    </marker>
+  </defs>
+  <rect width="1200" height="640" rx="16" fill="#0d1117"/>
+  <text x="40" y="52" fill="#e6edf3" font-size="24" font-weight="700">SqlJam · How It Works</text>
+  <text x="40" y="78" fill="#8b949e" font-size="14">Read metadata once, generate DDL/DML for any target dialect and version, then write to a database or an export package</text>
+
+  <!-- Source -->
+  <rect x="40" y="110" width="200" height="300" rx="12" fill="#161b22" stroke="#30363d"/>
+  <text x="140" y="140" fill="#e6edf3" font-size="16" font-weight="700" text-anchor="middle">Source DB</text>
+  <g font-size="13" fill="#c9d1d9" text-anchor="middle">
+    <rect x="60" y="158" width="160" height="30" rx="6" fill="#21262d"/><text x="140" y="178">MySQL</text>
+    <rect x="60" y="196" width="160" height="30" rx="6" fill="#21262d"/><text x="140" y="216">PostgreSQL</text>
+    <rect x="60" y="234" width="160" height="30" rx="6" fill="#21262d"/><text x="140" y="254">Oracle</text>
+    <rect x="60" y="272" width="160" height="30" rx="6" fill="#21262d"/><text x="140" y="292">SQL Server</text>
+    <rect x="60" y="310" width="160" height="30" rx="6" fill="#21262d"/><text x="140" y="330">H2</text>
+    <rect x="60" y="348" width="160" height="30" rx="6" fill="#21262d"/><text x="140" y="368">SQLite</text>
+  </g>
+
+  <!-- Metadata -->
+  <rect x="300" y="110" width="270" height="300" rx="12" fill="#161b22" stroke="#30363d"/>
+  <text x="435" y="140" fill="#e6edf3" font-size="16" font-weight="700" text-anchor="middle">Metadata Tree</text>
+  <text x="435" y="160" fill="#8b949e" font-size="12" text-anchor="middle">XxxMetaDataOperations (per database)</text>
+  <g font-size="13" fill="#c9d1d9">
+    <text x="322" y="192">Server</text>
+    <text x="340" y="216">└ Catalog (database)</text>
+    <text x="358" y="240">└ Schema · Sequences</text>
+    <text x="376" y="264">└ Table · Partitions</text>
+    <text x="394" y="288">├ Columns · Comments</text>
+    <text x="394" y="312">├ Primary key · Indexes</text>
+    <text x="394" y="336">└ Foreign keys</text>
+  </g>
+  <text x="435" y="388" fill="#8b949e" font-size="12" text-anchor="middle">visited by MetaDataVisitor</text>
+
+  <!-- Dialect -->
+  <rect x="630" y="110" width="250" height="300" rx="12" fill="#161b22" stroke="#58a6ff"/>
+  <text x="755" y="140" fill="#e6edf3" font-size="16" font-weight="700" text-anchor="middle">Target Dialect</text>
+  <text x="755" y="160" fill="#8b949e" font-size="12" text-anchor="middle">type + version subclass</text>
+  <g font-size="13" fill="#c9d1d9">
+    <text x="650" y="192">• Type mapping &amp; identifiers</text>
+    <text x="650" y="216">• Defaults, identity, sequences</text>
+    <text x="650" y="240">• Partitions, comments, FKs</text>
+    <text x="650" y="264">• Literals &amp; value conversion</text>
+    <text x="650" y="288">• Pagination of source</text>
+  </g>
+  <g font-size="11" fill="#58a6ff">
+    <text x="650" y="324">Oracle11gDialect · PostgreSQL9Dialect</text>
+    <text x="650" y="342">MySQL56Dialect · SQLServer2008Dialect</text>
+  </g>
+  <text x="755" y="388" fill="#8b949e" font-size="12" text-anchor="middle">DdlScripter collects statements</text>
+
+  <!-- Outputs -->
+  <rect x="940" y="110" width="220" height="130" rx="12" fill="#161b22" stroke="#3fb950"/>
+  <text x="1050" y="140" fill="#e6edf3" font-size="16" font-weight="700" text-anchor="middle">Import directly</text>
+  <text x="1050" y="166" fill="#8b949e" font-size="12" text-anchor="middle">ImportExporter</text>
+  <text x="1050" y="196" fill="#c9d1d9" font-size="13" text-anchor="middle">Target DB</text>
+  <text x="1050" y="218" fill="#c9d1d9" font-size="12" text-anchor="middle">batch insert · pooled</text>
+
+  <rect x="940" y="270" width="220" height="140" rx="12" fill="#161b22" stroke="#d29922"/>
+  <text x="1050" y="300" fill="#e6edf3" font-size="16" font-weight="700" text-anchor="middle">Export package</text>
+  <text x="1050" y="324" fill="#8b949e" font-size="12" text-anchor="middle">ScriptExporter</text>
+  <g font-size="11" fill="#c9d1d9" font-family="JetBrains Mono, Menlo, monospace">
+    <text x="962" y="350">schema.sql  data*.sql</text>
+    <text x="962" y="370">lob/  lob-manifest.json</text>
+    <text x="962" y="390">constraints.sql  manifest.json</text>
+  </g>
+
+  <!-- Arrows -->
+  <line x1="240" y1="260" x2="296" y2="260" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+  <line x1="570" y1="260" x2="626" y2="260" stroke="#8b949e" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M 880 220 C 905 220, 910 175, 936 175" fill="none" stroke="#3fb950" stroke-width="2" marker-end="url(#arrowGreen)"/>
+  <path d="M 880 300 C 905 300, 910 340, 936 340" fill="none" stroke="#d29922" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- Row stream -->
+  <rect x="40" y="450" width="1120" height="70" rx="12" fill="#161b22" stroke="#30363d"/>
+  <text x="60" y="478" fill="#e6edf3" font-size="15" font-weight="700">Row stream</text>
+  <text x="60" y="502" fill="#c9d1d9" font-size="13">count rows → read pages ordered by primary key → normalize values (LOBs, LocalDateTime, unsigned, bit, money …) → convert for target → batch insert / SQL literals</text>
+
+  <!-- Import package -->
+  <rect x="40" y="545" width="1120" height="70" rx="12" fill="#161b22" stroke="#30363d"/>
+  <text x="60" y="573" fill="#e6edf3" font-size="15" font-weight="700">Import package (paired with export)</text>
+  <text x="60" y="597" fill="#c9d1d9" font-size="13">ScriptImporter: validate manifest (status · target type · sha256) → schema.sql → data files in order → restore LOBs by primary key → constraints.sql</text>
+</svg>

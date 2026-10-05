@@ -1,0 +1,31 @@
+# Build
+target/
+*.class
+dependency-reduced-pom.xml
+
+# IDE
+.idea/
+*.iml
+*.iws
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+bin/
+out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and runtime files
+*.log
+logs/
+*.db
+*.mv.db
+*.trace.db
+*.sqlite
+
+# Other
+change_logs

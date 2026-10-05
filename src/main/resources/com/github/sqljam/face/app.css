@@ -1,0 +1,146 @@
+/* SqlJam application styles, colors come from AtlantaFX theme variables */
+
+.root {
+    -fx-font-size: 13px;
+}
+
+.mono, .mono .content, .text-area.mono {
+    -fx-font-family: "Monospaced";
+    -fx-font-size: 12px;
+}
+
+.muted {
+    -fx-text-fill: -color-fg-muted;
+}
+
+.section-title {
+    -fx-font-weight: bold;
+    -fx-font-size: 13px;
+    -fx-text-fill: -color-fg-default;
+}
+
+.form-section {
+    -fx-padding: 12;
+    -fx-background-color: -color-bg-subtle;
+    -fx-background-radius: 8;
+    -fx-border-color: -color-border-muted;
+    -fx-border-radius: 8;
+}
+
+.target-pane {
+    -fx-padding: 8 0 0 0;
+}
+
+.status-error {
+    -fx-text-fill: -color-danger-fg;
+}
+
+.status-success {
+    -fx-text-fill: -color-success-fg;
+}
+
+.form-status {
+    -fx-font-size: 12px;
+}
+
+/* Login */
+
+.login-view, .login-background {
+    -fx-background-color: -color-bg-inset;
+}
+
+.login-card {
+    -fx-background-color: -color-bg-default;
+    -fx-background-radius: 12;
+    -fx-border-color: -color-border-default;
+    -fx-border-radius: 12;
+    -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.35), 24, 0.2, 0, 6);
+}
+
+.login-sidebar {
+    -fx-padding: 20;
+    -fx-background-color: -color-bg-subtle;
+    -fx-background-radius: 12 0 0 12;
+    -fx-border-color: transparent -color-border-muted transparent transparent;
+}
+
+.login-form {
+    -fx-padding: 24 28 24 28;
+}
+
+.login-logo {
+    -fx-icon-size: 40px;
+    -fx-icon-color: -color-accent-fg;
+}
+
+.login-title {
+    -fx-font-size: 24px;
+    -fx-font-weight: bold;
+}
+
+.login-subtitle {
+    -fx-text-fill: -color-fg-muted;
+}
+
+/* Main window */
+
+.connection-tree {
+    -fx-border-width: 0;
+}
+
+.tree-message {
+    -fx-text-fill: -color-fg-subtle;
+    -fx-font-style: italic;
+}
+
+.status-bar {
+    -fx-padding: 4 10 4 10;
+    -fx-background-color: -color-bg-subtle;
+    -fx-border-color: -color-border-default transparent transparent transparent;
+    -fx-font-size: 12px;
+}
+
+.welcome {
+    -fx-padding: 40;
+}
+
+.welcome .ikonli-font-icon {
+    -fx-icon-size: 64px;
+    -fx-icon-color: -color-fg-subtle;
+}
+
+.welcome-title {
+    -fx-font-size: 28px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -color-fg-muted;
+}
+
+.pager {
+    -fx-background-color: -color-bg-subtle;
+    -fx-border-color: -color-border-muted transparent transparent transparent;
+}
+
+.null-cell {
+    -fx-text-fill: -color-fg-subtle;
+    -fx-font-style: italic;
+}
+
+/* Progress */
+
+.progress-percent {
+    -fx-font-weight: bold;
+}
+
+.progress-status {
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+}
+
+.log-list .list-cell {
+    -fx-font-family: "Monospaced";
+    -fx-font-size: 12px;
+}
+
+.log-list .list-cell.log-error {
+    -fx-text-fill: -color-danger-fg;
+}

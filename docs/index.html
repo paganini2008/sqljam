@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SqlJam · Move tables across databases</title>
+<meta name="description" content="SqlJam copies tables, indexes, constraints, sequences, partitions and rows between MySQL, PostgreSQL, Oracle, SQL Server, H2, SQLite and more, directly or through a self-describing SQL export package.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-alt: #010409;
+    --surface: #161b22;
+    --surface-2: #21262d;
+    --border: #30363d;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+    --accent-2: #3fb950;
+    --warn: #d29922;
+    --code-bg: #0b0f14;
+    --shadow: 0 20px 60px rgba(0, 0, 0, .45);
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #ffffff;
+      --bg-alt: #f6f8fa;
+      --surface: #ffffff;
+      --surface-2: #f6f8fa;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --muted: #59636e;
+      --accent: #0969da;
+      --accent-2: #1a7f37;
+      --warn: #9a6700;
+      --code-bg: #f6f8fa;
+      --shadow: 0 20px 60px rgba(31, 35, 40, .12);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1117; --bg-alt: #010409; --surface: #161b22; --surface-2: #21262d; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #58a6ff; --accent-2: #3fb950; --warn: #d29922; --code-bg: #0b0f14;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: "JetBrains Mono", Menlo, Consolas, monospace; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+  section { padding: 80px 0; border-top: 1px solid var(--border); }
+  section.alt { background: var(--bg-alt); }
+  h1, h2, h3 { line-height: 1.2; margin: 0; }
+  h2 { font-size: clamp(26px, 4vw, 36px); font-weight: 800; letter-spacing: -.02em; }
+  .lead { color: var(--muted); font-size: 18px; max-width: 720px; margin: 12px 0 0; }
+  .eyebrow { color: var(--accent); font-weight: 600; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; margin-bottom: 10px; }
+
+  /* Nav */
+  nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 800; font-size: 18px; }
+  .brand:hover { text-decoration: none; }
+  .logo { width: 30px; height: 30px; border-radius: 8px; background: linear-gradient(135deg, var(--accent), var(--accent-2)); display: grid; place-items: center; }
+  .logo svg { width: 18px; height: 18px; }
+  .links { display: flex; gap: 22px; font-size: 14px; }
+  .links a { color: var(--muted); }
+  .links a:hover { color: var(--text); text-decoration: none; }
+  @media (max-width: 720px) { .links { display: none; } }
+
+  /* Hero */
+  .hero { padding: 88px 0 72px; border-top: none; text-align: center; background: radial-gradient(900px 400px at 50% -10%, color-mix(in srgb, var(--accent) 18%, transparent), transparent); }
+  .hero h1 { font-size: clamp(40px, 7vw, 72px); font-weight: 800; letter-spacing: -.035em; }
+  .hero h1 span { background: linear-gradient(90deg, var(--accent), var(--accent-2)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .slogan { font-size: clamp(20px, 3vw, 28px); font-weight: 600; margin: 18px 0 0; }
+  .hero .lead { margin: 16px auto 0; }
+  .db-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin: 24px 0 0; }
+  .chip { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 4px 12px; font-size: 13px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin: 32px 0 0; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 12px 20px; border-radius: 10px; font-weight: 600; font-size: 15px; border: 1px solid var(--border); background: var(--surface); color: var(--text); }
+  .btn:hover { text-decoration: none; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.1); }
+  .btn svg { width: 18px; height: 18px; }
+  .shot { margin: 48px auto 0; max-width: 1040px; border-radius: 14px; overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow); background: var(--surface); }
+  .shot img { display: block; width: 100%; height: auto; }
+
+  /* Cards */
+  .grid { display: grid; gap: 16px; margin-top: 36px; }
+  .grid > *, .two > *, .panel > *, .steps > * { min-width: 0; }
+  .hero .lead, .slogan { overflow-wrap: anywhere; }
+  .grid.c3 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .grid.c4 { grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 22px; }
+  .card h3 { font-size: 17px; margin-bottom: 6px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .pain { border-left: 3px solid var(--warn); }
+  .pain .fix { color: var(--text); margin-top: 10px; font-size: 14px; }
+  .pain .fix b { color: var(--accent-2); }
+  .icon { width: 40px; height: 40px; border-radius: 10px; background: color-mix(in srgb, var(--accent) 14%, transparent); display: grid; place-items: center; margin-bottom: 14px; }
+  .icon svg { width: 22px; height: 22px; stroke: var(--accent); }
+
+  /* How it works */
+  .diagram { margin-top: 32px; border-radius: 14px; overflow: hidden; border: 1px solid var(--border); }
+  .diagram img { display: block; width: 100%; height: auto; }
+  .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 24px; }
+  .step { display: flex; gap: 12px; }
+  .step .n { flex: none; width: 28px; height: 28px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border); display: grid; place-items: center; font-weight: 700; font-size: 13px; }
+  .step p { margin: 0; color: var(--muted); font-size: 15px; }
+  .step b { color: var(--text); }
+
+  /* Code */
+  .code { position: relative; margin-top: 16px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 12px; }
+  .code pre { margin: 0; padding: 18px 20px; overflow-x: auto; font-size: 13.5px; line-height: 1.65; color: var(--text); }
+  .code .label { position: absolute; top: 10px; left: 16px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+  .code.labeled pre { padding-top: 34px; }
+  .copy { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; font-family: inherit; }
+  .copy:hover { color: var(--text); border-color: var(--accent); }
+  .tok-c { color: var(--muted); }
+  .tok-k { color: #ff7b72; }
+  .tok-s { color: #a5d6ff; }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .tok-k { color: #cf222e; } :root:not([data-theme="dark"]) .tok-s { color: #0a3069; } }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 36px; align-items: start; }
+  @media (max-width: 860px) { .two { grid-template-columns: 1fr; } }
+  .two h3 { font-size: 17px; }
+
+  /* Tabs */
+  .tabs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 32px; }
+  .tab { border: 1px solid var(--border); background: var(--surface); color: var(--muted); border-radius: 999px; padding: 8px 16px; cursor: pointer; font: inherit; font-size: 14px; }
+  .tab[aria-selected="true"] { color: var(--text); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--surface)); }
+  .panel { display: none; margin-top: 20px; }
+  .panel.active { display: grid; grid-template-columns: 1.1fr .9fr; gap: 24px; align-items: start; }
+  @media (max-width: 860px) { .panel.active { grid-template-columns: 1fr; } }
+  .panel img { width: 100%; border-radius: 12px; border: 1px solid var(--border); display: block; }
+  .panel .desc { color: var(--muted); font-size: 15px; margin: 0 0 8px; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+  .env { color: var(--muted); font-size: 14px; margin-top: 12px; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-top: 36px; }
+  .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+  .stat b { display: block; font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
+  .stat span { color: var(--muted); font-size: 14px; }
+
+  /* Doc cards */
+  a.card { display: block; color: var(--text); transition: border-color .15s, transform .15s; }
+  a.card:hover { text-decoration: none; border-color: var(--accent); transform: translateY(-2px); }
+  a.card .arrow { color: var(--accent); font-size: 14px; margin-top: 10px; display: inline-block; }
+
+  footer { border-top: 1px solid var(--border); padding: 32px 0; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  footer nav { position: static; background: none; border: none; backdrop-filter: none; display: flex; gap: 18px; }
+</style>
+</head>
+<body>
+
+<nav aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="#">
+      <span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>
+      SqlJam
+    </a>
+    <div class="links">
+      <a href="#why">Why</a><a href="#features">Features</a><a href="#how">How it works</a>
+      <a href="#quick-start">Quick start</a><a href="#performance">Performance</a><a href="#docs">Docs</a>
+    </div>
+    <a class="btn" href="https://github.com/paganini2008/sqljam">GitHub</a>
+  </div>
+</nav>
+
+<!-- 1. Hero -->
+<header class="hero">
+  <div class="wrap">
+    <h1><span>SqlJam</span></h1>
+    <p class="slogan">Move tables across databases. Schema, data and all.</p>
+    <p class="lead">A desktop import/export tool that copies tables, indexes, constraints, sequences, partitions and rows between databases, directly or through a self-describing SQL export package you can import later.</p>
+    <div class="db-chips">
+      <span class="chip">MySQL</span><span class="chip">PostgreSQL</span><span class="chip">Oracle</span>
+      <span class="chip">SQL Server</span><span class="chip">H2</span><span class="chip">SQLite</span>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="#quick-start">Get Started</a>
+      <a class="btn" href="https://github.com/paganini2008/sqljam"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1.1-.8.1-.8.1-.8 1.2.1 1.9 1.3 1.9 1.3 1.1 1.9 2.9 1.3 3.6 1 .1-.8.4-1.3.8-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.3.5-2.4 1.2-3.2-.1-.3-.5-1.5.1-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17 4.6 18 4.9 18 4.9c.7 1.7.2 2.9.1 3.2.8.8 1.2 1.9 1.2 3.2 0 4.6-2.8 5.6-5.5 5.9.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .5Z"/></svg>GitHub</a>
+      <a class="btn" href="#docs">Documentation</a>
+    </div>
+    <div class="shot"><img src="assets/main-dark.png" alt="SqlJam main window with the table structure of an employee table" width="1280" height="753"></div>
+  </div>
+</header>
+
+<!-- 2. Why -->
+<section id="why">
+  <div class="wrap">
+    <div class="eyebrow">Why SqlJam</div>
+    <h2>Migrations fail on the details</h2>
+    <p class="lead">INSERT statements are easy. Everything around them is not.</p>
+    <div class="grid c3">
+      <div class="card pain"><h3>Dialects disagree</h3><p>Types, identity columns, default values and literals differ in every database.</p><p class="fix"><b>→</b> The target dialect translates them.</p></div>
+      <div class="card pain"><h3>Old servers refuse new SQL</h3><p>Oracle 11g has no identity, SQL Server 2008 no OFFSET, PostgreSQL 9 no partitions.</p><p class="fix"><b>→</b> Version subclasses generate compatible SQL.</p></div>
+      <div class="card pain"><h3>Keys and indexes go missing</h3><p>Data arrives, but primary keys, foreign keys, sequences and comments do not.</p><p class="fix"><b>→</b> Table-level objects move together.</p></div>
+      <div class="card pain"><h3>Scripts become monsters</h3><p>Gigabyte data.sql files and BLOB literals that break 4000-byte limits.</p><p class="fix"><b>→</b> 10 MB parts and LOB files.</p></div>
+      <div class="card pain"><h3>Values get corrupted</h3><p>Shifted timestamps, overflowing unsigned numbers, garbled bits and money.</p><p class="fix"><b>→</b> A portable value pipeline.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3. Features -->
+<section id="features" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">Features</div>
+    <h2>Everything a table needs on the other side</h2>
+    <div class="grid c4">
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M7 7h10M7 12h10M7 17h6"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg></div><h3>Any-to-any</h3><p>Every source/target combination, verified by tests.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg></div><h3>Version-aware</h3><p>Dialects picked by detected or selected server version.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></div><h3>Keys &amp; constraints</h3><p>Primary keys, indexes, foreign keys, comments and sequences.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg></div><h3>Partitions</h3><p>PostgreSQL, MySQL, Oracle and SQL Server partitioning preserved.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></div><h3>Export packages</h3><p>SQL files, LOB files and manifest.json, split at 10 MB.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 2l8 4v6c0 5-3.5 9-8 10-4.5-1-8-5-8-10V6z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>Verified imports</h3><p>Status, target type and SHA-256 checked before running.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg></div><h3>Progress you can see</h3><p>Overall percentage, per-table progress, error log and cancel.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></div><h3>Dark by default</h3><p>A modern JavaFX UI with 7 switchable themes.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4. How it works -->
+<section id="how">
+  <div class="wrap">
+    <div class="eyebrow">How it works</div>
+    <h2>Read once, generate for any target</h2>
+    <p class="lead">SqlJam builds a metadata tree of the source, renders it with the dialect of the target type and version, then streams rows to a database or an export package.</p>
+    <div class="diagram"><img src="assets/architecture.svg" alt="Architecture: source database, metadata tree, target dialect, then direct import or export package and package import" width="1200" height="640"></div>
+    <div class="steps">
+      <div class="step"><span class="n">1</span><p><b>Metadata</b>: per-database operations read tables, keys, indexes, comments, partitions and sequences.</p></div>
+      <div class="step"><span class="n">2</span><p><b>Dialect</b>: <code>DbType.createDialect(major, minor)</code> picks e.g. <code>Oracle11gDialect</code>.</p></div>
+      <div class="step"><span class="n">3</span><p><b>Rows</b>: counted, paged by primary key, normalized and written in batches.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 5. Quick start -->
+<section id="quick-start" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">Quick start</div>
+    <h2>Running in two minutes</h2>
+    <p class="lead">JDK 17 and Maven are all you need. Every JDBC driver is bundled.</p>
+    <div class="code labeled"><span class="label">bash</span><button class="copy" type="button">Copy</button><pre><code>git clone git@github.com:paganini2008/sqljam.git &amp;&amp; cd sqljam
+mvn -DskipTests package                     # output goes to bin/
+java -jar bin/sqljam-1.0.0-SNAPSHOT.jar     # or double click the jar</code></pre></div>
+    <div class="two">
+      <div>
+        <h3>Or use the API</h3>
+        <div class="code labeled"><span class="label">java</span><button class="copy" type="button">Copy</button><pre><code><span class="tok-c">// MySQL database → PostgreSQL export package</span>
+ScriptExporter exporter = <span class="tok-k">new</span> ScriptExporter(<span class="tok-k">new</span> File(<span class="tok-s">"export"</span>), <span class="tok-k">false</span>);
+Exporter.ExportConfiguration config = exporter.getConfiguration();
+config.setDbType(DbType.MYSQL);
+config.setUrl(DbType.MYSQL.getUrl(<span class="tok-s">"localhost"</span>, 3306, <span class="tok-s">"shop"</span>));
+config.setUsername(<span class="tok-s">"root"</span>);
+config.setPassword(<span class="tok-s">"secret"</span>);
+exporter.setTargetDbType(DbType.POSTGRESQL);
+exporter.exportDdlAndData();</code></pre></div>
+      </div>
+      <div>
+        <h3>Result</h3>
+        <div class="code"><pre><code>export/
+├── schema.sql
+├── data.sql            <span class="tok-c"># data_2.sql … above 10 MB</span>
+├── lob/
+│   └── document/000001_content.clob
+├── lob-manifest.json
+├── constraints.sql     <span class="tok-c"># foreign keys, after data</span>
+└── manifest.json       <span class="tok-c"># source, target, sha256, rows</span></code></pre></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6. Use cases -->
+<section id="examples">
+  <div class="wrap">
+    <div class="eyebrow">Use cases</div>
+    <h2>Three ways to move a table</h2>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-panel="p1">Export a package</button>
+      <button class="tab" role="tab" aria-selected="false" data-panel="p2">Import directly</button>
+      <button class="tab" role="tab" aria-selected="false" data-panel="p3">Import a package</button>
+      <button class="tab" role="tab" aria-selected="false" data-panel="p4">Browse &amp; preview</button>
+    </div>
+    <div id="p1" class="panel active" role="tabpanel">
+      <img src="assets/export-wizard.png" alt="Export wizard" loading="lazy">
+      <div><p class="desc">Pick tables, choose the target type and version, one file per table or a single data.sql, and whether LOBs go into files.</p>
+        <div class="code"><pre><code>exporter.setTargetDbType(DbType.ORACLE);
+exporter.setTargetVersion(11, 2);   <span class="tok-c">// sequences + triggers</span></code></pre></div></div>
+    </div>
+    <div id="p2" class="panel" role="tabpanel">
+      <img src="assets/progress.png" alt="Progress dialog" loading="lazy">
+      <div><p class="desc">Copy straight into another data source. Target schemas are created, identities continue from the imported max value.</p>
+        <div class="code"><pre><code>target.setDbType(DbType.SQLSERVER);
+target.setTargetSchemaName(<span class="tok-s">"hr"</span>);   <span class="tok-c">// created if missing</span>
+importer.exportDdlAndData();</code></pre></div></div>
+    </div>
+    <div id="p3" class="panel" role="tabpanel">
+      <img src="assets/import-package.png" alt="Import package dialog" loading="lazy">
+      <div><p class="desc">The manifest decides: only data sources of the exported target type are offered, files are checked by SHA-256 and run in order.</p>
+        <div class="code"><pre><code>ScriptImporter importer = <span class="tok-k">new</span> ScriptImporter(connection, DbType.POSTGRESQL);
+importer.importDirectory(<span class="tok-k">new</span> File(<span class="tok-s">"export"</span>));</code></pre></div></div>
+    </div>
+    <div id="p4" class="panel" role="tabpanel">
+      <img src="assets/table-data.png" alt="Table data viewer" loading="lazy">
+      <div><p class="desc">Browse databases, schemas and tables. Inspect columns, indexes, foreign keys and DDL in any dialect, then page through rows.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 7. Performance -->
+<section id="performance" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">Performance</div>
+    <h2>Tens of thousands of rows per second</h2>
+    <div class="stats">
+      <div class="stat"><b>95.3k</b><span>rows/s · H2 → Oracle</span></div>
+      <div class="stat"><b>100%</b><span>cross-database pairs pass</span></div>
+      <div class="stat"><b>292</b><span>automated tests</span></div>
+      <div class="stat"><b>91%</b><span>line coverage</span></div>
+    </div>
+    <div class="diagram"><img src="assets/benchmark.svg" alt="Throughput chart" width="1200" height="520" loading="lazy"></div>
+    <div class="table-wrap" style="margin-top:24px">
+      <table>
+        <thead><tr><th>Scenario (200,000 rows × 6 columns)</th><th>Time</th><th>Rows/s</th></tr></thead>
+        <tbody>
+          <tr><td>H2 → Oracle 23ai</td><td class="num">2.1 s</td><td class="num">95.3k</td></tr>
+          <tr><td>H2 → export package (32 MB, 4 files)</td><td class="num">2.9 s</td><td class="num">69.4k</td></tr>
+          <tr><td>H2 → PostgreSQL 16</td><td class="num">3.2 s</td><td class="num">62.4k</td></tr>
+          <tr><td>H2 → MySQL 9.6</td><td class="num">3.3 s</td><td class="num">60.7k</td></tr>
+          <tr><td>H2 → SQL Server 2022</td><td class="num">5.0 s</td><td class="num">40.1k</td></tr>
+          <tr><td>Export package → PostgreSQL</td><td class="num">4.5 s</td><td class="num">44.5k</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="env">Environment: Apple M2 Max, 32 GB, JDK 17 · MySQL and PostgreSQL local, Oracle and SQL Server in Docker · default settings.</p>
+  </div>
+</section>
+
+<!-- 8. Documentation -->
+<section id="docs">
+  <div class="wrap">
+    <div class="eyebrow">Documentation</div>
+    <h2>Learn more</h2>
+    <div class="grid c3">
+      <a class="card" href="https://github.com/paganini2008/sqljam#quick-start"><h3>Getting Started</h3><p>Build, run and export your first tables.</p><span class="arrow">Read →</span></a>
+      <a class="card" href="https://github.com/paganini2008/sqljam#examples"><h3>Examples</h3><p>Export packages, direct imports and type translation.</p><span class="arrow">Read →</span></a>
+      <a class="card" href="https://github.com/paganini2008/sqljam#configuration"><h3>Configuration</h3><p>Every key of sqljam.properties and export options.</p><span class="arrow">Read →</span></a>
+      <a class="card" href="https://github.com/paganini2008/sqljam/tree/master/src/main/java/com/github/sqljam/impexp"><h3>API Reference</h3><p>Exporter, ScriptExporter, ImportExporter, ScriptImporter.</p><span class="arrow">Browse →</span></a>
+      <a class="card" href="https://github.com/paganini2008/sqljam#how-it-works"><h3>Architecture</h3><p>Metadata tree, dialects and version subclasses.</p><span class="arrow">Read →</span></a>
+      <a class="card" href="https://github.com/paganini2008/sqljam/tree/master/docs/blogger"><h3>Blog</h3><p>English, 中文 and a Medium edition.</p><span class="arrow">Read →</span></a>
+    </div>
+  </div>
+</section>
+
+<!-- 9. Community -->
+<section id="community" class="alt">
+  <div class="wrap">
+    <div class="eyebrow">Open source</div>
+    <h2>Built in the open</h2>
+    <div class="grid c4">
+      <a class="card" href="https://github.com/paganini2008/sqljam"><h3>GitHub</h3><p>Source code and releases.</p></a>
+      <a class="card" href="https://github.com/paganini2008/sqljam/issues"><h3>Issues</h3><p>Report bugs and request databases or versions.</p></a>
+      <a class="card" href="https://github.com/paganini2008/sqljam/discussions"><h3>Discussions</h3><p>Questions and migration stories.</p></a>
+      <a class="card" href="https://github.com/paganini2008/sqljam#contributing--license"><h3>Contributing</h3><p>Add a dialect: XxxDialect + XxxMetaDataOperations + a fixture.</p></a>
+    </div>
+  </div>
+</section>
+
+<!-- 10. Footer -->
+<footer>
+  <div class="wrap">
+    <span>© 2026 Fred Feng · SqlJam</span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/paganini2008/sqljam">GitHub</a>
+      <a href="#docs">Documentation</a>
+      <a href="https://github.com/paganini2008/sqljam/blob/master/LICENSE">Apache 2.0 License</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.copy').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var text = button.parentElement.querySelector('pre').innerText;
+      navigator.clipboard.writeText(text).then(function () {
+        button.textContent = 'Copied';
+        setTimeout(function () { button.textContent = 'Copy'; }, 1500);
+      });
+    });
+  });
+  document.querySelectorAll('.tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      document.querySelectorAll('.tab').forEach(function (t) { t.setAttribute('aria-selected', 'false'); });
+      document.querySelectorAll('.panel').forEach(function (p) { p.classList.remove('active'); });
+      tab.setAttribute('aria-selected', 'true');
+      document.getElementById(tab.dataset.panel).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>
