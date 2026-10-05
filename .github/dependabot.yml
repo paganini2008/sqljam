@@ -1,0 +1,42 @@
+# Dependabot keeps dependencies and GitHub Actions up to date.
+# Pull requests target the dev branch. Patch and minor updates are grouped into one pull request.
+version: 2
+updates:
+  - package-ecosystem: maven
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels:
+      - dependencies
+    groups:
+      maven-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    ignore:
+      # JavaFX stays on 17 (Java 17 runtime), Monocle is the matching test platform
+      - dependency-name: "org.openjfx:*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "org.testfx:openjfx-monocle"
+        update-types: ["version-update:semver-major"]
+      # Connector/J 8.x keeps old MySQL servers working
+      - dependency-name: "com.mysql:mysql-connector-j"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "com.microsoft.sqlserver:mssql-jdbc"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+    groups:
+      github-actions:
+        patterns:
+          - "*"
