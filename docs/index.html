@@ -253,10 +253,10 @@
   <div class="wrap">
     <div class="eyebrow">Quick start</div>
     <h2>Running in two minutes</h2>
-    <p class="lead">JDK 17 and Maven are all you need. Every JDBC driver is bundled.</p>
+    <p class="lead">Java 17 is all you need on Windows, macOS and Linux. JavaFX and every JDBC driver are bundled.</p>
     <div class="code labeled"><span class="label">bash</span><button class="copy" type="button">Copy</button><pre><code>git clone git@github.com:paganini2008/sqljam.git &amp;&amp; cd sqljam
-mvn -DskipTests package                     # output goes to bin/
-java -jar bin/sqljam-1.0.0-SNAPSHOT.jar     # or double click the jar</code></pre></div>
+./mvnw -DskipTests package       # Windows: mvnw.cmd, output goes to bin/
+bin/sqljam.sh                    # Windows: bin\sqljam.bat, or double click the jar of your platform</code></pre></div>
     <div class="two">
       <div>
         <h3>Or use the API</h3>
@@ -330,7 +330,7 @@ importer.importDirectory(<span class="tok-k">new</span> File(<span class="tok-s"
     <div class="stats">
       <div class="stat"><b>95.3k</b><span>rows/s · H2 → Oracle</span></div>
       <div class="stat"><b>100%</b><span>cross-database pairs pass</span></div>
-      <div class="stat"><b>292</b><span>automated tests</span></div>
+      <div class="stat"><b>303</b><span>automated tests</span></div>
       <div class="stat"><b>91%</b><span>line coverage</span></div>
     </div>
     <div class="diagram"><img src="assets/benchmark.svg" alt="Throughput chart" width="1200" height="520" loading="lazy"></div>

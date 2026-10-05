@@ -296,6 +296,12 @@
                         </goals>
                         <configuration>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <!-- JavaFX natives differ by platform, they are added to the runnable jar of each platform -->
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>org.openjfx:*</exclude>
+                                </excludes>
+                            </artifactSet>
                             <filters>
                                 <filter>
                                     <artifact>*:*</artifact>
@@ -354,6 +360,143 @@
                 </executions>
             </plugin>
             <plugin>
+                <!-- JavaFX runtime of every platform: Windows x64, Linux x64, macOS x64 and aarch64 -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.7.0</version>
+                <executions>
+                    <execution>
+                        <id>unpack-javafx</id>
+                        <phase>prepare-package</phase>
+                        <goals>
+                            <goal>unpack</goal>
+                        </goals>
+                        <configuration>
+                            <excludes>module-info.class,META-INF/*.SF,META-INF/*.DSA,META-INF/*.RSA,META-INF/MANIFEST.MF</excludes>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-base</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>win</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/win</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-graphics</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>win</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/win</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-controls</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>win</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/win</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-base</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>linux</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/linux</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-graphics</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>linux</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/linux</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-controls</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>linux</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/linux</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-base</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>mac</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/mac</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-graphics</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>mac</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/mac</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-controls</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>mac</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/mac</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-base</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>mac-aarch64</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/mac-aarch64</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-graphics</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>mac-aarch64</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/mac-aarch64</outputDirectory>
+                                </artifactItem>
+                                <artifactItem>
+                                    <groupId>org.openjfx</groupId>
+                                    <artifactId>javafx-controls</artifactId>
+                                    <version>${javafx.version}</version>
+                                    <classifier>mac-aarch64</classifier>
+                                    <outputDirectory>${project.build.directory}/javafx/mac-aarch64</outputDirectory>
+                                </artifactItem>
+                            </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- One runnable jar per platform, since JavaFX natives of x64 and aarch64 have the same names -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.6.0</version>
+                <executions>
+                    <execution>
+                        <id>platform-jars</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <attach>false</attach>
+                            <descriptors>
+                        <descriptor>src/assembly/win.xml</descriptor>
+                        <descriptor>src/assembly/linux.xml</descriptor>
+                        <descriptor>src/assembly/mac.xml</descriptor>
+                        <descriptor>src/assembly/mac-aarch64.xml</descriptor>
+                            </descriptors>
+                            <archive>
+                                <manifest>
+                                    <mainClass>${main.class}</mainClass>
+                                </manifest>
+                                <manifestEntries>
+                                    <Implementation-Title>SqlJam</Implementation-Title>
+                                    <Implementation-Version>${project.version}</Implementation-Version>
+                                </manifestEntries>
+                            </archive>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <!-- Declared after the shade, source and javadoc plugins so that it runs last in the package phase -->
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-resources-plugin</artifactId>
@@ -368,13 +511,16 @@
                         <configuration>
                             <outputDirectory>${project.basedir}/bin</outputDirectory>
                             <overwrite>true</overwrite>
+                            <!-- Only @...@ is replaced, ${...} of shell scripts are kept -->
+                            <useDefaultDelimiters>false</useDefaultDelimiters>
+                            <delimiters>
+                                <delimiter>@</delimiter>
+                            </delimiters>
                             <resources>
                                 <resource>
                                     <directory>${project.build.directory}</directory>
                                     <includes>
-                                        <include>${project.build.finalName}.jar</include>
-                                        <include>${project.build.finalName}-sources.jar</include>
-                                        <include>${project.build.finalName}-javadoc.jar</include>
+                                        <include>${project.build.finalName}-*.jar</include>
                                     </includes>
                                 </resource>
                                 <resource>
@@ -383,7 +529,44 @@
                                         <include>sqljam.properties</include>
                                     </includes>
                                 </resource>
+                                <resource>
+                                    <!-- Launch scripts pick the runnable jar of the platform -->
+                                    <directory>${project.basedir}/src/bin</directory>
+                                    <filtering>true</filtering>
+                                    <includes>
+                                        <include>*.sh</include>
+                                        <include>*.bat</include>
+                                        <include>*.vmoptions</include>
+                                    </includes>
+                                </resource>
+                                <resource>
+                                    <!-- Dock icon of macOS, used by sqljam.sh -->
+                                    <directory>${project.basedir}/src/bin</directory>
+                                    <includes>
+                                        <include>*.png</include>
+                                    </includes>
+                                </resource>
                             </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <!-- Copied files lose the executable permission -->
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>chmod-bin</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>run</goal>
+                        </goals>
+                        <configuration>
+                            <target>
+                                <chmod file="${project.basedir}/bin/sqljam.sh" perm="755"/>
+                            </target>
                         </configuration>
                     </execution>
                 </executions>

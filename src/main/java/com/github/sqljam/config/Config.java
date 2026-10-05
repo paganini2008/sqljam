@@ -142,7 +142,7 @@ public class Config {
     /**
      * Directory of the running jar, which is not the working directory when the jar is started by double click
      */
-    static File getJarDirectory() {
+    public static File getJarDirectory() {
         try {
             File location = new File(Config.class.getProtectionDomain().getCodeSource().getLocation().toURI());
             return location.isFile() ? location.getParentFile() : null;

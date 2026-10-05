@@ -30,19 +30,27 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 
 ```bash
 git clone git@github.com:paganini2008/sqljam.git && cd sqljam
-mvn -DskipTests package                     # output goes to bin/
-java -jar bin/sqljam-1.0.0-SNAPSHOT.jar     # or double click the jar
+./mvnw -DskipTests package       # Windows: mvnw.cmd, output goes to bin/
+bin/sqljam.sh                    # Windows: bin\sqljam.bat, or double click the jar of your platform
 ```
 
 ```text
 bin/
-├── sqljam-1.0.0-SNAPSHOT.jar           # runnable jar, all JDBC drivers inside
-├── sqljam.properties                   # external configuration, edit and restart
-├── sqljam-1.0.0-SNAPSHOT-sources.jar
-└── sqljam-1.0.0-SNAPSHOT-javadoc.jar
+├── sqljam-1.0.0-SNAPSHOT-win.jar           # runnable jar of each platform,
+├── sqljam-1.0.0-SNAPSHOT-mac-aarch64.jar   # JavaFX and all JDBC drivers inside
+├── sqljam-1.0.0-SNAPSHOT-mac.jar
+├── sqljam-1.0.0-SNAPSHOT-linux.jar
+├── sqljam.sh / sqljam.bat                  # launchers, pick the jar of the platform
+├── sqljam.properties                       # configuration, edit and restart
+├── sqljam.vmoptions                        # JVM options, one per line
+└── sqljam.png                              # Dock icon of macOS
 ```
 
-`sqljam.properties` sits next to the runnable jar. Edit it and restart, no rebuild needed.
+`sqljam.properties` and `sqljam.vmoptions` sit next to the runnable jar. Edit them and restart, no rebuild needed.
+
+A splash screen shows the loading of the configuration, the data sources and the JDBC drivers:
+
+<p align="center"><img src="../assets/splash.png" alt="SqlJam splash screen" width="520"></p>
 
 | 1. Log in to a data source | 2. Export wizard | 3. Progress |
 |---|---|---|
@@ -50,10 +58,17 @@ bin/
 
 ## 4. Requirements
 
-| Item | Version |
+Only **Java 17+** is needed to run SqlJam. JavaFX and the JDBC drivers are inside the runnable jar, and building needs no Maven installation thanks to the Maven Wrapper (`./mvnw`).
+
+| Platform | Runnable jar | Launcher | Supported |
+|---|---|---|:---:|
+| Windows 10 / 11 (x64) | `sqljam-<version>-win.jar` | `sqljam.bat` | ✅ |
+| macOS Apple Silicon | `sqljam-<version>-mac-aarch64.jar` | `sqljam.sh` | ✅ |
+| macOS Intel | `sqljam-<version>-mac.jar` | `sqljam.sh` | ✅ |
+| Linux x64 (GTK 3) | `sqljam-<version>-linux.jar` | `sqljam.sh` | ✅ |
+
+| Database | Version |
 |---|---|
-| JDK | 17+ |
-| Maven | 3.8+ (build only) |
 | MySQL | 5.5 to 9.x |
 | PostgreSQL | 9.x to 16 |
 | Oracle | 11g to 23ai |
@@ -164,7 +179,7 @@ All settings live in `bin/sqljam.properties` next to the runnable jar. Settings 
 
 Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Server in Docker. Default settings.
 
-**Quality**: 292 tests (full cross-database import matrix, export package round trips, old-version SQL executed on real servers, UI and boundary tests), 91% line coverage.
+**Quality**: 303 tests (full cross-database import matrix, export package round trips, old-version SQL executed on real servers, UI and boundary tests), 91% line coverage.
 
 ## 9. Design Trade-offs
 

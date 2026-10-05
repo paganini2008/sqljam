@@ -216,6 +216,7 @@ public class ConnectionForm extends VBox {
             javafx.scene.control.ChoiceDialog<String> dialog = new javafx.scene.control.ChoiceDialog<>(current,
                     databases);
             dialog.initOwner(getScene() != null ? getScene().getWindow() : null);
+            Branding.applyIcons(dialog);
             dialog.setTitle(Messages.get("connection.browseDatabases.title"));
             dialog.setHeaderText(Messages.get("connection.browseDatabases"));
             dialog.showAndWait().ifPresent(databaseField::setText);

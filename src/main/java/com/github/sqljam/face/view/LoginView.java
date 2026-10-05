@@ -19,7 +19,6 @@ import java.io.IOException;
 import java.util.function.Consumer;
 
 import org.apache.commons.lang3.StringUtils;
-import org.kordamp.ikonli.javafx.FontIcon;
 import com.github.sqljam.face.model.ConnectionProfile;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -32,6 +31,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
+import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -101,14 +101,15 @@ public class LoginView extends StackPane {
         left.setPrefWidth(260);
         left.getStyleClass().add("login-sidebar");
 
-        FontIcon logo = Icons.of("fth-database");
+        ImageView logo = Branding.logoView(60);
+        logo.setId("loginLogo");
         logo.getStyleClass().add("login-logo");
         Label title = new Label("SqlJam");
         title.getStyleClass().add("login-title");
         Label subtitle = new Label(Messages.get("login.subtitle"));
         subtitle.getStyleClass().add("login-subtitle");
         VBox header = new VBox(2, title, subtitle);
-        HBox headerBox = new HBox(12, logo, header);
+        HBox headerBox = new HBox(16, logo, header);
         headerBox.setAlignment(Pos.CENTER_LEFT);
 
         testButton.setOnAction(event -> connectionForm.testConnection(null));

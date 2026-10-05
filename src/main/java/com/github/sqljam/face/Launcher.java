@@ -29,13 +29,25 @@ import javafx.application.Application;
  */
 public final class Launcher {
 
+    private static final String PRELOADER_PROPERTY = "javafx.preloader";
+
     private Launcher() {
     }
 
     public static void main(String[] args) {
+        // Started by double click: start again with the JVM options of sqljam.vmoptions
+        if (JvmOptions.relaunchIfNeeded(args)) {
+            return;
+        }
         // The user interface is in English only, including texts of JavaFX dialogs
         Locale.setDefault(Locale.ENGLISH);
-        Banner.print(Config.getInstance(), System.out);
+        Config config = Config.getInstance();
+        Banner.print(config, System.out);
+        // The splash screen is a JavaFX preloader, shown while the application is loading
+        if (config.getBoolean(SplashPreloader.ENABLED_KEY, true)
+                && System.getProperty(PRELOADER_PROPERTY) == null) {
+            System.setProperty(PRELOADER_PROPERTY, SplashPreloader.class.getName());
+        }
         Application.launch(SqlJamApplication.class, args);
     }
 }

@@ -27,11 +27,15 @@ SqlJam reads one metadata tree and generates SQL with a dialect chosen by target
 
 ```
 git clone git@github.com:paganini2008/sqljam.git && cd sqljam
-mvn -DskipTests package
-java -jar bin/sqljam-1.0.0-SNAPSHOT.jar
+./mvnw -DskipTests package
+bin/sqljam.sh
 ```
 
-The build writes everything to bin/: the runnable jar, sqljam.properties next to it, plus the sources and javadoc jars. Double click the jar to start. Edit sqljam.properties and restart, no rebuild needed.
+On Windows use mvnw.cmd and bin\sqljam.bat. The build writes everything to bin/: a runnable jar for each platform, the launchers, sqljam.properties and sqljam.vmoptions. Double click the jar of your platform, or run the launcher. Edit sqljam.properties or sqljam.vmoptions and restart, no rebuild needed.
+
+A splash screen shows the loading of the configuration, the data sources and the JDBC drivers:
+
+![Splash screen](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/splash.png)
 
 Step 1. log in to a data source:
 
@@ -47,13 +51,23 @@ Step 3. watch the progress:
 
 ## Requirements
 
-- JDK 17+, Maven 3.8+ (build only)
+Only Java 17+ is needed. JavaFX and the JDBC drivers are inside the runnable jar, and the Maven Wrapper builds without a Maven installation.
+
+Platforms:
+
+- ✅ Windows 10 / 11 (x64): sqljam-<version>-win.jar, sqljam.bat
+- ✅ macOS Apple Silicon: sqljam-<version>-mac-aarch64.jar, sqljam.sh
+- ✅ macOS Intel: sqljam-<version>-mac.jar, sqljam.sh
+- ✅ Linux x64 (GTK 3): sqljam-<version>-linux.jar, sqljam.sh
+
+Databases:
+
 - MySQL 5.5 to 9.x
 - PostgreSQL 9.x to 16
 - Oracle 11g to 23ai
 - SQL Server 2008 to 2022
 - H2 2.x, SQLite 3.x
-- All JDBC drivers are bundled in the fat jar
+- All JDBC drivers are bundled
 
 ## How It Works
 
@@ -146,7 +160,7 @@ All settings live in bin/sqljam.properties next to the runnable jar. Settings ch
 - H2 → SQL Server 2022: 5.0 s, 40.1k rows/s
 - Export package → PostgreSQL: 4.5 s, 44.5k rows/s
 
-Quality: 292 tests (full cross-database import matrix, export package round trips, old-version SQL executed on real servers, UI and boundary tests), 91% line coverage.
+Quality: 303 tests (full cross-database import matrix, export package round trips, old-version SQL executed on real servers, UI and boundary tests), 91% line coverage.
 
 ## Design Trade-offs
 

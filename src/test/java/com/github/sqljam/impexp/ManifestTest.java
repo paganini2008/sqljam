@@ -163,4 +163,16 @@ class ManifestTest {
         assertEquals(5L, tracker.remove(table).get("id"));
         assertNull(tracker.get(table));
     }
+
+    @Test
+    void portableFileNames() {
+        assertEquals("orders", LobManifestWriter.toFileName("orders"));
+        assertEquals("a_b_c_d", LobManifestWriter.toFileName("a/b:c d"));
+        // Windows reserved device names and trailing dots
+        assertEquals("aux_", LobManifestWriter.toFileName("aux"));
+        assertEquals("CON_", LobManifestWriter.toFileName("CON"));
+        assertEquals("com1_", LobManifestWriter.toFileName("com1"));
+        assertEquals("console", LobManifestWriter.toFileName("console"));
+        assertEquals("orders_", LobManifestWriter.toFileName("orders."));
+    }
 }

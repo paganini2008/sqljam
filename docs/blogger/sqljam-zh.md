@@ -30,19 +30,27 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 
 ```bash
 git clone git@github.com:paganini2008/sqljam.git && cd sqljam
-mvn -DskipTests package                     # 输出到 bin/
-java -jar bin/sqljam-1.0.0-SNAPSHOT.jar     # 也可以直接双击 jar
+./mvnw -DskipTests package       # Windows 用 mvnw.cmd，输出到 bin/
+bin/sqljam.sh                    # Windows 用 bin\sqljam.bat，也可以直接双击本平台的 jar
 ```
 
 ```text
 bin/
-├── sqljam-1.0.0-SNAPSHOT.jar           # 可运行 jar，内置全部 JDBC 驱动
-├── sqljam.properties                   # 外置配置，改完重启即可
-├── sqljam-1.0.0-SNAPSHOT-sources.jar
-└── sqljam-1.0.0-SNAPSHOT-javadoc.jar
+├── sqljam-1.0.0-SNAPSHOT-win.jar           # 每个平台一个可运行 jar，
+├── sqljam-1.0.0-SNAPSHOT-mac-aarch64.jar   # 内置 JavaFX 和全部 JDBC 驱动
+├── sqljam-1.0.0-SNAPSHOT-mac.jar
+├── sqljam-1.0.0-SNAPSHOT-linux.jar
+├── sqljam.sh / sqljam.bat                  # 启动脚本，自动选择本平台的 jar
+├── sqljam.properties                       # 外置配置，改完重启即可
+├── sqljam.vmoptions                        # JVM 参数，一行一个
+└── sqljam.png                              # macOS 程序坞图标
 ```
 
-`sqljam.properties` 和可运行 jar 放在一起。两个文件一起拷到任何目录都能用，双击启动也能找到配置。
+`sqljam.properties`、`sqljam.vmoptions` 和可运行 jar 放在一起。整个目录拷到任何地方都能用，双击启动也能找到配置。
+
+启动时显示启动画面，同时加载配置、数据源和 JDBC 驱动：
+
+<p align="center"><img src="../assets/splash.png" alt="SqlJam 启动画面" width="520"></p>
 
 | 1. 登录数据源 | 2. 导出向导 | 3. 进度 |
 |---|---|---|
@@ -50,10 +58,17 @@ bin/
 
 ## 4. Requirements
 
-| 项 | 版本 |
+运行只需要 **Java 17+**。JavaFX 和 JDBC 驱动都打进了可运行 jar，从源码构建也不需要安装 Maven，项目自带 Maven Wrapper（`./mvnw`）。
+
+| 平台 | 可运行 jar | 启动方式 | 支持 |
+|---|---|---|:---:|
+| Windows 10 / 11（x64） | `sqljam-<版本>-win.jar` | `sqljam.bat` | ✅ |
+| macOS Apple Silicon | `sqljam-<版本>-mac-aarch64.jar` | `sqljam.sh` | ✅ |
+| macOS Intel | `sqljam-<版本>-mac.jar` | `sqljam.sh` | ✅ |
+| Linux x64（GTK 3） | `sqljam-<版本>-linux.jar` | `sqljam.sh` | ✅ |
+
+| 数据库 | 版本 |
 |---|---|
-| JDK | 17+ |
-| Maven | 3.8+（仅构建） |
 | MySQL | 5.5 ~ 9.x |
 | PostgreSQL | 9.x ~ 16 |
 | Oracle | 11g ~ 23ai |
@@ -164,7 +179,7 @@ importer.exportDdlAndData();
 
 环境：Apple M2 Max / 32 GB / JDK 17。MySQL、PostgreSQL 本机，Oracle、SQL Server 在 Docker。默认配置。
 
-**质量**：292 个测试（含完整的跨库互导矩阵、导出包回放、旧版本语法在真实库上执行、界面功能与边界测试），行覆盖率 91%。
+**质量**：303 个测试（含完整的跨库互导矩阵、导出包回放、旧版本语法在真实库上执行、界面功能与边界测试），行覆盖率 91%。
 
 ## 9. 设计取舍（Design Trade-offs）
 
