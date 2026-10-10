@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
@@ -91,10 +92,10 @@ class ConfigTest {
     void applicationFile() throws Exception {
         // The external application file overrides classpath defaults, the user file overrides both
         File appFile = tempDir.resolve("app.properties").toFile();
-        java.nio.file.Files.writeString(appFile.toPath(),
+        Files.writeString(appFile.toPath(),
                 "sqljam.ui.theme=Dracula\nsqljam.pool.maximum-size=20\n");
         File userFile = tempDir.resolve("user.properties").toFile();
-        java.nio.file.Files.writeString(userFile.toPath(), "sqljam.ui.theme=Nord Dark\n");
+        Files.writeString(userFile.toPath(), "sqljam.ui.theme=Nord Dark\n");
         Config config = new Config(appFile, userFile);
         assertEquals("Nord Dark", config.getString("sqljam.ui.theme", null));
         assertEquals(20, config.getInt("sqljam.pool.maximum-size", 0));
@@ -103,7 +104,7 @@ class ConfigTest {
         // Saving writes the user file only
         config.set("sqljam.ui.theme", "Primer Light");
         config.save();
-        assertTrue(java.nio.file.Files.readString(appFile.toPath()).contains("Dracula"));
+        assertTrue(Files.readString(appFile.toPath()).contains("Dracula"));
     }
 
     @Test
@@ -112,11 +113,11 @@ class ConfigTest {
         assertNull(Config.getApplicationFile(null));
         assertNull(Config.getApplicationFile(dir));
         File flat = new File(dir, Config.FILE_NAME);
-        java.nio.file.Files.writeString(flat.toPath(), "a=1\n");
+        Files.writeString(flat.toPath(), "a=1\n");
         assertEquals(flat, Config.getApplicationFile(dir));
         File conf = new File(new File(dir, Config.CONF_DIR_NAME), Config.FILE_NAME);
         conf.getParentFile().mkdirs();
-        java.nio.file.Files.writeString(conf.toPath(), "a=2\n");
+        Files.writeString(conf.toPath(), "a=2\n");
         assertEquals(conf, Config.getApplicationFile(dir));
         // Tests run from target/classes, not from a jar
         assertNull(Config.getJarDirectory());

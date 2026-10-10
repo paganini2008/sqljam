@@ -23,6 +23,7 @@ import java.sql.Types;
 import java.util.HashMap;
 import java.util.Map;
 
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.db.PostgreSQL10Dialect;
@@ -98,7 +99,7 @@ class PostgreSQLDialectTest {
     void sequences() {
         PostgreSQLDialect dialect = new PostgreSQLDialect();
         assertTrue(dialect.isSequenceSupported());
-        org.junit.jupiter.api.Assertions.assertNull(dialect.getStatementBeforeSequenceCreated(null, null, "s"));
+        Assertions.assertNull(dialect.getStatementBeforeSequenceCreated(null, null, "s"));
         assertEquals("CREATE SEQUENCE IF NOT EXISTS seq AS bigint START WITH 1000 INCREMENT BY 10 MINVALUE 1"
                         + " MAXVALUE 99999 CYCLE CACHE 20",
                 dialect.getCreateSequenceStatement(null, null, "seq", 1000, 10, 1L, 99999L, true, 20L, "bigint"));

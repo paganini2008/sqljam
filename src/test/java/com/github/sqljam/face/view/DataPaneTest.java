@@ -36,6 +36,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.Labeled;
 import javafx.scene.control.TableView;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
@@ -184,7 +185,7 @@ class DataPaneTest {
         assertTrue(rows.get(2).get(3).startsWith("(40 bytes) 0x00000000"), rows.get(2).get(3));
         assertTrue(rows.get(2).get(3).endsWith("..."));
         FxTestSupport.waitUntil(() -> !table(pane).lookupAll(".null-cell").isEmpty());
-        assertEquals("NULL", FxTestSupport.call(() -> ((javafx.scene.control.Labeled) table(pane)
+        assertEquals("NULL", FxTestSupport.call(() -> ((Labeled) table(pane)
                 .lookupAll(".null-cell").iterator().next()).getText()));
     }
 

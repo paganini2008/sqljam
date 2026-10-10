@@ -18,23 +18,30 @@ package com.github.sqljam.impexp;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.DdlScripter.Catalog;
+import com.github.sqljam.impexp.DdlScripter.Schema;
 import com.github.sqljam.jdbc.ConnectionFactory;
 import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.jdbc.SimpleConnectionFactory;
 import com.github.sqljam.page.EachPage;
-import com.github.sqljam.impexp.DdlScripter.Catalog;
-import com.github.sqljam.impexp.DdlScripter.Schema;
-
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -78,16 +85,30 @@ public class ImportExportHandler implements ExportHandler {
          * Creates target schema (database of MySQL) if it does not exist
          */
         private boolean targetSchemaCreated = true;
+        /**
+         * Name pattern of target tables, {table} is replaced with the source table name, e.g. {table}_copy copies
+         * tables in the same schema. Target tables have the same names by default.
+         */
+        private String tableNamePattern;
     }
 
     private ConnectionFactory connectionFactory;
     private Dialect dialect;
     private ExportListener exportListener = ExportListener.NONE;
     private final IdentityValueTracker identityValueTracker = new IdentityValueTracker();
+    private final Map<String, Map<String, String>> targetColumnTypes = new ConcurrentHashMap<>();
 
     @Override
     public void setExportListener(ExportListener exportListener) {
         this.exportListener = exportListener != null ? exportListener : ExportListener.NONE;
+    }
+
+    /**
+     * Connections of the target database, e.g. an existing connection shared by {@link com.github.sqljam.jdbc.SharedConnectionFactory}.
+     * By default a connection pool is created from the configuration.
+     */
+    public void setConnectionFactory(ConnectionFactory connectionFactory) {
+        this.connectionFactory = connectionFactory;
     }
 
     @Override
@@ -185,7 +206,7 @@ public class ImportExportHandler implements ExportHandler {
     }
 
     private void createTargetSchemas(DdlScripter ddlScripter) throws SQLException {
-        java.util.Set<String> schemaNames = new java.util.LinkedHashSet<>();
+        Set<String> schemaNames = new LinkedHashSet<>();
         if (!configuration.getDbType().isSchemaSupported()) {
             if (StringUtils.isNotBlank(configuration.getTargetCatalogName())) {
                 schemaNames.add(configuration.getTargetCatalogName());
@@ -303,42 +324,73 @@ public class ImportExportHandler implements ExportHandler {
         for (int i = 0; i < columns.length; i++) {
             nullTypes[i] = dialect.getNullSqlType(getNullType(tableMetaData.findColumnMetaData(columns[i]).orElse(null)));
         }
-        String insertSql = dialect.getInsertTableStatement(catalogName, schemaName, tableName, columns);
+        // Empty LOBs of databases which store empty values as NULL (Oracle) are bound as LOB objects
+        int[] emptyLobTypes = new int[columns.length];
+        if (dialect.isEmptyValueNull()) {
+            for (int i = 0; i < columns.length; i++) {
+                emptyLobTypes[i] = getLobType(dialect.getRegisteredColumnTypeName(tableName, columns[i]),
+                        tableMetaData.findColumnMetaData(columns[i]).orElse(null));
+            }
+        }
+        String targetTableName = dialect.getTargetTableName(tableName);
+        Map<String, String> targetTypes = Collections.emptyMap();
+        String insertSql = dialect.getInsertTableStatement(catalogName, schemaName, targetTableName, columns);
         Connection connection = null;
         boolean autoCommit = true;
+        boolean transactional = false;
         try {
             connection = getConnection(catalogName, schemaName);
             autoCommit = connection.getAutoCommit();
-            connection.setAutoCommit(false);
-            executeQuietly(connection, dialect.getStatementBeforeInsert(catalogName, schemaName, tableName,
+            transactional = JdbcUtils.beginTransaction(connection);
+            if (dialect.isTargetTypeConversionRequired()) {
+                targetTypes = getTargetColumnTypes(connection, targetTableName);
+            }
+            executeQuietly(connection, dialect.getStatementBeforeInsert(catalogName, schemaName, targetTableName,
                     identityIncluded));
             int rows = 0;
             try (PreparedStatement ps = connection.prepareStatement(insertSql)) {
+                Map<Integer, Boolean> arrayParameters = new HashMap<>();
                 for (Map<String, Object> row : rowList) {
                     int index = 0;
                     for (Object value : row.values()) {
                         if (value == null) {
                             ps.setNull(index + 1, nullTypes[index]);
                         } else {
-                            ps.setObject(index + 1, value);
+                            if (isArrayText(value) && dialect.isArrayParameterSupported()
+                                    && isArrayParameter(ps, index + 1, arrayParameters)) {
+                                // Arrays kept as text (Parquet packages) are bound as arrays
+                                value = parseArrayText(value.toString());
+                            }
+                            if (emptyLobTypes[index] == Types.BLOB && value instanceof byte[]
+                                    && ((byte[]) value).length == 0) {
+                                ps.setBlob(index + 1, connection.createBlob());
+                            } else if (emptyLobTypes[index] == Types.CLOB && "".equals(value)) {
+                                ps.setClob(index + 1, connection.createClob());
+                            } else {
+                                ps.setObject(index + 1, targetTypes.isEmpty() ? value
+                                        : dialect.getTargetJdbcValue(value, targetTypes.get(columns[index]
+                                        .toLowerCase(Locale.ENGLISH))));
+                            }
                         }
                         index++;
                     }
                     ps.addBatch();
                 }
                 for (int n : ps.executeBatch()) {
-                    rows += n > 0 ? n : (n == java.sql.Statement.SUCCESS_NO_INFO ? 1 : 0);
+                    rows += n > 0 ? n : (n == Statement.SUCCESS_NO_INFO ? 1 : 0);
                 }
             }
-            executeQuietly(connection, dialect.getStatementAfterInsert(catalogName, schemaName, tableName,
+            executeQuietly(connection, dialect.getStatementAfterInsert(catalogName, schemaName, targetTableName,
                     identityIncluded));
-            connection.commit();
+            if (transactional) {
+                connection.commit();
+            }
             if (log.isInfoEnabled()) {
                 log.info("Execute dml: {}", insertSql);
                 log.info("Add {} rows to table: {}", rows, tableName);
             }
         } catch (Exception e) {
-            if (connection != null) {
+            if (connection != null && transactional) {
                 try {
                     connection.rollback();
                 } catch (SQLException ignored) {
@@ -349,7 +401,7 @@ public class ImportExportHandler implements ExportHandler {
             }
             throw e;
         } finally {
-            if (connection != null) {
+            if (connection != null && transactional) {
                 try {
                     connection.setAutoCommit(autoCommit);
                 } catch (SQLException ignored) {
@@ -371,8 +423,9 @@ public class ImportExportHandler implements ExportHandler {
         }
         List<String> sqls = new ArrayList<>();
         for (Map.Entry<String, Long> entry : maxValues.entrySet()) {
-            String sql = tableMetaData.getDialect().getResetIdentityStatement(catalogName, schemaName, tableName,
-                    entry.getKey(), entry.getValue() + 1);
+            Dialect targetDialect = tableMetaData.getDialect();
+            String sql = targetDialect.getResetIdentityStatement(catalogName, schemaName,
+                    targetDialect.getTargetTableName(tableName), entry.getKey(), entry.getValue() + 1);
             if (StringUtils.isNotBlank(sql)) {
                 sqls.add(sql);
             }
@@ -398,6 +451,42 @@ public class ImportExportHandler implements ExportHandler {
     /**
      * Sql type to bind NULL, some drivers (SQL Server) can not convert untyped NULL to binary columns
      */
+    /**
+     * BLOB or CLOB if the target column is a LOB, 0 otherwise. The type registered by created tables is preferred,
+     * the type of the source column is used when tables are not created.
+     */
+    /**
+     * Type names of the columns of a target table by lower case column name, read once per table
+     */
+    private Map<String, String> getTargetColumnTypes(Connection connection, String targetTableName)
+            throws SQLException {
+        Map<String, String> types = targetColumnTypes.get(targetTableName);
+        if (types != null) {
+            return types;
+        }
+        types = new HashMap<>();
+        try (ResultSet rs = connection.getMetaData().getColumns(connection.getCatalog(),
+                connection.getSchema(), dialect.foldIdentifier(targetTableName), null)) {
+            while (rs.next()) {
+                types.put(rs.getString("COLUMN_NAME").toLowerCase(Locale.ENGLISH),
+                        rs.getString("TYPE_NAME"));
+            }
+        }
+        targetColumnTypes.put(targetTableName, types);
+        return types;
+    }
+
+    static int getLobType(String targetTypeName, ColumnMetaData columnMetaData) {
+        String typeName = StringUtils.defaultString(targetTypeName).toLowerCase(Locale.ENGLISH);
+        if (typeName.isEmpty() && columnMetaData != null) {
+            int dataType = TableMetaData.getInt(columnMetaData.getDetail(), "DATA_TYPE");
+            return dataType == Types.BLOB ? Types.BLOB : dataType == Types.CLOB || dataType == Types.NCLOB
+                    ? Types.CLOB : 0;
+        }
+        return typeName.equals("blob") ? Types.BLOB : typeName.equals("clob") || typeName.equals("nclob")
+                ? Types.CLOB : 0;
+    }
+
     static int getNullType(ColumnMetaData columnMetaData) {
         if (columnMetaData == null) {
             return Types.VARCHAR;
@@ -433,6 +522,48 @@ public class ImportExportHandler implements ExportHandler {
             default:
                 return Types.VARCHAR;
         }
+    }
+
+    static boolean isArrayText(Object value) {
+        if (!(value instanceof CharSequence)) {
+            return false;
+        }
+        String text = value.toString();
+        return text.length() >= 2 && text.charAt(0) == '[' && text.charAt(text.length() - 1) == ']';
+    }
+
+    /**
+     * Whether the parameter is bound to an array column, the type is read once from parameter metadata
+     */
+    private static boolean isArrayParameter(PreparedStatement ps, int parameterIndex,
+                                            Map<Integer, Boolean> arrayParameters) {
+        return arrayParameters.computeIfAbsent(parameterIndex, index -> {
+            try {
+                return ps.getParameterMetaData().getParameterType(index) == Types.ARRAY;
+            } catch (SQLException | RuntimeException e) {
+                return false;
+            }
+        });
+    }
+
+    /**
+     * Elements of an array text, e.g. [1, 2, 3] or [a, b], NULL elements are nulls
+     */
+    static Object[] parseArrayText(String text) {
+        String content = text.substring(1, text.length() - 1).trim();
+        if (content.isEmpty()) {
+            return new Object[0];
+        }
+        String[] items = content.split(",\\s*");
+        Object[] elements = new Object[items.length];
+        for (int i = 0; i < items.length; i++) {
+            String item = items[i].trim();
+            if (item.length() >= 2 && item.startsWith("'") && item.endsWith("'")) {
+                item = item.substring(1, item.length() - 1).replace("''", "'");
+            }
+            elements[i] = "NULL".equalsIgnoreCase(item) ? null : item;
+        }
+        return elements;
     }
 
     protected boolean shouldFilterColumn(String columnName, TableMetaData tableMetaData) {

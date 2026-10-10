@@ -6,8 +6,8 @@
 
 **SqlJam**：*Move tables across databases. Schema, data and all.*
 
-一个 Java 17 + JavaFX 的桌面导入导出工具，支持 **MySQL、PostgreSQL、Oracle、SQL Server、H2、SQLite** 等数据库任意互导：
-可以**直接导入目标库**，也可以导出为带描述文件的 **SQL 导出包**，之后再成对导入。
+一个 Java 17 + JavaFX 的桌面导入导出工具，支持关系型与 OLAP 数据库（**MySQL、MariaDB、PostgreSQL、Oracle、SQL Server、H2、SQLite、DuckDB、ClickHouse** 等）任意互导：
+可以**直接导入目标库**，也可以在同一个 schema 里复制表，或者导出为带描述文件的 **SQL / Parquet 导出包**，之后再成对导入。
 
 ![SqlJam 主界面](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
 
@@ -25,6 +25,11 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 | 脚本太大 | 数据文件按 10 MB 切分：`orders.sql`、`orders_2.sql`… |
 | LOB 难处理 | LOB 单独存文件，按主键回填 |
 | 脚本没有上下文 | `manifest.json`：源、目标、选项、文件 SHA-256、行数 |
+| 分析要 Parquet | 内置 DuckDB 生成 Parquet 导出包，也能把其他工具产出的 Parquet 文件加载进任意表 |
+| 数仓和业务库割裂 | DuckDB、ClickHouse 作为 OLAP 数据源，和关系型数据库分组展示 |
+| 只要表的一部分 | 数据页查询（列、WHERE、GROUP BY、ORDER BY），只导出查询结果的行 |
+| 原地复制一份表 | 同一 schema 内按 `{table}_copy` 复制，键、索引、约束自动改名，原表受保护 |
+| 自定义和新型类型 | PostgreSQL 枚举与域、向量、联合、Map、Tuple、Variant |
 
 ## 3. Quick Start
 
@@ -43,7 +48,8 @@ bin/
 ├── sqljam.sh / sqljam.bat                  # 启动脚本，自动选择本平台的 jar
 ├── sqljam.properties                       # 外置配置，改完重启即可
 ├── sqljam.vmoptions                        # JVM 参数，一行一个
-└── sqljam.png                              # macOS 程序坞图标
+├── sqljam.png                              # macOS 程序坞图标
+└── sqljam-tutorial.mp4                     # 教学视频，3 分钟内看完导出与导入
 ```
 
 `sqljam.properties`、`sqljam.vmoptions` 和可运行 jar 放在一起。整个目录拷到任何地方都能用，双击启动也能找到配置。
@@ -52,9 +58,19 @@ bin/
 
 <p align="center"><img src="https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/splash.png" alt="SqlJam 启动画面" width="520"></p>
 
+首次启动会自带一个 **Example Shop (H2)** 示例数据源，包含几张电商表（categories、customers、products、orders、order_items），装好就能直接体验。删掉了也没关系，登录页的 **Example** 按钮或菜单 **Help → Restore Example Database** 随时可以恢复。
+
+右键数据源选 **Connect**，连上之后同一个菜单变成 **Disconnect**，断开时它的表页签一起关闭。导入导出选目标数据源时，旁边的 **+** 按钮可以当场新建一个。工具栏最右边是 **Exit**。**Help → About SqlJam** 里有版本、主页、仓库地址和作者联系方式，右下角的 GitHub 图标点一下直接打开仓库。
+
+[教学视频](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-tutorial.mp4)以示例库演示一遍：筛选行、导出到文件、导出包导入 PostgreSQL，再直接复制到 SQL Server 和 Oracle。
+
 | 1. 登录数据源 | 2. 导出向导 | 3. 进度 |
 |---|---|---|
 | ![login](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/login.png) | ![export](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/export-wizard.png) | ![progress](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/progress.png) |
+
+| 4. 数据查询 | 5. 导出包浏览 | 6. Parquet 文件 |
+|---|---|---|
+| ![query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/table-data.png) | ![viewer](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/package-viewer.png) | ![parquet](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/import-parquet.png) |
 
 ## 4. Requirements
 
@@ -73,7 +89,10 @@ bin/
 | PostgreSQL | 9.x ~ 16 |
 | Oracle | 11g ~ 23ai |
 | SQL Server | 2008 ~ 2022 |
+| MariaDB | 10.3 ~ 11.x |
 | H2 / SQLite | 2.x / 3.x |
+| DuckDB（OLAP） | 1.x |
+| ClickHouse（OLAP） | 24.x ~ 26.x |
 
 JDBC 驱动全部打进 fat jar，无需额外下载。
 
@@ -88,11 +107,14 @@ flowchart LR
     D --> I[直接导入] --> TD[(目标库)]
     D --> E[导出包<br/>schema.sql · data*.sql · lob/ · manifest.json]
     E --> SI[ScriptImporter] --> TD
+    D --> P[Parquet 导出包<br/>DuckDB 中转 · data/*.parquet]
+    P --> PI[ParquetImporter] --> TD
 ```
 
 - **读一次元数据**：`XxxMetaDataOperations` 按库补全注释、自增、生成列、分区、序列。
 - **按目标生成 SQL**：`DbType.createDialect(major, minor)` 选出版本子类。
 - **数据流**：先统计行数（百分比进度）→ 按主键分页读取 → 值归一化 → 批量写入或生成字面量。
+- **Parquet**：数据经过内置的 DuckDB 中转，`COPY ... TO 'x.parquet'` 写出，`read_parquet` 读回。
 
 ## 6. Code Examples
 
@@ -121,6 +143,15 @@ export/
 └── manifest.json
 ```
 
+同样的表导出为 Parquet：
+
+```java
+ParquetExporter parquet = new ParquetExporter(new File("export-parquet"));
+parquet.setTargetDbType(DbType.POSTGRESQL);
+parquet.setCompression("ZSTD");
+parquet.exportDdlAndData();   // schema.sql、data/orders.parquet、constraints.sql、manifest.json
+```
+
 ### Example 2：Oracle 直接导入 SQL Server（自动建 schema）
 
 ```java
@@ -142,11 +173,22 @@ importer.exportDdlAndData();
 
 **Output**：表、主键、索引、外键、注释、序列都在 `demo.hr`，自增从导入的最大值继续。
 
+按查询导出部分行，或者在同一 schema 里复制：
+
+```java
+source.getTableQueries().put("EMPLOYEES", new TableQuery(List.of("EMPLOYEE_ID", "NAME", "SALARY"),
+        "SALARY > 1000", null, "SALARY DESC"));   // 目标表按这几列自动创建
+target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 EMPLOYEES_COPY
+```
+
 | 源列 | → PostgreSQL | → Oracle | → SQL Server |
 |---|---|---|---|
 | MySQL `bigint unsigned` | `numeric(20, 0)` | `NUMBER(20,0)` | `decimal(20,0)` |
 | PostgreSQL `jsonb` | same | `CLOB` | `nvarchar(max)` |
 | SQL Server `datetime2(7)` | `timestamp` | `TIMESTAMP(7)` | same |
+| PostgreSQL 枚举 / 域 | same（在目标 schema 创建） | `VARCHAR2` / 基础类型 | `varchar` / 基础类型 |
+| MySQL / Oracle `VECTOR` | `text` | same | `nvarchar(max)` |
+| ClickHouse `Array(T)` / `Map(K, V)` | `text` | `CLOB` | `nvarchar(max)` |
 
 ## 7. Configuration
 
@@ -179,7 +221,7 @@ importer.exportDdlAndData();
 
 环境：Apple M2 Max / 32 GB / JDK 17。MySQL、PostgreSQL 本机，Oracle、SQL Server 在 Docker。默认配置。
 
-**质量**：303 个测试（含完整的跨库互导矩阵、导出包回放、旧版本语法在真实库上执行、界面功能与边界测试），行覆盖率 91%。
+**质量**：578 个测试（含覆盖每种数据库全部字段类型的跨库互导矩阵、导出包与 Parquet 回放、同 schema 复制、旧版本语法在真实库上执行、界面功能与边界测试），行覆盖率 91%。
 
 ## 9. 设计取舍（Design Trade-offs）
 
@@ -188,6 +230,9 @@ importer.exportDdlAndData();
 - **逐表复制**：对生产库的压力可预期。
 - **导出包是纯 SQL**：可读、可改、可移植。直接导入走批量写入，追求速度。
 - **按版本生成 SQL**：老版本数据库拿到的是它能理解的语法，而不是最低公分母。
+- **Parquet 交给 DuckDB**：一个内置引擎负责读写 Parquet，不引入 Hadoop 依赖。
+- **分组结果用于浏览**：导出的始终是表的真实行，GROUP BY 的结果是这些行的视图。
+- **复制要有新表名**：同一 schema 内复制需要 `{table}_copy` 这样的表名，原表永远不会被覆盖。
 
 ## 10. Summary
 
@@ -199,3 +244,5 @@ importer.exportDdlAndData();
 6. 时间、无符号、bit、money、UUID、JSON 等值跨库不失真。
 7. 连接池 + 批量写入，直接导入 4 万 ~ 9.5 万行/秒。
 8. 暗色主流界面，7 种主题，百分比进度与取消。
+9. Parquet 导出包与外部 Parquet 文件加载，DuckDB、ClickHouse 作为 OLAP 数据源。
+10. 表数据可查询，只导出查询结果，也能在同一 schema 内复制表。

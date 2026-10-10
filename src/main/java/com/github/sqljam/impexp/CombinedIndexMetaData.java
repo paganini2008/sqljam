@@ -105,7 +105,7 @@ public class CombinedIndexMetaData implements TiedMetaData {
         }
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
-        String tableName = getTableName();
+        String tableName = getDialect().getTargetTableName(getTableName());
         boolean partition = tableMetaData.isPartitioned();
         boolean unique = IndexMetaData.isUnique(getDetail());
         String indexName = getDialect().getIndexNameStatement(catalogName, schemaName, tableName, columnNames, unique,

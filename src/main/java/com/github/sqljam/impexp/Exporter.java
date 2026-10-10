@@ -18,13 +18,13 @@ package com.github.sqljam.impexp;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
-import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.jdbc.ConnectionFactory;
+import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.jdbc.SimpleConnectionFactory;
 import com.github.sqljam.jdbc.page.MapBasedPageReader;
 import com.github.sqljam.page.EachPage;
@@ -110,6 +110,22 @@ public class Exporter {
          * Dialect of source database to read data. Default is the dialect of dbType.
          */
         private Dialect sourceDialect;
+        /**
+         * Queries narrowing the rows and columns of tables by table name, e.g. rows filtered in the data viewer
+         */
+        private Map<String, TableQuery> tableQueries = new HashMap<>();
+
+        /**
+         * Query of a table, null if all rows and columns are exported. Grouped rows are not rows of the table.
+         */
+        public TableQuery getTableQuery(String tableName) {
+            TableQuery query = tableQueries != null ? tableQueries.get(tableName) : null;
+            if (query != null && query.isGrouped()) {
+                throw new ImpExpException("Grouped rows of table " + tableName + " can not be exported,"
+                        + " the rows are exported without GROUP BY");
+            }
+            return query == null || query.isEmpty() ? null : query;
+        }
 
         public Dialect getDialect() {
             if (dialect == null && dbType != null) {
@@ -216,7 +232,7 @@ public class Exporter {
         }
     }
 
-    private final Map<TableMetaData, Long> tableRows = new java.util.HashMap<>();
+    private final Map<TableMetaData, Long> tableRows = new HashMap<>();
     private long totalRows;
     private long processedRows;
 
@@ -237,9 +253,10 @@ public class Exporter {
                             continue;
                         }
                         checkCancelled();
-                        String sql = sourceDialect.getCountTableStatement(catalogMd.getCatalogName(),
-                                schemaMd.getSchemaName(), tableMd.getTableName());
-                        Long rows = com.github.sqljam.jdbc.JdbcUtils.fetchOne(connection, sql, Long.class);
+                        String sql = sourceDialect.getCountQueryStatement(catalogMd.getCatalogName(),
+                                schemaMd.getSchemaName(), tableMd.getTableName(),
+                                configuration.getTableQuery(tableMd.getTableName()));
+                        Long rows = JdbcUtils.fetchOne(connection, sql, Long.class);
                         tableRows.put(tableMd, rows != null ? rows : 0L);
                         totalRows += rows != null ? rows : 0L;
                     }
@@ -324,16 +341,18 @@ public class Exporter {
                            ConnectionFactory connectionFactory) {
         checkCancelled();
         Dialect sourceDialect = configuration.getSourceDialect();
+        if (configuration.getDialect() != null) {
+            sourceDialect.setReadTargetDbType(configuration.getDialect().getDbType());
+        }
         String[] columnNames = tableMetaData.getColumnMetaDatas().stream().map(ColumnMetaData::getColumnName)
                 .toArray(String[]::new);
         String[] typeNames = tableMetaData.getColumnMetaDatas().stream()
                 .map(md -> (String) md.getDetail().get("TYPE_NAME")).toArray(String[]::new);
+        TableQuery query = configuration.getTableQuery(tableName);
         String sql = columnNames.length > 0
-                ? sourceDialect.getSelectTableStatement(catalogName, schemaName, tableName, columnNames, typeNames)
+                ? sourceDialect.getQueryStatement(catalogName, schemaName, tableName, columnNames, typeNames, query)
                 : sourceDialect.getSelectTableStatement(catalogName, schemaName, tableName);
-        List<String> orderColumns = tableMetaData.getPrimaryKeyColumnNames();
-        String orderBy = orderColumns.isEmpty() ? null
-                : orderColumns.stream().map(sourceDialect::quoteIdentifier).collect(Collectors.joining(","));
+        String orderBy = sourceDialect.getQueryOrderBy(query, tableMetaData.getPrimaryKeyColumnNames());
         // Rows were counted already
         long rows = tableRows.getOrDefault(tableMetaData, -1L);
         PageReader<Map<String, Object>> pageReader = new MapBasedPageReader(connectionFactory, sql, new Object[0],

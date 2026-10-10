@@ -93,7 +93,7 @@ class ConnectionFormTest {
 
     @Test
     void listsOnlySupportedDatabaseTypes() {
-        assertEquals(6, FxTestSupport.call(() -> dbTypeCombo().getItems().size()));
+        assertEquals(DbType.values().length, FxTestSupport.call(() -> dbTypeCombo().getItems().size()));
     }
 
     @Test
@@ -112,12 +112,16 @@ class ConnectionFormTest {
     }
 
     @Test
-    void requiresFileOfH2AndSQLite() {
+    void requiresFileOfFileDatabases() {
         fill(DbType.H2, "", "", "");
         assertEquals("File is required", validate());
         fill(DbType.SQLITE, "", "", " ");
         assertEquals("File is required", validate());
         fill(DbType.SQLITE, "", "", new File(dir, "a.sqlite").getAbsolutePath());
+        assertNull(validate());
+        fill(DbType.DUCKDB, "", "", "");
+        assertEquals("File is required", validate());
+        fill(DbType.DUCKDB, "", "", new File(dir, "a.duckdb").getAbsolutePath());
         assertNull(validate());
     }
 
@@ -127,6 +131,28 @@ class ConnectionFormTest {
         assertNull(validate());
         fill(DbType.SQLSERVER, "localhost", "1433", "");
         assertNull(validate());
+    }
+
+    @Test
+    void connectsClickHouseServer() {
+        fill(DbType.MYSQL, "localhost", "3306", "");
+        FxTestSupport.run(() -> dbTypeCombo().setValue(DbType.CLICKHOUSE));
+        // The default http port of ClickHouse, the database is optional
+        assertEquals("8123", FxTestSupport.call(() -> field("portField").getText()));
+        assertEquals("Database", FxTestSupport.call(() -> ((Label) form.lookup("#databaseLabel")).getText()));
+        fill(DbType.CLICKHOUSE, "localhost", "8123", "");
+        assertNull(validate());
+        fill(DbType.CLICKHOUSE, "localhost", "18123", "app");
+        assertNull(validate());
+        ConnectionProfile profile = FxTestSupport.call(form::getProfile);
+        assertEquals("jdbc:clickhouse:http://localhost:18123/app?compress=0", profile.getJdbcUrl());
+        // A url entered by the user gets the options of SqlJam, configured options are kept
+        profile.setUrl("jdbc:clickhouse:http://localhost:18123/app?ssl=false");
+        assertEquals("jdbc:clickhouse:http://localhost:18123/app?ssl=false&compress=0", profile.getJdbcUrl());
+        profile.setUrl("jdbc:clickhouse:http://localhost:18123/app?compress=1");
+        assertEquals("jdbc:clickhouse:http://localhost:18123/app?compress=1", profile.getJdbcUrl());
+        assertEquals(DbType.CLICKHOUSE, DbType.forUrl("jdbc:clickhouse:http://localhost:18123/app"));
+        assertEquals(DbType.CLICKHOUSE, DbType.forUrl("jdbc:ch://localhost:8123"));
     }
 
     @Test
@@ -184,7 +210,11 @@ class ConnectionFormTest {
         // Browsing databases of the server
         assertTrue(FxTestSupport.call(() -> form.lookup("#browseButton").isVisible()));
         FxTestSupport.run(() -> dbTypeCombo().setValue(DbType.ORACLE));
-        assertFalse(FxTestSupport.call(() -> form.lookup("#browseButton").isVisible()));
+        assertFalse(FxTestSupport.call(() -> form.lookup("#browseButton").isVisible()));        // DuckDB is a file like SQLite
+        FxTestSupport.run(() -> dbTypeCombo().setValue(DbType.DUCKDB));
+        assertFalse(FxTestSupport.call(() -> field("hostField").getParent().isVisible()));
+        assertTrue(FxTestSupport.call(() -> form.lookup("#browseButton").isVisible()));
+        assertEquals("File", FxTestSupport.call(() -> ((Label) form.lookup("#databaseLabel")).getText()));
     }
 
     @Test

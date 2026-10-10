@@ -15,23 +15,40 @@
  */
 package com.github.sqljam.jdbc;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.net.InetAddress;
+import java.sql.Array;
+import java.sql.Blob;
+import java.sql.Clob;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.SQLFeatureNotSupportedException;
 import java.sql.SQLXML;
 import java.sql.Statement;
+import java.sql.Time;
+import java.sql.Timestamp;
 import java.sql.Types;
-import java.sql.Blob;
-import java.sql.Clob;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.Year;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 import com.github.sqljam.utils.ConvertUtils;
@@ -362,7 +379,7 @@ public class JdbcUtils {
      */
     public static Object getColumnValue(ResultSet rs, int columnIndex, int columnType, String typeName)
             throws SQLException {
-        String lowerTypeName = typeName != null ? typeName.toLowerCase(java.util.Locale.ENGLISH) : "";
+        String lowerTypeName = typeName != null ? typeName.toLowerCase(Locale.ENGLISH) : "";
         switch (lowerTypeName) {
             case "money":
                 // PostgreSQL money is formatted with currency symbol and group separators, e.g. $1,234.56
@@ -408,9 +425,9 @@ public class JdbcUtils {
             case -102: // oracle TIMESTAMP WITH LOCAL TIME ZONE
                 try {
                     // Date/time without time zone are read as local values to keep their wall clock time
-                    value = columnType == Types.DATE ? getTemporal(rs, columnIndex, java.time.LocalDate.class)
-                            : columnType == Types.TIME ? getTemporal(rs, columnIndex, java.time.LocalTime.class)
-                            : getTemporal(rs, columnIndex, java.time.LocalDateTime.class);
+                    value = columnType == Types.DATE ? getTemporal(rs, columnIndex, LocalDate.class)
+                            : columnType == Types.TIME ? getTemporal(rs, columnIndex, LocalTime.class)
+                            : getTemporal(rs, columnIndex, LocalDateTime.class);
                 } catch (SQLException e) {
                     // Dates stored as text (SQLite) in other formats
                     value = rs.getString(columnIndex);
@@ -422,7 +439,7 @@ public class JdbcUtils {
             case Types.TIMESTAMP_WITH_TIMEZONE:
             case -101: // oracle TIMESTAMP WITH TIME ZONE
             case -155: // sql server DATETIMEOFFSET
-                value = rs.getObject(columnIndex, java.time.OffsetDateTime.class);
+                value = rs.getObject(columnIndex, OffsetDateTime.class);
                 break;
             case Types.SQLXML:
                 SQLXML xml = rs.getSQLXML(columnIndex);
@@ -439,16 +456,16 @@ public class JdbcUtils {
         try {
             return rs.getObject(columnIndex, type);
         } catch (SQLException | RuntimeException e) {
-            if (type == java.time.LocalDate.class) {
+            if (type == LocalDate.class) {
                 return rs.getDate(columnIndex);
-            } else if (type == java.time.LocalTime.class) {
+            } else if (type == LocalTime.class) {
                 return rs.getTime(columnIndex);
             }
             return rs.getTimestamp(columnIndex);
         }
     }
 
-    static java.math.BigDecimal parseMoney(String text) {
+    static BigDecimal parseMoney(String text) {
         if (text == null) {
             return null;
         }
@@ -458,7 +475,7 @@ public class JdbcUtils {
         if (number.isEmpty()) {
             return null;
         }
-        java.math.BigDecimal value = new java.math.BigDecimal(number);
+        BigDecimal value = new BigDecimal(number);
         return negative ? value.negate() : value;
     }
 
@@ -474,27 +491,31 @@ public class JdbcUtils {
             return blob.getBytes(1, (int) blob.length());
         } else if (value instanceof SQLXML) {
             return ((SQLXML) value).getString();
-        } else if (value instanceof java.sql.Array) {
-            Object array = ((java.sql.Array) value).getArray();
+        } else if (value instanceof Array) {
+            Object array = ((Array) value).getArray();
             return array instanceof Object[] ? array : String.valueOf(array);
-        } else if (value instanceof java.sql.Timestamp) {
-            return ((java.sql.Timestamp) value).toLocalDateTime();
-        } else if (value instanceof java.sql.Date) {
-            return ((java.sql.Date) value).toLocalDate();
-        } else if (value instanceof java.sql.Time) {
-            return ((java.sql.Time) value).toLocalTime();
-        } else if (value instanceof java.math.BigInteger) {
+        } else if (value instanceof Timestamp) {
+            return ((Timestamp) value).toLocalDateTime();
+        } else if (value instanceof Date) {
+            return ((Date) value).toLocalDate();
+        } else if (value instanceof Time) {
+            return ((Time) value).toLocalTime();
+        } else if (value instanceof BigInteger) {
             // BIGINT UNSIGNED of MySQL
-            return new java.math.BigDecimal((java.math.BigInteger) value);
-        } else if (value instanceof java.util.UUID) {
+            return new BigDecimal((BigInteger) value);
+        } else if (value instanceof UUID) {
             return value.toString();
-        } else if (value instanceof java.time.Year) {
-            return ((java.time.Year) value).getValue();
+        } else if (value instanceof Year) {
+            return ((Year) value).getValue();
+        } else if (value instanceof InetAddress) {
+            // IPv4 and IPv6 of ClickHouse
+            return ((InetAddress) value).getHostAddress();
         }
         String className = value.getClass().getName();
         if (className.startsWith("org.postgresql.") || className.startsWith("oracle.") || className.startsWith(
-                "microsoft.sql.")) {
-            // PGobject (json, uuid, inet ...), oracle.sql.* and DateTimeOffset
+                "microsoft.sql.") || className.startsWith("org.duckdb.") || className.startsWith("com.clickhouse.")
+                || className.startsWith("org.h2.api.")) {
+            // PGobject (json, uuid, inet ...), oracle.sql.*, DateTimeOffset and DuckDB json, structs and maps
             return value.toString();
         }
         return value;
@@ -699,6 +720,33 @@ public class JdbcUtils {
         try {
             commit(connection);
         } catch (SQLException e) {
+        }
+    }
+
+    private static final Map<String, Boolean> TRANSACTION_SUPPORTS = new ConcurrentHashMap<>();
+
+    /**
+     * Begins a transaction by turning off auto commit. Returns false if the database has no transactions
+     * (ClickHouse), statements are committed one by one then.
+     */
+    public static boolean beginTransaction(Connection connection) throws SQLException {
+        // Connection pools evict connections which report unsupported features (SQLState 0A000). Some drivers
+        // query the server for supportsTransactions (SQL Server), the answer is kept per database url.
+        DatabaseMetaData metaData = connection.getMetaData();
+        String url = StringUtils.defaultString(metaData.getURL());
+        Boolean supported = TRANSACTION_SUPPORTS.get(url);
+        if (supported == null) {
+            supported = metaData.supportsTransactions();
+            TRANSACTION_SUPPORTS.put(url, supported);
+        }
+        if (!supported) {
+            return false;
+        }
+        try {
+            connection.setAutoCommit(false);
+            return true;
+        } catch (SQLFeatureNotSupportedException e) {
+            return false;
         }
     }
 

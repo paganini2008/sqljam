@@ -4,12 +4,12 @@
 
 **Move tables across databases. Schema, data and all.**
 
-SqlJam is a desktop import/export tool for MySQL, PostgreSQL, Oracle, SQL Server, H2, SQLite and more.
-It copies tables (with indexes, constraints, sequences and partitions) **directly into another database**, or saves them as a **self-describing SQL export package** that can be imported later.
+SqlJam is a desktop import/export tool for relational and OLAP databases: MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, H2, SQLite, DuckDB, ClickHouse and more.
+It copies tables (with indexes, constraints, sequences and partitions) **directly into another database** or into the same schema as copies, or saves them as a **self-describing export package** of SQL or **Parquet** files that can be imported later.
 
 ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
 ![JavaFX](https://img.shields.io/badge/JavaFX-17-1f6feb)
-![Tests](https://img.shields.io/badge/tests-303%20passed-3fb950)
+![Tests](https://img.shields.io/badge/tests-578%20passed-3fb950)
 ![Coverage](https://img.shields.io/badge/coverage-91%25%20lines-3fb950)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Cross-database](https://img.shields.io/badge/cross--database%20matrix-passing-3fb950)
@@ -33,6 +33,12 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 | Timestamps shift, unsigned values overflow, `bit` becomes garbage | Portable value pipeline: `LocalDateTime`, unsigned widening, bit strings, money, UUID, JSON, XML, arrays |
 | Re-runs fail half way | Idempotent DDL (drop/create, `IF NOT EXISTS`, sequence restart), FKs created after data |
 | Long jobs are a black box | **Percentage progress**, per-table progress, error log and cancel in the UI |
+| Analytics teams want Parquet, not SQL | **Parquet packages** (ZSTD, Snappy, GZIP) through an embedded DuckDB, and **Parquet files of other tools** loaded into any table |
+| Warehouses live apart from OLTP databases | **DuckDB and ClickHouse data sources**, grouped as OLAP databases next to the relational ones |
+| Only part of a table is needed | **Data viewer query**: columns, WHERE, GROUP BY and ORDER BY, then export the rows of the query. Missing target tables are created with the selected columns |
+| A copy next to the original | **Copy in the same schema** with a table name such as `{table}_copy`. Keys, indexes and constraints get their own names and the source tables are protected |
+| What is inside this package? | **Package viewer**: files with size and modified time, previews of manifest, SQL, LOB and Parquet files |
+| Custom and modern types | PostgreSQL enums and domains, MySQL, MariaDB and Oracle vectors, DuckDB unions and fixed arrays, ClickHouse variants, maps and tuples |
 
 ---
 
@@ -49,7 +55,9 @@ flowchart LR
     D --> DS[DdlScripter]
     DS --> I[ImportExporter] --> TD[(Target DB)]
     DS --> E[ScriptExporter] --> P[/Export package<br/>schema.sql · data*.sql · lob/ · manifest.json/]
+    DS --> PE[ParquetExporter<br/>DuckDB workspace] --> PP[/Parquet package<br/>schema.sql · data/*.parquet · manifest.json/]
     P --> SI[ScriptImporter] --> TD
+    PP --> PI[ParquetImporter] --> TD
 ```
 
 | Component | Role |
@@ -57,6 +65,9 @@ flowchart LR
 | `Exporter` | Reads metadata, counts rows, pages rows (ordered by primary key) and feeds an `ExportHandler` |
 | `ScriptExporter` / `ImportExporter` | Facades: export to a package / import into a database |
 | `ScriptImporter` | Imports an export package (validates `manifest.json`, runs files in order, restores LOBs) |
+| `ParquetExporter` / `ParquetImporter` | Parquet packages and Parquet files of other tools, written and read by an embedded DuckDB workspace |
+| `AbstractFileImporter` | Picks the importer of a package by the data format in its `manifest.json` |
+| `TableQuery` | Columns, WHERE, GROUP BY and ORDER BY of the data viewer, used by exports per table |
 | `Dialect` + `impexp.db.*` | Per-database SQL generation. Old versions are subclasses |
 | `MetaDataOperations` + `impexp.db.*` | Per-database metadata fixes (comments, identity, generated columns, partitions, sequences) |
 | `face.*` | JavaFX UI (AtlantaFX themes, Ikonli icons) |
@@ -80,8 +91,11 @@ Only **Java 17+** is needed to run SqlJam. JavaFX and all JDBC drivers are insid
 | PostgreSQL | 16 | 9.x (`PostgreSQL9/10Dialect`) |
 | Oracle | 23ai Free | 11g (`Oracle11g/12cDialect`) |
 | SQL Server | 2022 | 2008 (`SQLServer2008Dialect`) |
+| MariaDB | 11.8 | 10.3 |
 | H2 | 2.3 | 2.x |
 | SQLite | 3.46 | 3.x |
+| DuckDB (OLAP) | 1.5 | 1.x |
+| ClickHouse (OLAP) | 26.9 | 24.x |
 
 All JDBC drivers are bundled, no extra downloads.
 
@@ -106,6 +120,7 @@ bin/
 ├── sqljam.properties                       # configuration, edit and restart
 ├── sqljam.vmoptions                        # JVM options, one per line
 ├── sqljam.png                              # Dock icon of macOS
+├── sqljam-tutorial.mp4                     # tutorial video, export and import in under 3 minutes
 ├── sqljam-1.0.0-SNAPSHOT-sources.jar
 └── sqljam-1.0.0-SNAPSHOT-javadoc.jar
 ```
@@ -116,13 +131,21 @@ SqlJam starts with a splash screen while it loads the configuration, the data so
 
 <p align="center"><img src="docs/assets/splash.png" alt="SqlJam splash screen" width="520"></p>
 
-1. Create a **data source** on the login page and click **Connect**.
+1. Create a **data source** on the login page and click **Connect**. The first start brings an **Example Shop (H2)** data source with a few e-commerce tables to try everything right away. **Example** on the login page or **Help → Restore Example Database** brings it back at any time.
 2. Right-click a database or schema → **Export…**
-3. Pick tables, choose **SQL scripts** (folder) or **Database** (another data source), press **Start**.
+3. Pick tables, choose **SQL scripts** or **Parquet** (folder) or **Database** (another data source, or a new one from the **+** button next to it), press **Start**.
+4. Open a table, narrow its rows on the **Data** tab with columns, WHERE, GROUP BY and ORDER BY, then **Export…** just those rows.
+5. Right-click a connected data source → **Disconnect** when you are done, its table tabs close with it. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and the author, and the GitHub icon at the bottom right opens the repository.
+
+A short [tutorial video](docs/assets/sqljam-tutorial.mp4) walks through the example database: query rows, export into files, import the package into PostgreSQL, and copy the tables straight into SQL Server and Oracle.
 
 | Login | Export wizard | Progress |
 |---|---|---|
 | ![login](docs/assets/login.png) | ![export](docs/assets/export-wizard.png) | ![progress](docs/assets/progress.png) |
+
+| Data query | Package viewer | Parquet files |
+|---|---|---|
+| ![query](docs/assets/table-data.png) | ![viewer](docs/assets/package-viewer.png) | ![parquet](docs/assets/import-parquet.png) |
 
 Expected export package:
 
@@ -138,6 +161,8 @@ export/
 ├── constraints.sql       # foreign keys, applied after data
 └── manifest.json         # source, target, options, files (sha256), row counts
 ```
+
+A Parquet package has the same layout with `data/<table>.parquet` instead of SQL data and LOB files. LOB values stay inside the Parquet columns and `manifest.json` records `"dataFormat": "PARQUET"`, so an import picks the right importer by itself.
 
 ---
 
@@ -160,6 +185,13 @@ config.setIdReused(true);                      // keep identity values
 exporter.setTargetDbType(DbType.POSTGRESQL);   // generate PostgreSQL sql
 exporter.setTargetSchemaName("public");
 exporter.exportDdlAndData();
+
+// The same tables as a Parquet package: data/orders.parquet ...
+ParquetExporter parquet = new ParquetExporter(new File("export-parquet"));
+// parquet.getConfiguration() is configured like the configuration above
+parquet.setTargetDbType(DbType.POSTGRESQL);    // schema.sql and constraints.sql for PostgreSQL
+parquet.setCompression("ZSTD");
+parquet.exportDdlAndData();
 ```
 
 **Output**: `export/schema.sql`, `export/data/orders.sql`, `export/data/orders_2.sql`, `export/lob/…`, `export/manifest.json`:
@@ -205,6 +237,16 @@ importer.exportDdlAndData();
 
 **Output**: `0% … 100%`. Tables, keys, indexes, comments and sequences in `demo.hr`. Identity columns continue from the imported max value.
 
+Rows of a query and copies in the same schema use the same API:
+
+```java
+// Only some columns and rows of EMPLOYEES, the target table is created with these columns
+source.getTableQueries().put("EMPLOYEES", new TableQuery(List.of("EMPLOYEE_ID", "NAME", "SALARY"),
+        "SALARY > 1000", null, "SALARY DESC"));
+// Copies next to the originals: EMPLOYEES_COPY, keys and indexes get their own names
+target.setTableNamePattern("{table}_copy");
+```
+
 ### 3. Import an export package
 
 ```java
@@ -216,7 +258,12 @@ try (Connection connection = DriverManager.getConnection(
 }
 ```
 
-**Output**: `ScriptImporter` refuses packages whose status is not `COMPLETED`, whose target type differs, or whose files fail the SHA-256 check.
+**Output**: `ScriptImporter` refuses packages whose status is not `COMPLETED`, whose target type differs, or whose files fail the SHA-256 check. `AbstractFileImporter.forDirectory(dir, connection, dbType)` returns the importer of the package (SQL or Parquet), and Parquet files of other tools are loaded by `ParquetImporter`:
+
+```java
+ParquetImporter importer = new ParquetImporter(connection, DbType.POSTGRESQL);
+long rows = importer.importFiles(List.of(new File("sales-2024.parquet")), "sales", ParquetImporter.Mode.CREATE);
+```
 
 ### 4. Type translation (cross-database)
 
@@ -229,6 +276,10 @@ try (Connection connection = DriverManager.getConnection(
 | Oracle `NUMBER(9)` / `NUMBER(19)` | `int4` / `int8` | same | `int` / `bigint` | `int` / `bigint` |
 | SQL Server `datetime2(7)` | `timestamp` (µs) | `TIMESTAMP(7)` | same | `datetime(6)` |
 | SQL Server `tinyint` (0 to 255) | `int2` | `NUMBER(5)` | same | `smallint` |
+| PostgreSQL enum / domain | same (type created in the target schema) | `VARCHAR2` / base type | `varchar` / base type | `varchar` / base type |
+| MySQL / Oracle `VECTOR` | `text` | same | `nvarchar(max)` | same |
+| ClickHouse `Nullable(String)` / `Array(T)` | `text` | `CLOB` | `nvarchar(max)` | `longtext` |
+| DuckDB `HUGEINT` / `UNION` | `numeric(38, 0)` / `text` | `NUMBER(38,0)` / `CLOB` | `decimal(38,0)` / `nvarchar(max)` | `decimal(38,0)` / `longtext` |
 
 ### Best practices
 
@@ -238,6 +289,8 @@ try (Connection connection = DriverManager.getConnection(
 | Pick the **target version** when exporting for an older server | e.g. `11.2` generates sequences + triggers instead of identity columns |
 | Use **one file per table** for large exports | Re-run or inspect a single table easily |
 | Import packages with SqlJam | Manifest validation, ordered files, LOB restore and FKs last |
+| Use **Parquet** for analytics and lakes | Compact columnar files any engine reads, the schema still travels in `schema.sql` |
+| Copy with a **target table name** | `{table}_copy` keeps the originals, a copy in the same schema without a new name is refused |
 
 ---
 
@@ -293,6 +346,9 @@ Export options (UI / `ExportConfiguration`):
 | `indexIncluded` / `foreignKeyIncluded` / `commentIncluded` / `sequenceIncluded` | `true` | Objects to copy |
 | `failFast` | `true` | Stop on the first data error |
 | `identifierCase` | `AUTO` | `AUTO`, `KEEP`, `LOWER`, `UPPER` |
+| `dataFormat` / `compression` | `SQL` / `ZSTD` | `SQL` or `PARQUET` packages, Parquet compression `ZSTD`, `SNAPPY`, `GZIP`, `UNCOMPRESSED` |
+| `tableNamePattern` | | Target table name, `{table}` is the source name, e.g. `{table}_copy` |
+| `tableQueries` | | Columns, WHERE and ORDER BY per table, e.g. rows narrowed in the data viewer |
 
 ---
 
@@ -326,12 +382,15 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | Project site | [paganini2008.github.io/sqljam](https://paganini2008.github.io/sqljam/) |
 | Blog (English / 中文 / Medium) | [docs/blogger](docs/blogger) |
 | Change logs | [change_logs](change_logs) |
-| Core API | `com.github.sqljam.impexp` (`Exporter`, `ScriptExporter`, `ImportExporter`, `ScriptImporter`) |
+| Core API | `com.github.sqljam.impexp` (`Exporter`, `ScriptExporter`, `ImportExporter`, `ScriptImporter`, `ParquetExporter`, `ParquetImporter`) |
 
 **FAQ**
 
 | Question | Answer |
 |---|---|
+| Can I export only some rows or columns? | Yes. Narrow the rows on the **Data** tab (columns, WHERE, ORDER BY) and press **Export…**, or set `tableQueries`. A missing target table is created with the selected columns |
+| Can I copy a table inside the same database? | Yes. Choose the same data source and schema as the target and a table name such as `{table}_copy` |
+| How are LOBs stored in Parquet? | Inside the Parquet columns (strings and binaries), no extra LOB files |
 | Can I export only the structure? | Yes. Rows are optional. Pick content **Structure** (`ExportMode.DDL`) for a package or a direct import. Tables, keys, indexes, comments, sequences and partitions are created without rows |
 | Can I generate scripts for an older server? | Yes, choose the target version (e.g. Oracle `11.2`, SQL Server `2008`) and a compatible dialect is used |
 | Can I keep the password out of disk? | Uncheck *Remember password* on the login page, it stays in memory for the session |
@@ -344,7 +403,7 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | Step | |
 |---|---|
 | Issues | [github.com/paganini2008/sqljam/issues](https://github.com/paganini2008/sqljam/issues) |
-| Pull requests | Fork → branch → `mvn verify` (≥ 80% coverage gate) → PR |
+| Pull requests | Fork → branch → `mvn verify` (≥ 90% coverage gate) → PR |
 | Code style | Match existing code: `getXxxStatement` naming, Apache license header, class header javadoc, 4-space indent, no Spring |
 | New database or version | Add `XxxDialect` / `XxxMetaDataOperations` in `impexp.db`, register in `DbType`, add a fixture in `src/test/resources/<db>/` |
 

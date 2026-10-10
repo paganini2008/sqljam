@@ -67,6 +67,8 @@ CREATE TABLE sjl_types (
     c_clob      CLOB,
     c_blob      BLOB,
     c_json      JSON,
+    c_untyped,
+    c_any       ANY,
     c_gen       INTEGER GENERATED ALWAYS AS (c_int * 2) VIRTUAL
 );
 INSERT INTO sjl_types (id, c_integer, c_int, c_tinyint, c_smallint, c_mediumint, c_bigint, c_int8, c_real, c_double,
@@ -78,3 +80,5 @@ VALUES (1, -9223372036854775808, -2147483648, -128, -32768, -8388608, 9223372036
 INSERT INTO sjl_types (id, c_integer, c_int, c_real, c_boolean, c_date, c_datetime, c_text, c_blob)
 VALUES (2, 0, 2147483647, -1E100, 0, '1970-01-01', '9999-12-31 23:59:59', '', X'');
 INSERT INTO sjl_types (id) VALUES (3);
+UPDATE sjl_types SET c_untyped = 'no declared type', c_any = 42 WHERE id = 1;
+UPDATE sjl_types SET c_untyped = 3.5, c_any = 'text' WHERE id = 2;

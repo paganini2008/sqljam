@@ -27,8 +27,11 @@ import java.util.stream.Collectors;
 import org.testfx.util.WaitForAsyncUtils;
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.service.ConnectionStore;
+import com.github.sqljam.face.service.ExampleDatabase;
 import com.github.sqljam.face.service.SettingsStore;
 import javafx.application.Platform;
+import javafx.collections.ListChangeListener;
+import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.DialogPane;
@@ -48,11 +51,58 @@ public final class FxTestSupport {
     private FxTestSupport() {
     }
 
+    private static final String STYLESHEET = "/com/github/sqljam/face/app.css";
+    private static boolean styled;
+
+    /**
+     * Windows of tests look like the application: the default theme, and the stylesheet of the application on
+     * windows other than dialogs (dialogs of the application have the theme only)
+     */
+    public static synchronized void applyAppStyle() {
+        if (styled) {
+            return;
+        }
+        styled = true;
+        Runnable install = () -> {
+            ThemeManager.apply(ThemeManager.DEFAULT_THEME);
+            Window.getWindows().forEach(FxTestSupport::styleWindow);
+            Window.getWindows().addListener((ListChangeListener<Window>) change -> {
+                while (change.next()) {
+                    change.getAddedSubList().forEach(FxTestSupport::styleWindow);
+                }
+            });
+        };
+        if (Platform.isFxApplicationThread()) {
+            install.run();
+        } else {
+            Platform.runLater(install);
+        }
+    }
+
+    private static void styleWindow(Window window) {
+        styleScene(window.getScene());
+        window.sceneProperty().addListener((obs, oldScene, scene) -> styleScene(scene));
+    }
+
+    private static void styleScene(Scene scene) {
+        if (scene == null || scene.getRoot() instanceof DialogPane) {
+            return;
+        }
+        String stylesheet = FxTestSupport.class.getResource(STYLESHEET).toExternalForm();
+        if (!scene.getStylesheets().contains(stylesheet)) {
+            scene.getStylesheets().add(stylesheet);
+        }
+    }
+
     public static AppContext createContext(File dir) {
+        applyAppStyle();
         Config config = new Config(new File(dir, Config.FILE_NAME));
         Config.setInstance(config);
-        return new AppContext(new SettingsStore(config), new ProfileRegistry(new ConnectionStore(
+        AppContext context = new AppContext(new SettingsStore(config), new ProfileRegistry(new ConnectionStore(
                 new File(dir, "connections.json"))), null);
+        // The example database of tests is not created in the home directory of the user
+        context.setExampleDatabase(new ExampleDatabase(true, new File(dir, "example")));
+        return context;
     }
 
     public static <T> T call(Callable<T> callable) {

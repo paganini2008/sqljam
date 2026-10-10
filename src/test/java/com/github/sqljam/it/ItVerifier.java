@@ -29,10 +29,15 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.OffsetDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -52,9 +57,11 @@ import com.github.sqljam.jdbc.JdbcUtils;
  */
 public class ItVerifier {
 
-    private static final Set<ItDatabase> SEQUENCE_DATABASES = EnumSet.of(ItDatabase.POSTGRESQL, ItDatabase.ORACLE,
+    private static final Set<ItDatabase> SEQUENCE_DATABASES = EnumSet.of(ItDatabase.DUCKDB,
+            ItDatabase.MARIADB, ItDatabase.POSTGRESQL, ItDatabase.ORACLE,
             ItDatabase.SQLSERVER, ItDatabase.H2);
-    private static final Set<ItDatabase> PARTITION_DATABASES = EnumSet.of(ItDatabase.MYSQL, ItDatabase.POSTGRESQL,
+    private static final Set<ItDatabase> PARTITION_DATABASES = EnumSet.of(ItDatabase.MYSQL,
+            ItDatabase.MARIADB, ItDatabase.POSTGRESQL,
             ItDatabase.ORACLE, ItDatabase.SQLSERVER);
 
     private final ItDatabase source;
@@ -90,8 +97,18 @@ public class ItVerifier {
         return connection.getMetaData();
     }
 
+    /**
+     * Suffix of copied tables, e.g. _cp of tables copied in the same schema
+     */
+    private String tableSuffix = "";
+
+    public ItVerifier withTableSuffix(String tableSuffix) {
+        this.tableSuffix = tableSuffix;
+        return this;
+    }
+
     public String table(String name) {
-        String tableName = tableNames.get((source.getPrefix() + name).toLowerCase(Locale.ENGLISH));
+        String tableName = tableNames.get((source.getPrefix() + name + tableSuffix).toLowerCase(Locale.ENGLISH));
         assertNotNull(tableName, "Table not found in " + target + ": " + source.getPrefix() + name + ", tables: "
                 + tableNames.keySet());
         return tableName;
@@ -137,6 +154,17 @@ public class ItVerifier {
         }
     }
 
+    /**
+     * Parquet semantics: timestamps with time zone are equal if they are the same instant (Parquet keeps them in
+     * UTC), fractional seconds are compared in microseconds (the precision of Parquet timestamps)
+     */
+    private boolean instantEquality;
+
+    public ItVerifier withInstantEquality() {
+        this.instantEquality = true;
+        return this;
+    }
+
     public void verifyAll() throws Exception {
         verifyCounts();
         verifyValues();
@@ -169,12 +197,32 @@ public class ItVerifier {
         assertEquals(3, count("types"), "types rows");
     }
 
+    /**
+     * ClickHouse has no foreign keys, unique indexes and identity columns
+     */
+    private boolean isConstraintSupported() {
+        return source != ItDatabase.CLICKHOUSE && target != ItDatabase.CLICKHOUSE;
+    }
+
     public void verifyValues() throws SQLException {
         Map<String, String> columns = columns("emp");
         assertEquals(ItDatabase.NOTE, queryEmp(columns, "note", 2));
         assertEquals(ItDatabase.PROFILE, queryEmp(columns, "profile", 1));
-        Object photo = queryEmp(columns, "photo", 10);
-        assertArrayEquals(ItDatabase.photo(10), (byte[]) photo);
+        if (source == ItDatabase.CLICKHOUSE && target == ItDatabase.CLICKHOUSE) {
+            // Photos of the ClickHouse fixture are hex text
+            assertEquals(HexFormat.of().formatHex(ItDatabase.photo(10)), queryEmp(columns, "photo", 10));
+        } else if (target == ItDatabase.CLICKHOUSE) {
+            // String of ClickHouse keeps the bytes, the driver reads it as text
+            String sql = String.format("SELECT hex(%s) FROM %s WHERE %s = 10", column(columns, "photo"), ref("emp"),
+                    column(columns, "id"));
+            try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(sql)) {
+                assertTrue(rs.next());
+                assertArrayEquals(ItDatabase.photo(10), HexFormat.of().parseHex(rs.getString(1)));
+            }
+        } else if (source != ItDatabase.CLICKHOUSE) {
+            Object photo = queryEmp(columns, "photo", 10);
+            assertArrayEquals(ItDatabase.photo(10), (byte[]) photo);
+        }
         Object salary = queryEmp(columns, "salary", 3);
         assertEquals(0, new BigDecimal("30.75").compareTo(new BigDecimal(salary.toString())), "salary");
         assertEquals(null, queryEmp(columns, "salary", 7));
@@ -184,9 +232,12 @@ public class ItVerifier {
         List<Map<String, Object>> pkInfos = operations.getPrimaryKeyInfos(metaData(), catalog, schema,
                 table("emp_tag"));
         assertEquals(2, pkInfos.size(), "Composite primary key of emp_tag");
+        if (!isConstraintSupported()) {
+            return;
+        }
         List<Map<String, Object>> fkInfos = operations.getImportedKeyInfos(metaData(), catalog, schema, table("emp"));
         assertEquals(1, fkInfos.size(), "Foreign key of emp: " + fkInfos);
-        assertEquals((source.getPrefix() + "dept").toLowerCase(Locale.ENGLISH),
+        assertEquals((source.getPrefix() + "dept" + tableSuffix).toLowerCase(Locale.ENGLISH),
                 ((String) fkInfos.get(0).get("PKTABLE_NAME")).toLowerCase(Locale.ENGLISH));
         List<Map<String, Object>> indexInfos = operations.getIndexInfos(metaData(), catalog, schema, table("emp"));
         boolean uniqueEmail = indexInfos.stream().anyMatch(info -> "email".equalsIgnoreCase(
@@ -219,6 +270,9 @@ public class ItVerifier {
      * Identity continues from the max imported value
      */
     public void verifyIdentity() throws SQLException {
+        if (!isConstraintSupported()) {
+            return;
+        }
         Map<String, String> columns = columns("dept");
         String insert = String.format("INSERT INTO %s (%s) VALUES ('New Dept')", ref("dept"),
                 column(columns, "name"));
@@ -278,10 +332,10 @@ public class ItVerifier {
             String typesTable = sourceOperations.getTableInfos(sourceConnection.getMetaData(), sourceCatalog,
                     source.getSourceSchema()).stream().map(info -> (String) info.get("TABLE_NAME"))
                     .filter(name -> name.equalsIgnoreCase(source.getPrefix() + "types")).findFirst().orElseThrow();
-            expected = readRows(sourceConnection, dialect.getSourceTableName(sourceCatalog, source.getSourceSchema(),
-                    typesTable));
+            expected = readRows(sourceConnection, sourceOperations, sourceCatalog, source.getSourceSchema(),
+                    typesTable);
         }
-        List<Map<String, Object>> actual = readRows(connection, ref("types"));
+        List<Map<String, Object>> actual = readRows(connection, operations, catalog, schema, table("types"));
         assertEquals(expected.size(), actual.size());
         for (int i = 0; i < expected.size(); i++) {
             for (Map.Entry<String, Object> entry : expected.get(i).entrySet()) {
@@ -289,16 +343,48 @@ public class ItVerifier {
                 if (column.endsWith("rowversion")) {
                     continue;
                 }
-                assertValueEquals(entry.getValue(), actual.get(i).get(column),
+                Object expectedValue = entry.getValue();
+                Object actualValue = actual.get(i).get(column);
+                ChronoUnit micros = ChronoUnit.MICROS;
+                if (instantEquality && expectedValue instanceof LocalDateTime
+                        && actualValue instanceof LocalDateTime) {
+                    expectedValue = ((LocalDateTime) expectedValue).truncatedTo(micros);
+                    actualValue = ((LocalDateTime) actualValue).truncatedTo(micros);
+                } else if (instantEquality && expectedValue instanceof LocalTime
+                        && actualValue instanceof LocalTime) {
+                    expectedValue = ((LocalTime) expectedValue).truncatedTo(micros);
+                    actualValue = ((LocalTime) actualValue).truncatedTo(micros);
+                }
+                if (instantEquality && expectedValue instanceof OffsetDateTime
+                        && actualValue instanceof OffsetDateTime) {
+                    assertTrue(((OffsetDateTime) expectedValue).truncatedTo(micros).isEqual(
+                            ((OffsetDateTime) actualValue).truncatedTo(micros)), String.format(
+                            "%s -> %s, row %d, column %s: %s is not the instant of %s", source, target, i + 1, column,
+                            actualValue, expectedValue));
+                    continue;
+                }
+                assertValueEquals(expectedValue, actualValue,
                         String.format("%s -> %s, row %d, column %s", source, target, i + 1, column));
             }
         }
     }
 
-    private List<Map<String, Object>> readRows(Connection connection, String table) throws SQLException {
+    /**
+     * Rows of a table read by the select expressions of the dialect, e.g. XMLTYPE of Oracle as CLOB
+     */
+    private List<Map<String, Object>> readRows(Connection connection, MetaDataOperations metaDataOperations,
+                                               String tableCatalog, String tableSchema, String tableName)
+            throws SQLException {
+        List<Map<String, Object>> columnInfos = metaDataOperations.getColumnInfos(connection.getMetaData(),
+                tableCatalog, tableSchema, tableName);
+        String[] columnNames = columnInfos.stream().map(info -> (String) info.get("COLUMN_NAME"))
+                .toArray(String[]::new);
+        String[] typeNames = columnInfos.stream().map(info -> (String) info.get("TYPE_NAME")).toArray(String[]::new);
+        String sql = dialect.getSelectTableStatement(tableCatalog, tableSchema, tableName, columnNames, typeNames)
+                + " ORDER BY 1";
         List<Map<String, Object>> rows = new ArrayList<>();
         try (Statement statement = connection.createStatement();
-             ResultSet rs = statement.executeQuery("SELECT * FROM " + table + " ORDER BY 1")) {
+             ResultSet rs = statement.executeQuery(sql)) {
             ResultSetMetaData rsmd = rs.getMetaData();
             while (rs.next()) {
                 Map<String, Object> row = new HashMap<>();

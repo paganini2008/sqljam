@@ -17,11 +17,15 @@ package com.github.sqljam.impexp.db;
 
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -148,7 +152,126 @@ public class PostgreSQLMetaDataOperations extends MetaDataOperations {
                 columnInfo.put("GENERATION_TYPE", "STORED");
             }
         }
+        applyUserTypes(databaseMetaData, schemaName, tableName, columnInfos);
         return columnInfos;
+    }
+
+    /**
+     * Name, precision and scale of a type, e.g. numeric(10,2), timestamp(3) without time zone
+     */
+    private static final Pattern BASE_TYPE = Pattern.compile("^([a-z ]+?)\\s*(?:\\((\\d+)(?:\\s*,\\s*(\\d+))?\\))?(.*)$");
+
+    /**
+     * Columns of enum and domain types: the definition of the type is kept for PostgreSQL targets, enums are text
+     * and domains are their base types for other databases
+     */
+    private void applyUserTypes(DatabaseMetaData databaseMetaData, String schemaName, String tableName,
+                                List<Map<String, Object>> columnInfos) throws SQLException {
+        String sql = "SELECT a.attname, t.typname, t.typtype, tn.nspname,"
+                + " format_type(t.typbasetype, t.typtypmod) AS base_type,"
+                + " (SELECT string_agg(pg_get_constraintdef(k.oid), ' ') FROM pg_constraint k"
+                + " WHERE k.contypid = t.oid) AS checks,"
+                + " (SELECT string_agg(quote_literal(e.enumlabel), ', ' ORDER BY e.enumsortorder) FROM pg_enum e"
+                + " WHERE e.enumtypid = t.oid) AS labels,"
+                + " (SELECT max(length(e.enumlabel)) FROM pg_enum e WHERE e.enumtypid = t.oid) AS label_length"
+                + " FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid"
+                + " JOIN pg_namespace n ON n.oid = c.relnamespace JOIN pg_type t ON t.oid = a.atttypid"
+                + " JOIN pg_namespace tn ON tn.oid = t.typnamespace"
+                + " WHERE n.nspname = ? AND c.relname = ? AND a.attnum > 0 AND NOT a.attisdropped"
+                + " AND t.typtype IN ('e', 'd')";
+        Map<String, Map<String, Object>> userTypes = JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql,
+                new Object[]{schemaName, tableName}).stream().collect(Collectors.toMap(
+                row -> (String) row.get("attname"), Function.identity(), (a, b) -> a));
+        if (userTypes.isEmpty()) {
+            return;
+        }
+        for (Map<String, Object> columnInfo : columnInfos) {
+            Map<String, Object> userType = userTypes.get((String) columnInfo.get("COLUMN_NAME"));
+            if (userType == null) {
+                continue;
+            }
+            String typeName = (String) userType.get("typname");
+            boolean enumType = "e".equals(String.valueOf(userType.get("typtype")));
+            String definition = enumType ? String.format("ENUM (%s)", userType.get("labels"))
+                    : String.format("%s%s", userType.get("base_type"), StringUtils.isNotBlank(
+                    (String) userType.get("checks")) ? " " + userType.get("checks") : "");
+            Map<String, Object> type = new LinkedHashMap<>();
+            type.put("KIND", enumType ? "ENUM" : "DOMAIN");
+            type.put("NAME", typeName);
+            type.put("DEFINITION", definition);
+            columnInfo.put("USER_TYPE", type);
+            columnInfo.put("TYPE_NAME", typeName);
+            if (enumType) {
+                Object length = userType.get("label_length");
+                columnInfo.put("DATA_TYPE", Types.VARCHAR);
+                columnInfo.put("COLUMN_SIZE", length instanceof Number ? ((Number) length).intValue() : 255);
+                columnInfo.put("DECIMAL_DIGITS", 0);
+            } else {
+                applyBaseType(columnInfo, (String) userType.get("base_type"));
+            }
+        }
+    }
+
+    /**
+     * Jdbc type, size and scale of the base type of a domain, e.g. character varying(100), numeric(10,2)
+     */
+    static void applyBaseType(Map<String, Object> columnInfo, String baseType) {
+        String type = StringUtils.defaultString(baseType).trim().toLowerCase(Locale.ENGLISH);
+        Matcher matcher = BASE_TYPE.matcher(type);
+        String name = matcher.matches() ? matcher.group(1).trim() : type;
+        int size = matcher.matches() && matcher.group(2) != null ? Integer.parseInt(matcher.group(2)) : 0;
+        int scale = matcher.matches() && matcher.group(3) != null ? Integer.parseInt(matcher.group(3)) : 0;
+        int dataType;
+        switch (name) {
+            case "character varying":
+                dataType = Types.VARCHAR;
+                size = size > 0 ? size : Integer.MAX_VALUE;
+                break;
+            case "character":
+                dataType = Types.CHAR;
+                size = Math.max(size, 1);
+                break;
+            case "smallint":
+                dataType = Types.SMALLINT;
+                break;
+            case "integer":
+                dataType = Types.INTEGER;
+                break;
+            case "bigint":
+                dataType = Types.BIGINT;
+                break;
+            case "numeric":
+                dataType = Types.NUMERIC;
+                break;
+            case "real":
+                dataType = Types.REAL;
+                break;
+            case "double precision":
+                dataType = Types.DOUBLE;
+                break;
+            case "boolean":
+                dataType = Types.BOOLEAN;
+                break;
+            case "date":
+                dataType = Types.DATE;
+                break;
+            case "timestamp without time zone":
+            case "timestamp":
+                dataType = Types.TIMESTAMP;
+                scale = size > 0 ? size : 6;
+                break;
+            case "timestamp with time zone":
+                dataType = Types.TIMESTAMP_WITH_TIMEZONE;
+                scale = size > 0 ? size : 6;
+                break;
+            default:
+                dataType = Types.VARCHAR;
+                size = Integer.MAX_VALUE;
+                break;
+        }
+        columnInfo.put("DATA_TYPE", dataType);
+        columnInfo.put("COLUMN_SIZE", size);
+        columnInfo.put("DECIMAL_DIGITS", scale);
     }
 
     @Override

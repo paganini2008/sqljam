@@ -19,10 +19,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import lombok.Getter;
-import lombok.Setter;
+
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.utils.MapUtils;
+import lombok.Getter;
+import lombok.Setter;
 
 /**
  * @Description: DdlScripter holds statements of catalogs, schemas and tables, and formats them as pretty scripts or plain statements

@@ -16,8 +16,10 @@
 package com.github.sqljam.face.view;
 
 import java.util.List;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ColumnInfo;
@@ -25,6 +27,7 @@ import com.github.sqljam.face.model.ForeignKeyInfo;
 import com.github.sqljam.face.model.IndexInfo;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.impexp.TableQuery;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.value.ObservableValue;
 import javafx.geometry.Insets;
@@ -37,6 +40,7 @@ import javafx.scene.control.TabPane;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.Tooltip;
 import javafx.scene.input.Clipboard;
 import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.BorderPane;
@@ -65,12 +69,23 @@ public class TableTab extends Tab {
     private boolean ddlLoaded;
     private boolean dataLoaded;
 
+    /**
+     * Rows narrowed in the data pane are exported by the consumer
+     */
+    public void setOnExport(BiConsumer<DbNode, TableQuery> onExport) {
+        dataPane.setOnExport(query -> onExport.accept(node, query));
+    }
+
+    DataPane getDataPane() {
+        return dataPane;
+    }
+
     public TableTab(AppContext context, DbNode node) {
         this.node = node;
         this.session = context.getSessionManager().getSession(node.getProfile());
         setText(node.getTable().getName());
         setGraphic(Icons.of(Icons.TABLE));
-        setTooltip(new javafx.scene.control.Tooltip(getKey(node)));
+        setTooltip(new Tooltip(getKey(node)));
         dataPane = new DataPane(session, node.getCatalog(), node.getSchema(), node.getTable().getName(),
                 context.getSettings().getDataPageSize());
 
@@ -102,7 +117,7 @@ public class TableTab extends Tab {
      * Unique key of the table, an opened table is reused
      */
     public static String getKey(DbNode node) {
-        return java.util.stream.Stream.of(node.getProfile().getName(), node.getCatalog(), node.getSchema(),
+        return Stream.of(node.getProfile().getName(), node.getCatalog(), node.getSchema(),
                 node.getTable().getName()).filter(StringUtils::isNotBlank).collect(Collectors.joining("."));
     }
 

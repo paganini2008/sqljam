@@ -25,20 +25,25 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Time;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.Year;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import com.github.sqljam.impexp.TransactionIsolationLevel;
-import com.github.sqljam.jdbc.page.MapBasedPageReader;
 import com.github.sqljam.impexp.db.H2Dialect;
+import com.github.sqljam.jdbc.page.MapBasedPageReader;
 import com.github.sqljam.page.EachPage;
 import com.github.sqljam.page.PageRequest;
 import com.github.sqljam.page.PageResponse;
@@ -155,9 +160,9 @@ class JdbcUtilsTest {
         assertEquals(new BigDecimal("18446744073709551615"), JdbcUtils.normalizeValue(
                 new BigInteger("18446744073709551615")));
         assertEquals("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11", JdbcUtils.normalizeValue(
-                java.util.UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")));
-        assertEquals(2024, JdbcUtils.normalizeValue(java.time.Year.of(2024)));
-        assertEquals(LocalTime.of(1, 2, 3), JdbcUtils.normalizeValue(java.sql.Time.valueOf("01:02:03")));
+                UUID.fromString("a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11")));
+        assertEquals(2024, JdbcUtils.normalizeValue(Year.of(2024)));
+        assertEquals(LocalTime.of(1, 2, 3), JdbcUtils.normalizeValue(Time.valueOf("01:02:03")));
         assertNull(JdbcUtils.normalizeValue(null));
         assertEquals(new BigDecimal("1234.56"), JdbcUtils.parseMoney("$1,234.56"));
         assertEquals(new BigDecimal("-1234.56"), JdbcUtils.parseMoney("($1,234.56)"));
@@ -239,8 +244,8 @@ class JdbcUtilsTest {
                 Connection.TRANSACTION_READ_COMMITTED));
         assertEquals(Connection.TRANSACTION_SERIALIZABLE, TransactionIsolationLevel.SERIALIZABLE.getLevel());
         JdbcUtils.closeQuietly((Connection) null);
-        JdbcUtils.closeQuietly((java.sql.Statement) null);
-        JdbcUtils.closeQuietly((java.sql.ResultSet) null);
+        JdbcUtils.closeQuietly((Statement) null);
+        JdbcUtils.closeQuietly((ResultSet) null);
         try (Connection direct = JdbcUtils.getConnection("jdbc:h2:mem:direct", null, null)) {
             assertTrue(direct.isValid(1));
         }

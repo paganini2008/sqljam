@@ -94,6 +94,16 @@ CREATE TABLE sjm_types (
     c_json        JSON,
     c_geometry    GEOMETRY,
     c_point       POINT,
+    c_linestring  LINESTRING,
+    c_polygon     POLYGON,
+    c_multipoint  MULTIPOINT,
+    c_multiline   MULTILINESTRING,
+    c_multipoly   MULTIPOLYGON,
+    c_geomcoll    GEOMETRYCOLLECTION,
+    c_vector      VECTOR(3),
+    c_timestamp6  TIMESTAMP(6) NULL,
+    c_bit64       BIT(64),
+    c_decimal65   DECIMAL(65,30),
     c_gen_stored  BIGINT GENERATED ALWAYS AS (c_int * 2) STORED,
     c_gen_virtual VARCHAR(20) GENERATED ALWAYS AS (CONCAT('#', id)) VIRTUAL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -116,3 +126,14 @@ VALUES (2, 127, 0, 32767, 0, 8388607, 0, 2147483647, 0, 9223372036854775807, 0, 
     '00:00:00', '00:00:00.001', 1901, '', '', '', '', '', '', X'00000000', X'', X'', X'', X'', X'', 'blue', '',
     '[]', ST_GeomFromText('LINESTRING(0 0, 1 1)'), ST_GeomFromText('POINT(0 0)'));
 INSERT INTO sjm_types (id) VALUES (3);
+UPDATE sjm_types SET c_linestring = ST_GeomFromText('LINESTRING(0 0, 1 1, 2 1)'),
+    c_polygon = ST_GeomFromText('POLYGON((0 0, 4 0, 4 4, 0 0))'), c_multipoint = ST_GeomFromText('MULTIPOINT((1 1), (2 2))'),
+    c_multiline = ST_GeomFromText('MULTILINESTRING((0 0, 1 1), (2 2, 3 3))'),
+    c_multipoly = ST_GeomFromText('MULTIPOLYGON(((0 0, 1 0, 1 1, 0 0)), ((2 2, 3 2, 3 3, 2 2)))'),
+    c_geomcoll = ST_GeomFromText('GEOMETRYCOLLECTION(POINT(1 2), LINESTRING(0 0, 1 1))'),
+    c_vector = STRING_TO_VECTOR('[1, 2.5, -3]'), c_timestamp6 = '2024-02-29 12:00:00.123456',
+    c_bit64 = b'1000000000000000000000000000000000000000000000000000000000000001',
+    c_decimal65 = 12345678.123456789012345678901234567890 WHERE id = 1;
+UPDATE sjm_types SET c_vector = STRING_TO_VECTOR('[0, 0, 0]'), c_timestamp6 = '1970-01-02 00:00:00.000001',
+    c_bit64 = b'0', c_decimal65 = -0.000000000000000000000000000001 WHERE id = 2;
+

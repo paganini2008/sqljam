@@ -21,6 +21,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -32,14 +36,17 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TransferRequest;
+import com.github.sqljam.impexp.AbstractFileImporter;
+import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.ExportListener;
 import com.github.sqljam.impexp.ExportManifest;
+import com.github.sqljam.impexp.ParquetImporter;
 import com.github.sqljam.impexp.ScriptExportHandler;
-import com.github.sqljam.impexp.ScriptImporter;
 import javafx.event.ActionEvent;
 import javafx.scene.Node;
 import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -47,6 +54,7 @@ import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 /**
  * @Description: ImportPackageDialogTest verifies importing export packages: manifest summary, status, data source
@@ -101,7 +109,11 @@ class ImportPackageDialogTest {
      * Exports tables of the source database as an export package
      */
     private File exportPackage() throws Exception {
-        File packageDir = new File(dir, "package");
+        return exportPackage("package", DataFormat.SQL);
+    }
+
+    private File exportPackage(String name, DataFormat dataFormat) throws Exception {
+        File packageDir = new File(dir, name);
         TransferRequest request = new TransferRequest();
         request.setSource(source);
         request.setSourceCatalog(UiDatabase.CATALOG);
@@ -109,6 +121,7 @@ class ImportPackageDialogTest {
         request.setTarget(TransferRequest.Target.SCRIPT);
         request.setOutputDirectory(packageDir);
         request.setScriptDbType(DbType.H2);
+        request.setDataFormat(dataFormat);
         context.getTransferService().transfer(request, ExportListener.NONE);
         return packageDir;
     }
@@ -239,7 +252,7 @@ class ImportPackageDialogTest {
     private ProgressDialog importPackage(File packageDir) {
         ProgressDialog progress = FxTestSupport.call(() -> new ProgressDialog(stage, context, "Import", 3));
         FxTestSupport.run(() -> progress.run(() -> context.getTransferService().importScripts(target, null, null,
-                packageDir, true, progress.getListener()), (ScriptImporter importer) -> String.format(
+                packageDir, true, progress.getListener()), (AbstractFileImporter importer) -> String.format(
                 "%d %d %d", importer.getExecutedCount(), importer.getLobCount(), importer.getFailedCount()), null));
         FxTestSupport.waitUntil(progress::isFinished);
         return progress;
@@ -257,8 +270,8 @@ class ImportPackageDialogTest {
         assertEquals("Completed", status(progress));
         assertEquals("Overall 100%", FxTestSupport.call(() -> ((Label) progress.getStage().getScene().getRoot()
                 .lookup("#percentLabel")).getText()));
-        try (java.sql.Connection connection = java.sql.DriverManager.getConnection(target.getJdbcUrl(), "sa", "");
-             java.sql.ResultSet rs = connection.createStatement().executeQuery("SELECT COUNT(*) FROM T_PAGED")) {
+        try (Connection connection = DriverManager.getConnection(target.getJdbcUrl(), "sa", "");
+             ResultSet rs = connection.createStatement().executeQuery("SELECT COUNT(*) FROM T_PAGED")) {
             rs.next();
             assertEquals(UiDatabase.PAGED_ROWS, rs.getInt(1));
         }
@@ -268,7 +281,7 @@ class ImportPackageDialogTest {
     void reportsModifiedFile() throws Exception {
         File packageDir = exportPackage();
         File dataFile = new File(packageDir, ScriptExportHandler.DATA_FILE_NAME);
-        Files.writeString(dataFile.toPath(), "-- modified\n", java.nio.file.StandardOpenOption.APPEND);
+        Files.writeString(dataFile.toPath(), "-- modified\n", StandardOpenOption.APPEND);
         ProgressDialog progress = importPackage(packageDir);
         assertEquals("Failed", status(progress));
         assertTrue(progress.getErrorLogCount() > 0);
@@ -280,5 +293,67 @@ class ImportPackageDialogTest {
         assertTrue(new File(packageDir, ScriptExportHandler.SCHEMA_FILE_NAME).delete());
         ProgressDialog progress = importPackage(packageDir);
         assertEquals("Failed", status(progress));
+    }
+
+    @Test
+    void showsDataFormatOfPackages() throws Exception {
+        open(exportPackage());
+        assertEquals("SQL scripts", text("formatValue"));
+        FxTestSupport.run(dialog::close);
+        open(exportPackage("parquet", DataFormat.PARQUET));
+        assertEquals("COMPLETED", text("statusValue"));
+        assertEquals("Parquet", text("formatValue"));
+        assertFalse(startDisabled());
+    }
+
+    @Test
+    void guidesParquetFilesWithoutManifest() throws Exception {
+        File parquetDir = exportPackage("parquet", DataFormat.PARQUET);
+        assertTrue(new File(parquetDir, ExportManifest.FILE_NAME).delete());
+        open(parquetDir);
+        assertTrue(startDisabled());
+        assertEquals("The directory contains Parquet files without manifest.json, please use Import Parquet Files",
+                text("warningLabel"));
+        assertTrue(ImportPackageDialog.isParquetDirectory(parquetDir));
+        assertFalse(ImportPackageDialog.isParquetDirectory(dir));
+    }
+
+    @Test
+    void viewsPackage() throws Exception {
+        File packageDir = exportPackage();
+        open(packageDir);
+        FxTestSupport.run(() -> ((Button) node("viewPackageButton")).fire());
+        FxTestSupport.waitUntil(() -> findViewer() != null);
+        Stage viewer = findViewer();
+        assertEquals("Export Package - package", FxTestSupport.call(viewer::getTitle));
+        FxTestSupport.run(viewer::close);
+    }
+
+    private static Stage findViewer() {
+        return FxTestSupport.call(() -> Window.getWindows().stream().filter(window -> window instanceof Stage
+                && "Export Package - package".equals(((Stage) window).getTitle())).map(window -> (Stage) window)
+                .findFirst().orElse(null));
+    }
+
+    @Test
+    void importsParquetPackage() throws Exception {
+        File packageDir = exportPackage("parquet", DataFormat.PARQUET);
+        ProgressDialog progress = FxTestSupport.call(() -> new ProgressDialog(stage, context, "Import", 3));
+        FxTestSupport.run(() -> progress.run(() -> context.getTransferService().importScripts(target, null, null,
+                packageDir, true, progress.getListener()), (AbstractFileImporter importer) -> importer.getClass()
+                .getSimpleName(), null));
+        FxTestSupport.waitUntil(progress::isFinished);
+        assertEquals("Completed", status(progress));
+        assertEquals("Overall 100%", FxTestSupport.call(() -> ((Label) progress.getStage().getScene().getRoot()
+                .lookup("#percentLabel")).getText()));
+        assertTrue(AbstractFileImporter.forDirectory(packageDir, null, DbType.H2) instanceof ParquetImporter);
+        try (Connection connection = DriverManager.getConnection(target.getJdbcUrl(), "sa", "");
+             ResultSet rs = connection.createStatement().executeQuery(
+                     "SELECT COUNT(*), COUNT(DATA), MAX(LENGTH(NOTE)) FROM T_PAGED")) {
+            rs.next();
+            assertEquals(UiDatabase.PAGED_ROWS, rs.getInt(1));
+            assertEquals(1, rs.getInt(2));
+            assertEquals(UiDatabase.LONG_TEXT_LENGTH, rs.getInt(3));
+        }
     }
 }

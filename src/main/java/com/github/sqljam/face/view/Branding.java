@@ -21,8 +21,12 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
+import javafx.scene.Cursor;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.Label;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import javafx.stage.Stage;
@@ -44,11 +48,38 @@ public final class Branding {
     public static final String LOGO = "logo.png";
     public static final String LOGO_MARK = "logo-mark.png";
     public static final int[] ICON_SIZES = {16, 24, 32, 48, 64, 128, 256, 512};
+    /**
+     * Source repository of SqlJam
+     */
+    public static final String REPOSITORY_URL = "https://github.com/paganini2008/sqljam";
+    /**
+     * Home page of SqlJam, the GitHub Pages of the repository
+     */
+    public static final String HOMEPAGE_URL = "https://paganini2008.github.io/sqljam/";
+    public static final String AUTHOR = "Fred Feng";
+    public static final String EMAIL = "paganini20080@gmail.com";
 
     private static final Map<String, Image> images = new ConcurrentHashMap<>();
     private static volatile List<Image> icons;
 
     private Branding() {
+    }
+
+    /**
+     * GitHub mark of the source repository, the url is shown by its tooltip
+     *
+     * @param browser opens the repository in the browser when the mark is clicked, null for a mark without a click
+     */
+    public static Label repositoryMark(Consumer<String> browser) {
+        Label mark = new Label(null, Icons.of(Icons.GITHUB));
+        mark.setId("repositoryMark");
+        mark.getStyleClass().add("repository-mark");
+        mark.setTooltip(new Tooltip(REPOSITORY_URL));
+        if (browser != null) {
+            mark.setCursor(Cursor.HAND);
+            mark.setOnMouseClicked(event -> browser.accept(REPOSITORY_URL));
+        }
+        return mark;
     }
 
     /**

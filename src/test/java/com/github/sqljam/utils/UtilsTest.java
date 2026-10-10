@@ -23,7 +23,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -55,7 +57,7 @@ class UtilsTest {
         assertEquals(true, ConvertUtils.convert(1, Boolean.class));
         assertEquals(Boolean.TRUE, ConvertUtils.convert(Boolean.TRUE, Boolean.class));
         assertThrows(IllegalArgumentException.class, () -> ConvertUtils.convert(new Object(), Long.class));
-        assertThrows(IllegalArgumentException.class, () -> ConvertUtils.convert(1, java.util.Date.class));
+        assertThrows(IllegalArgumentException.class, () -> ConvertUtils.convert(1, Date.class));
     }
 
     @Test
@@ -87,8 +89,8 @@ class UtilsTest {
         assertEquals(1, linked.get("a"));
         MapUtils.concurrentCaseInsensitiveMap().put("B", 2);
         Map<String, List<Integer>> groups = new HashMap<>();
-        MapUtils.getOrCreate(groups, "x", java.util.ArrayList::new).add(1);
-        MapUtils.getOrCreate(groups, "x", java.util.ArrayList::new).add(2);
+        MapUtils.getOrCreate(groups, "x", ArrayList::new).add(1);
+        MapUtils.getOrCreate(groups, "x", ArrayList::new).add(2);
         assertEquals(List.of(1, 2), groups.get("x"));
         assertNull(MapUtils.getOrCreate(null, "x", () -> 1));
         Map<String, String> split = MapUtils.splitAsMap("a=1&b", "&", "=");

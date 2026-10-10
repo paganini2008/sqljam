@@ -17,14 +17,19 @@ package com.github.sqljam.face.model;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import com.github.sqljam.impexp.DataFileStrategy;
+import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.ExportMode;
 import com.github.sqljam.impexp.Exporter;
 import com.github.sqljam.impexp.IdentifierCase;
+import com.github.sqljam.impexp.ParquetExporter;
 import com.github.sqljam.impexp.ScriptExportHandler;
+import com.github.sqljam.impexp.TableQuery;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -81,10 +86,27 @@ public class TransferRequest {
      */
     private long maxFileSize = ScriptExportHandler.DEFAULT_MAX_FILE_SIZE;
     private boolean lobSeparated = true;
+    /**
+     * Rows of the export package: SQL insert statements or Parquet files
+     */
+    private DataFormat dataFormat = DataFormat.SQL;
+    /**
+     * Compression of Parquet files
+     */
+    private String compression = ParquetExporter.DEFAULT_COMPRESSION;
 
     // Database target
     private ConnectionProfile targetProfile;
     private String targetCatalog;
     private String targetSchema;
     private boolean targetSchemaCreated = true;
+    /**
+     * Name pattern of target tables, {table} is the source table name, e.g. {table}_copy copies tables in the same
+     * schema. Target tables have the same names if it is blank.
+     */
+    private String tableNamePattern;
+    /**
+     * Rows and columns of tables narrowed in the data viewer, by table name
+     */
+    private Map<String, TableQuery> tableQueries = new HashMap<>();
 }

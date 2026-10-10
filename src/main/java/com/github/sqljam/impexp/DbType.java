@@ -20,13 +20,18 @@ import java.util.function.Supplier;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
-import com.github.sqljam.utils.CaseInsensitiveMap;
+import com.github.sqljam.impexp.db.ClickHouseDialect;
+import com.github.sqljam.impexp.db.ClickHouseMetaDataOperations;
+import com.github.sqljam.impexp.db.DuckDBDialect;
+import com.github.sqljam.impexp.db.DuckDBMetaDataOperations;
 import com.github.sqljam.impexp.db.H2Dialect;
 import com.github.sqljam.impexp.db.H2MetaDataOperations;
-import com.github.sqljam.impexp.db.MySQLDialect;
+import com.github.sqljam.impexp.db.MariaDBDialect;
+import com.github.sqljam.impexp.db.MariaDBMetaDataOperations;
 import com.github.sqljam.impexp.db.MySQL55Dialect;
 import com.github.sqljam.impexp.db.MySQL56Dialect;
 import com.github.sqljam.impexp.db.MySQL57Dialect;
+import com.github.sqljam.impexp.db.MySQLDialect;
 import com.github.sqljam.impexp.db.MySQLMetaDataOperations;
 import com.github.sqljam.impexp.db.Oracle11gDialect;
 import com.github.sqljam.impexp.db.Oracle12cDialect;
@@ -41,6 +46,7 @@ import com.github.sqljam.impexp.db.SQLServerDialect;
 import com.github.sqljam.impexp.db.SQLServerMetaDataOperations;
 import com.github.sqljam.impexp.db.SQLiteDialect;
 import com.github.sqljam.impexp.db.SQLiteMetaDataOperations;
+import com.github.sqljam.utils.CaseInsensitiveMap;
 
 /**
  * @Description: DbType is a supported database type, it creates dialects (by versions) and metadata operations
@@ -74,6 +80,24 @@ public enum DbType {
             return String.format(
                     "jdbc:mysql://%s:%d%s?useSSL=false&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&yearIsDateType=false",
                     hostname, port, catalogName);
+        }
+    },
+
+    MARIADB("MariaDB", "org.mariadb.jdbc.Driver", 3306, true, false, false, MariaDBDialect::new,
+            MariaDBMetaDataOperations::new) {
+        /**
+         * Sequences of MariaDB 10.3+ are supported by the dialect, versions are not subclassed
+         */
+        @Override
+        protected Dialect createVersionDialect(int majorVersion, int minorVersion) {
+            return new MariaDBDialect();
+        }
+
+        @Override
+        public String getUrl(String hostname, int port, String catalogName) {
+            String database = StringUtils.isNotBlank(catalogName) ? "/" + catalogName : "";
+            // YEAR is a number, as YEAR of MySQL
+            return String.format("jdbc:mariadb://%s:%d%s?yearIsDateType=false", hostname, port, database);
         }
     },
 
@@ -175,6 +199,61 @@ public enum DbType {
         public boolean isFileBased() {
             return true;
         }
+    },
+
+    DUCKDB("DuckDB", "org.duckdb.DuckDBDriver", 0, false, true, true, DuckDBDialect::new,
+            DuckDBMetaDataOperations::new) {
+        @Override
+        public String getUrl(String hostname, int port, String catalogName) {
+            Validate.notBlank(catalogName, "Database file must be required while connecting to duckdb database.");
+            return "jdbc:duckdb:" + catalogName;
+        }
+
+        @Override
+        public boolean isCatalogSupported() {
+            return false;
+        }
+
+        @Override
+        public boolean isFileBased() {
+            return true;
+        }
+
+        @Override
+        public DbCategory getCategory() {
+            return DbCategory.OLAP;
+        }
+    },
+
+    CLICKHOUSE("ClickHouse", "com.clickhouse.jdbc.ClickHouseDriver", 8123, false, true, true, ClickHouseDialect::new,
+            ClickHouseMetaDataOperations::new) {
+        @Override
+        public String getUrl(String hostname, int port, String catalogName) {
+            String database = StringUtils.isNotBlank(catalogName) ? "/" + catalogName : "";
+            return normalizeUrl(String.format("jdbc:clickhouse:http://%s:%d%s", hostname, port, database));
+        }
+
+        /**
+         * Compression of ClickHouse responses is turned off unless it is configured, the LZ4 frames of recent
+         * servers are not read by the driver
+         */
+        @Override
+        public String normalizeUrl(String url) {
+            if (StringUtils.isBlank(url) || StringUtils.containsIgnoreCase(url, "compress=")) {
+                return url;
+            }
+            return url + (url.contains("?") ? "&" : "?") + "compress=0";
+        }
+
+        @Override
+        public boolean isCatalogSupported() {
+            return false;
+        }
+
+        @Override
+        public DbCategory getCategory() {
+            return DbCategory.OLAP;
+        }
     };
 
     private DbType(String displayName, String driverClassName, int defaultPort, boolean canSetCatalog,
@@ -231,6 +310,13 @@ public enum DbType {
     }
 
     /**
+     * Relational database (default) or OLAP database
+     */
+    public DbCategory getCategory() {
+        return DbCategory.RELATIONAL;
+    }
+
+    /**
      * Whether the database is addressed by a file path instead of host and port
      */
     public boolean isFileBased() {
@@ -268,6 +354,13 @@ public enum DbType {
 
     public abstract String getUrl(String hostname, int port, String catalogName);
 
+    /**
+     * Jdbc url with the options required by SqlJam, e.g. a url entered by the user
+     */
+    public String normalizeUrl(String url) {
+        return url;
+    }
+
     @Override
     public String toString() {
         return displayName;
@@ -290,8 +383,10 @@ public enum DbType {
             return null;
         }
         String url = jdbcUrl.toLowerCase();
-        if (url.startsWith("jdbc:mysql:") || url.startsWith("jdbc:mariadb:")) {
+        if (url.startsWith("jdbc:mysql:")) {
             return MYSQL;
+        } else if (url.startsWith("jdbc:mariadb:")) {
+            return MARIADB;
         } else if (url.startsWith("jdbc:postgresql:")) {
             return POSTGRESQL;
         } else if (url.startsWith("jdbc:oracle:")) {
@@ -302,6 +397,10 @@ public enum DbType {
             return H2;
         } else if (url.startsWith("jdbc:sqlite:")) {
             return SQLITE;
+        } else if (url.startsWith("jdbc:duckdb:")) {
+            return DUCKDB;
+        } else if (url.startsWith("jdbc:clickhouse:") || url.startsWith("jdbc:ch:")) {
+            return CLICKHOUSE;
         }
         return null;
     }

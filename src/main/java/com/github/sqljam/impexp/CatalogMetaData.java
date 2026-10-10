@@ -23,9 +23,10 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import lombok.extern.slf4j.Slf4j;
+
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * @Description: CatalogMetaData is a catalog (database) of the server, it loads the included schemas

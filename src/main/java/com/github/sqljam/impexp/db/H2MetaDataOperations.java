@@ -15,14 +15,16 @@
  */
 package com.github.sqljam.impexp.db;
 
-import com.github.sqljam.jdbc.JdbcUtils;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
+import com.github.sqljam.jdbc.JdbcUtils;
 
 /**
  * @Description: H2MetaDataOperations reads tables, generated columns and sequences of H2
@@ -67,11 +69,25 @@ public class H2MetaDataOperations extends MetaDataOperations {
         return sequenceInfos;
     }
 
+    /**
+     * ROW(...) types of H2
+     */
+    static boolean isRowType(String typeName) {
+        return StringUtils.startsWithIgnoreCase(StringUtils.trim(typeName), "ROW(");
+    }
+
     @Override
     public List<Map<String, Object>> getColumnInfos(DatabaseMetaData databaseMetaData, String catalogName,
                                                     String schemaName, String tableName) throws SQLException {
         List<Map<String, Object>> columnInfos = super.getColumnInfos(databaseMetaData, catalogName, schemaName,
                 tableName);
+        for (Map<String, Object> columnInfo : columnInfos) {
+            if (isRowType((String) columnInfo.get("TYPE_NAME"))) {
+                // Values of ROW are text, they are not parameters of other databases
+                columnInfo.put("DATA_TYPE", Types.VARCHAR);
+                columnInfo.put("COLUMN_SIZE", Integer.MAX_VALUE);
+            }
+        }
         String sql = "SELECT COLUMN_NAME, GENERATION_EXPRESSION FROM INFORMATION_SCHEMA.COLUMNS"
                 + " WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND IS_GENERATED = 'ALWAYS'";
         List<Map<String, Object>> generatedColumns;

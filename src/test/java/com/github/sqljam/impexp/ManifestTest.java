@@ -21,13 +21,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -58,7 +62,7 @@ class ManifestTest {
             writer.writeRow("PUBLIC", "DOCUMENT", key, new LinkedHashMap<>(), 2);
             Map<String, Object> otherKey = new LinkedHashMap<>();
             otherKey.put("CODE", "a/b");
-            otherKey.put("V", new java.math.BigDecimal("1.5"));
+            otherKey.put("V", new BigDecimal("1.5"));
             otherKey.put("F", 2.5f);
             otherKey.put("B", true);
             otherKey.put("N", null);
@@ -134,9 +138,9 @@ class ManifestTest {
         Files.writeString(unit.toPath().resolve("data_10.sql"), "INSERT INTO t VALUES (10);\n");
         Files.writeString(unit.toPath().resolve("data/t.sql"), "INSERT INTO t VALUES (3);\n");
         Files.writeString(unit.toPath().resolve("constraints.sql"), "-- nothing\n");
-        assertEquals(java.util.List.of("data.sql", "data_2.sql", "data_10.sql", "t.sql"),
+        assertEquals(List.of("data.sql", "data_2.sql", "data_10.sql", "t.sql"),
                 ScriptImporter.getDataFiles(unit).stream().map(File::getName).collect(
-                        java.util.stream.Collectors.toList()));
+                        Collectors.toList()));
         try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:legacy")) {
             ScriptImporter importer = new ScriptImporter(connection, null);
             importer.setStopOnError(false);
@@ -149,8 +153,8 @@ class ManifestTest {
     @Test
     void identityValues() {
         IdentityValueTracker tracker = new IdentityValueTracker();
-        TableMetaData table = new TableMetaData("t", new java.util.HashMap<>(), null);
-        tracker.track(table, java.util.List.of(), java.util.List.of());
+        TableMetaData table = new TableMetaData("t", new HashMap<>(), null);
+        tracker.track(table, List.of(), List.of());
         assertNull(tracker.get(table));
         Map<String, Object> row1 = new LinkedHashMap<>();
         row1.put("id", 5);
@@ -158,7 +162,7 @@ class ManifestTest {
         row2.put("id", 3L);
         Map<String, Object> row3 = new LinkedHashMap<>();
         row3.put("id", null);
-        tracker.track(table, java.util.List.of("id"), java.util.List.of(row1, row2, row3));
+        tracker.track(table, List.of("id"), List.of(row1, row2, row3));
         assertEquals(5L, tracker.get(table).get("id"));
         assertEquals(5L, tracker.remove(table).get("id"));
         assertNull(tracker.get(table));

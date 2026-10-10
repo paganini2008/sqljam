@@ -22,7 +22,6 @@ import java.util.function.Function;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.ExportCancelledException;
-import atlantafx.base.theme.Styles;
 import com.github.sqljam.impexp.ExportListener;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -46,6 +45,7 @@ import javafx.stage.Stage;
 import javafx.stage.Window;
 import javafx.util.Duration;
 import lombok.extern.slf4j.Slf4j;
+import atlantafx.base.theme.Styles;
 
 /**
  * @Description: ProgressDialog shows the progress of an export or import, it can be cancelled
@@ -70,6 +70,7 @@ public class ProgressDialog {
     private final ListView<LogEntry> logList = new ListView<>();
     private final Button cancelButton = new Button(Messages.get("button.cancel"), Icons.of(Icons.CANCEL));
     private final Button openFolderButton = new Button(Messages.get("progress.openFolder"), Icons.of(Icons.OPEN));
+    private final Button viewPackageButton = new Button(Messages.get("package.view"), Icons.of(Icons.TABLE));
     private final Label manifestLabel = new Label();
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private final int totalTables;
@@ -108,6 +109,7 @@ public class ProgressDialog {
         logList.setId("logList");
         cancelButton.setId("cancelButton");
         openFolderButton.setId("openFolderButton");
+        viewPackageButton.setId("viewPackageButton");
         manifestLabel.setId("manifestLabel");
 
         statusLabel.getStyleClass().add("progress-status");
@@ -151,6 +153,13 @@ public class ProgressDialog {
         });
         openFolderButton.setVisible(false);
         openFolderButton.setManaged(false);
+        viewPackageButton.setVisible(false);
+        viewPackageButton.setManaged(false);
+        viewPackageButton.setOnAction(event -> {
+            if (outputDirectory != null) {
+                new PackageViewer(stage, context, outputDirectory).show();
+            }
+        });
         openFolderButton.setOnAction(event -> {
             if (outputDirectory != null) {
                 context.getHostServices().showDocument(outputDirectory.toURI().toString());
@@ -162,10 +171,11 @@ public class ProgressDialog {
         manifestLabel.setVisible(false);
         manifestLabel.setManaged(false);
         openFolderButton.setMinWidth(Region.USE_PREF_SIZE);
+        viewPackageButton.setMinWidth(Region.USE_PREF_SIZE);
         cancelButton.setMinWidth(Region.USE_PREF_SIZE);
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox buttons = new HBox(8, spacer, openFolderButton, cancelButton);
+        HBox buttons = new HBox(8, spacer, viewPackageButton, openFolderButton, cancelButton);
         buttons.setAlignment(Pos.CENTER_RIGHT);
 
         Region headerSpacer = new Region();
@@ -387,6 +397,8 @@ public class ProgressDialog {
         if (!failed && outputDirectory != null) {
             openFolderButton.setVisible(true);
             openFolderButton.setManaged(true);
+            viewPackageButton.setVisible(true);
+            viewPackageButton.setManaged(true);
             File manifest = new File(outputDirectory, "manifest.json");
             if (manifest.exists()) {
                 manifestLabel.setText(Messages.format("progress.manifest", manifest.getAbsolutePath()));

@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
@@ -28,10 +29,15 @@ import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.DataFileStrategy;
+import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.ExportMode;
 import com.github.sqljam.impexp.Exporter;
 import com.github.sqljam.impexp.IdentifierCase;
+import com.github.sqljam.impexp.ParquetExporter;
+import com.github.sqljam.impexp.TableQuery;
+import javafx.beans.InvalidationListener;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.collections.FXCollections;
@@ -51,6 +57,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Spinner;
+import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.cell.CheckBoxListCell;
@@ -76,6 +83,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
 
     static {
         VERSION_PRESETS.put(DbType.MYSQL, List.of("", "5.6", "5.7", "8.0"));
+        VERSION_PRESETS.put(DbType.MARIADB, List.of("", "10.6", "10.11", "11.4", "11.8"));
         VERSION_PRESETS.put(DbType.POSTGRESQL, List.of("", "9.6", "10", "12", "16"));
         VERSION_PRESETS.put(DbType.ORACLE, List.of("", "11.2", "12.1", "19", "23"));
         VERSION_PRESETS.put(DbType.SQLSERVER, List.of("", "2008", "2012", "2016", "2019", "2022"));
@@ -119,10 +127,18 @@ public class ExportDialog extends Dialog<TransferRequest> {
     private final RadioButton perTableRadio = new RadioButton(Messages.get("export.script.perTable"));
     private final Spinner<Integer> maxFileSizeSpinner = new Spinner<>(0, 100000, 10, 10);
     private final CheckBox lobSeparatedCheck = new CheckBox(Messages.get("export.script.lobSeparated"));
+    private final ToggleGroup formatGroup = new ToggleGroup();
+    private final RadioButton sqlFormatRadio = new RadioButton(Messages.get("export.format.sql"));
+    private final RadioButton parquetFormatRadio = new RadioButton(Messages.get("export.format.parquet"));
+    private final ComboBox<String> compressionCombo = new ComboBox<>();
     private final Label layoutHint = new Label();
     private final ComboBox<ConnectionProfile> targetCombo = new ComboBox<>();
     private final ComboBox<String> targetCatalogCombo = new ComboBox<>();
     private final ComboBox<String> targetSchemaCombo = new ComboBox<>();
+    private final TextField tableNamePatternField = new TextField();
+    private final Label queryLabel = new Label();
+    private TableQuery tableQuery;
+    private String queryTableName;
     private final CheckBox createSchemaCheck = new CheckBox(Messages.get("export.database.createSchema"));
     private final Label errorLabel = new Label();
     private Button startButton;
@@ -142,7 +158,16 @@ public class ExportDialog extends Dialog<TransferRequest> {
     }
 
     public ExportDialog(Window owner, AppContext context, DbNode node) {
+        this(owner, context, node, null);
+    }
+
+    /**
+     * Export of a table narrowed by a query of the data viewer: selected columns, condition and order
+     */
+    public ExportDialog(Window owner, AppContext context, DbNode node, TableQuery query) {
         this.context = context;
+        this.tableQuery = query != null && !query.isEmpty() && node != null && node.getTable() != null ? query : null;
+        this.queryTableName = tableQuery != null ? node.getTable().getName() : null;
         Dialogs.initOwner(this, owner);
         Branding.applyIcons(this);
         setTitle(Messages.get("export.title"));
@@ -166,10 +191,14 @@ public class ExportDialog extends Dialog<TransferRequest> {
         perTableRadio.setId("perTableRadio");
         maxFileSizeSpinner.setId("maxFileSizeSpinner");
         lobSeparatedCheck.setId("lobSeparatedCheck");
+        sqlFormatRadio.setId("sqlFormatRadio");
+        parquetFormatRadio.setId("parquetFormatRadio");
+        compressionCombo.setId("compressionCombo");
         layoutHint.setId("layoutHint");
         targetCombo.setId("targetCombo");
         targetCatalogCombo.setId("targetCatalogCombo");
         targetSchemaCombo.setId("targetSchemaCombo");
+        tableNamePatternField.setId("tableNamePatternField");
         createSchemaCheck.setId("createSchemaCheck");
         errorLabel.setId("errorLabel");
         recreateCheck.setId("recreateCheck");
@@ -207,6 +236,11 @@ public class ExportDialog extends Dialog<TransferRequest> {
         setResultConverter(buttonType -> buttonType == ButtonType.OK ? buildRequest() : null);
         registerValidation();
         preselect(node);
+        if (tableQuery != null) {
+            queryLabel.setText(Messages.format("export.query", queryTableName, tableQuery));
+            queryLabel.setVisible(true);
+            queryLabel.setManaged(true);
+        }
         updateValidation();
     }
 
@@ -214,11 +248,17 @@ public class ExportDialog extends Dialog<TransferRequest> {
      * Start is enabled only when the inputs are valid, the reason is shown below the form
      */
     private void registerValidation() {
-        javafx.beans.InvalidationListener listener = observable -> updateValidation();
+        InvalidationListener listener = observable -> updateValidation();
         sourceCombo.valueProperty().addListener(listener);
         targetGroup.selectedToggleProperty().addListener(listener);
         directoryField.textProperty().addListener(listener);
         targetCombo.valueProperty().addListener(listener);
+        targetCatalogCombo.valueProperty().addListener(listener);
+        targetSchemaCombo.valueProperty().addListener(listener);
+        targetSchemaCombo.getEditor().textProperty().addListener(listener);
+        tableNamePatternField.textProperty().addListener(listener);
+        catalogCombo.valueProperty().addListener(listener);
+        schemaCombo.valueProperty().addListener(listener);
         scriptVersionCombo.getEditor().textProperty().addListener(listener);
         scriptVersionCombo.valueProperty().addListener(listener);
         pageSizeSpinner.getEditor().textProperty().addListener(listener);
@@ -305,6 +345,13 @@ public class ExportDialog extends Dialog<TransferRequest> {
         grid.addRow(1, new Label(Messages.get("export.source.catalog")), catalogCombo);
         grid.addRow(2, new Label(Messages.get("export.source.schema")), schemaCombo);
         VBox box = new VBox(8, grid, new Label(Messages.get("export.tables.hint")), filterBox, tableList);
+        // Rows of the table narrowed in the data viewer
+        queryLabel.setId("queryLabel");
+        queryLabel.getStyleClass().add("muted");
+        queryLabel.setWrapText(true);
+        queryLabel.setVisible(false);
+        queryLabel.setManaged(false);
+        box.getChildren().add(queryLabel);
         return box;
     }
 
@@ -373,7 +420,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
         browseButton.setOnAction(event -> chooseDirectory());
         HBox directoryBox = new HBox(8, directoryField, browseButton);
         HBox.setHgrow(directoryField, Priority.ALWAYS);
-        scriptDbTypeCombo.getItems().addAll(DbType.values());
+        scriptDbTypeCombo.getItems().addAll(DbTypeCells.getDbTypesByCategory());
         DbTypeCells.setupDbTypeCombo(scriptDbTypeCombo);
         scriptDbTypeCombo.valueProperty().addListener((obs, oldType, type) -> {
             scriptVersionCombo.getItems().setAll(VERSION_PRESETS.getOrDefault(type, List.of("")));
@@ -389,6 +436,18 @@ public class ExportDialog extends Dialog<TransferRequest> {
         long maxFileSize = context.getSettings().getMaxDataFileSize();
         maxFileSizeSpinner.getValueFactory().setValue(maxFileSize > 0 ? (int) Math.max(1, maxFileSize / MB) : 10);
         lobSeparatedCheck.setSelected(true);
+        sqlFormatRadio.setToggleGroup(formatGroup);
+        parquetFormatRadio.setToggleGroup(formatGroup);
+        sqlFormatRadio.setSelected(true);
+        compressionCombo.getItems().setAll(ParquetExporter.COMPRESSIONS);
+        compressionCombo.setValue(ParquetExporter.DEFAULT_COMPRESSION);
+        // Options of sql scripts do not apply to Parquet files
+        compressionCombo.disableProperty().bind(parquetFormatRadio.selectedProperty().not());
+        singleFileRadio.disableProperty().bind(parquetFormatRadio.selectedProperty());
+        perTableRadio.disableProperty().bind(parquetFormatRadio.selectedProperty());
+        maxFileSizeSpinner.disableProperty().bind(parquetFormatRadio.selectedProperty());
+        lobSeparatedCheck.disableProperty().bind(parquetFormatRadio.selectedProperty());
+        formatGroup.selectedToggleProperty().addListener((obs, oldToggle, toggle) -> updateLayoutHint());
         layoutHint.getStyleClass().addAll("muted", "mono");
         layoutHint.setWrapText(true);
         strategyGroup.selectedToggleProperty().addListener((obs, oldToggle, toggle) -> updateLayoutHint());
@@ -401,6 +460,9 @@ public class ExportDialog extends Dialog<TransferRequest> {
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.dbType")), scriptDbTypeCombo);
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.version")), scriptVersionCombo);
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.schema")), scriptSchemaField);
+        scriptGrid.addRow(row++, new Label(Messages.get("export.format")), new HBox(16, sqlFormatRadio,
+                parquetFormatRadio));
+        scriptGrid.addRow(row++, new Label(Messages.get("export.format.compression")), compressionCombo);
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.strategy")), new HBox(16, singleFileRadio,
                 perTableRadio));
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.maxFileSize")), new HBox(8,
@@ -426,10 +488,20 @@ public class ExportDialog extends Dialog<TransferRequest> {
             }
         });
         GridPane databaseGrid = grid();
-        databaseGrid.addRow(0, new Label(Messages.get("export.database.connection")), targetCombo);
+        databaseGrid.addRow(0, new Label(Messages.get("export.database.connection")), ConnectionDialog.targetField(
+                targetCombo, context, profile -> {
+                    targetCombo.getItems().setAll(context.getProfileRegistry().getProfiles());
+                    ConnectionDialog.selectProfile(targetCombo, profile);
+                }));
         databaseGrid.addRow(1, new Label(Messages.get("export.database.catalog")), targetCatalogCombo);
         databaseGrid.addRow(2, new Label(Messages.get("export.database.schema")), targetSchemaCombo);
         databaseGrid.add(createSchemaCheck, 1, 3);
+        tableNamePatternField.setPromptText(Dialect.TABLE_PLACEHOLDER);
+        Label tableNameHint = new Label(Messages.get("export.database.tableName.hint"));
+        tableNameHint.getStyleClass().add("muted");
+        tableNameHint.setWrapText(true);
+        databaseGrid.addRow(4, new Label(Messages.get("export.database.tableName")), tableNamePatternField);
+        databaseGrid.add(tableNameHint, 1, 5);
         VBox databasePane = new VBox(databaseGrid);
         databasePane.getStyleClass().add("target-pane");
 
@@ -441,6 +513,10 @@ public class ExportDialog extends Dialog<TransferRequest> {
     }
 
     private void updateLayoutHint() {
+        if (parquetFormatRadio.isSelected()) {
+            layoutHint.setText("schema.sql\ndata/<table>.parquet\nconstraints.sql\nmanifest.json");
+            return;
+        }
         boolean perTable = perTableRadio.isSelected();
         boolean split = maxFileSizeSpinner.getValue() != null && maxFileSizeSpinner.getValue() > 0;
         StringBuilder hint = new StringBuilder();
@@ -647,8 +723,13 @@ public class ExportDialog extends Dialog<TransferRequest> {
         }, this::showError);
     }
 
+    /**
+     * Errors of loading after the dialog is closed are not shown
+     */
     private void showError(Throwable e) {
-        Dialogs.showError(getDialogPane().getScene().getWindow(), Messages.get("export.loadError"), e);
+        if (isShowing()) {
+            Dialogs.showError(getDialogPane().getScene().getWindow(), Messages.get("export.loadError"), e);
+        }
     }
 
     String validate() {
@@ -679,17 +760,53 @@ public class ExportDialog extends Dialog<TransferRequest> {
             }
         } else if (targetCombo.getValue() == null) {
             return Messages.get("export.error.target");
+        } else {
+            return validateTableNames();
         }
         return null;
     }
 
+    /**
+     * Tables are not imported into themselves, tables copied in the same schema need another name. A name without
+     * {table} is the name of a single table.
+     */
+    private String validateTableNames() {
+        String pattern = StringUtils.trimToEmpty(tableNamePatternField.getText());
+        boolean renamed = !pattern.isEmpty() && !Dialect.TABLE_PLACEHOLDER.equals(pattern);
+        if (renamed && !pattern.contains(Dialect.TABLE_PLACEHOLDER) && getSelectedTableCount() != 1) {
+            return Messages.format("export.error.tableName", Dialect.TABLE_PLACEHOLDER);
+        }
+        ConnectionProfile source = sourceCombo.getValue();
+        ConnectionProfile target = targetCombo.getValue();
+        if (!renamed && source != null && target != null && Objects.equals(source.getId(), target.getId())
+                && isSameName(catalogCombo.isDisabled() ? null : catalogCombo.getValue(),
+                targetCatalogCombo.isDisabled() ? null : targetCatalogCombo.getValue())
+                && isSameName(schemaCombo.isDisabled() ? null : schemaCombo.getValue(),
+                targetSchemaCombo.isDisabled() ? null : targetSchemaCombo.getEditor().getText())) {
+            return Messages.format("export.error.sameTables", Dialect.TABLE_PLACEHOLDER);
+        }
+        return null;
+    }
+
+    /**
+     * A target name which is not given is the source name
+     */
+    private static boolean isSameName(String sourceName, String targetName) {
+        return StringUtils.isBlank(targetName) || StringUtils.isBlank(sourceName)
+                || sourceName.trim().equalsIgnoreCase(targetName.trim());
+    }
+
+    private int getSelectedTableCount() {
+        return (int) tableChoices.stream().filter(choice -> choice.selected.get()).count();
+    }
+
     private static int getMin(Spinner<Integer> spinner) {
-        return ((javafx.scene.control.SpinnerValueFactory.IntegerSpinnerValueFactory) spinner.getValueFactory())
+        return ((SpinnerValueFactory.IntegerSpinnerValueFactory) spinner.getValueFactory())
                 .getMin();
     }
 
     private static int getMax(Spinner<Integer> spinner) {
-        return ((javafx.scene.control.SpinnerValueFactory.IntegerSpinnerValueFactory) spinner.getValueFactory())
+        return ((SpinnerValueFactory.IntegerSpinnerValueFactory) spinner.getValueFactory())
                 .getMax();
     }
 
@@ -751,6 +868,8 @@ public class ExportDialog extends Dialog<TransferRequest> {
                     : DataFileStrategy.SINGLE_FILE);
             request.setMaxFileSize(maxFileSizeSpinner.getValue() * MB);
             request.setLobSeparated(lobSeparatedCheck.isSelected());
+            request.setDataFormat(parquetFormatRadio.isSelected() ? DataFormat.PARQUET : DataFormat.SQL);
+            request.setCompression(compressionCombo.getValue());
             context.getSettings().setLastExportDirectory(directory.getAbsolutePath());
             context.getSettings().setMaxDataFileSize(maxFileSizeSpinner.getValue() * MB);
         } else {
@@ -760,6 +879,11 @@ public class ExportDialog extends Dialog<TransferRequest> {
             request.setTargetSchema(targetSchemaCombo.isDisabled() ? null : StringUtils.trimToNull(
                     targetSchemaCombo.getEditor().getText()));
             request.setTargetSchemaCreated(createSchemaCheck.isSelected());
+            request.setTableNamePattern(StringUtils.trimToNull(tableNamePatternField.getText()));
+        }
+        // The query of the data viewer narrows its table
+        if (tableQuery != null && selected.contains(queryTableName)) {
+            request.getTableQueries().put(queryTableName, tableQuery);
         }
         context.getSettings().setTransferPageSize(pageSizeSpinner.getValue());
         context.saveSettings();

@@ -137,6 +137,9 @@ public class H2Dialect extends Dialect {
             int fraction = Math.min(Math.max(columnScale, 0), 9);
             return "timestamp(" + fraction + ")";
         }
+        if (dataType == Types.TIME && columnScale > 0) {
+            return "time(" + Math.min(columnScale, 9) + ")";
+        }
         if ((dataType == Types.VARCHAR || dataType == Types.NVARCHAR) && columnSize <= 0) {
             return "clob";
         }
@@ -284,5 +287,16 @@ public class H2Dialect extends Dialect {
     @Override
     public String getCreateSchemaIfNotExistsStatement(String schema) {
         return String.format("CREATE SCHEMA IF NOT EXISTS %s", quoteIdentifier(schema));
+    }
+
+    /**
+     * Values of ROW types are read as text
+     */
+    @Override
+    public String getSelectColumnExpression(String columnName, String typeName) {
+        if (H2MetaDataOperations.isRowType(typeName)) {
+            return String.format("CAST(%1$s AS VARCHAR) AS %1$s", quoteIdentifier(columnName));
+        }
+        return super.getSelectColumnExpression(columnName, typeName);
     }
 }

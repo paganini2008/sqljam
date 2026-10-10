@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.File;
 import java.sql.Connection;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
@@ -38,10 +39,10 @@ import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.face.service.TransferService;
+import com.github.sqljam.impexp.AbstractFileImporter;
 import com.github.sqljam.impexp.DataFileStrategy;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.ExportMode;
-import com.github.sqljam.impexp.ScriptImporter;
 
 /**
  * @Description: AbstractSessionIT browses fixture tables by DatabaseSession and transfers them by TransferService
@@ -99,12 +100,18 @@ public abstract class AbstractSessionIT {
             assertTrue(columns.stream().anyMatch(column -> "employee name".equalsIgnoreCase(
                     column.getRemarks())) || source == ItDatabase.SQLITE);
             List<IndexInfo> indexes = session.getIndexes(catalog, schema, emp);
-            assertTrue(indexes.stream().anyMatch(index -> index.isUnique() && index.getColumns().stream()
-                    .anyMatch("email"::equalsIgnoreCase)), "Unique index of email: " + indexes.size());
             List<ForeignKeyInfo> foreignKeys = session.getForeignKeys(catalog, schema, emp);
-            assertEquals(1, foreignKeys.size());
-            assertEquals((source.getPrefix() + "dept").toLowerCase(Locale.ENGLISH),
-                    foreignKeys.get(0).getReferencedTable().toLowerCase(Locale.ENGLISH));
+            if (source == ItDatabase.CLICKHOUSE) {
+                // ClickHouse has no unique indexes and foreign keys
+                assertTrue(indexes.isEmpty());
+                assertTrue(foreignKeys.isEmpty());
+            } else {
+                assertTrue(indexes.stream().anyMatch(index -> index.isUnique() && index.getColumns().stream()
+                        .anyMatch("email"::equalsIgnoreCase)), "Unique index of email: " + indexes.size());
+                assertEquals(1, foreignKeys.size());
+                assertEquals((source.getPrefix() + "dept").toLowerCase(Locale.ENGLISH),
+                        foreignKeys.get(0).getReferencedTable().toLowerCase(Locale.ENGLISH));
+            }
             assertEquals(ItDatabase.EMP_COUNT, session.countRows(catalog, schema, emp));
 
             DataPage page = session.getData(catalog, schema, emp, 3, 100);
@@ -113,7 +120,14 @@ public abstract class AbstractSessionIT {
             assertEquals("201", page.getRows().get(0).get(0));
             int photoIndex = page.getColumns().stream().map(column -> column.toLowerCase(Locale.ENGLISH))
                     .collect(Collectors.toList()).indexOf("photo");
-            assertTrue(page.getRows().get(9).get(photoIndex).startsWith("(466 bytes) 0x"));
+            String photo = page.getRows().get(9).get(photoIndex);
+            if (source == ItDatabase.CLICKHOUSE) {
+                // Photos of the ClickHouse fixture are hex text
+                assertTrue(photo.startsWith(HexFormat.of().formatHex(ItDatabase.photo(210)).substring(0,
+                        20)), photo);
+            } else {
+                assertTrue(photo.startsWith("(466 bytes) 0x"), photo);
+            }
 
             String ddl = session.getDdl(catalog, schema, emp, null);
             assertTrue(ddl.toUpperCase(Locale.ENGLISH).contains("CREATE TABLE"), ddl);
@@ -142,7 +156,7 @@ public abstract class AbstractSessionIT {
         transferService.transfer(request, listener);
         assertEquals(List.of(), listener.getErrors());
 
-        ScriptImporter importer = transferService.importScripts(target.getTargetProfile(), null,
+        AbstractFileImporter importer = transferService.importScripts(target.getTargetProfile(), null,
                 target.getTargetSchema(), dir, true, listener);
         assertEquals(List.of(), listener.getErrors());
         assertTrue(importer.getExecutedCount() > 0);

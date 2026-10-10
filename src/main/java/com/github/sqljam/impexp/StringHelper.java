@@ -15,8 +15,8 @@
  */
 package com.github.sqljam.impexp;
 
-import lombok.experimental.UtilityClass;
 import org.apache.commons.lang3.StringUtils;
+import lombok.experimental.UtilityClass;
 
 /**
  * @Description: StringHelper pads and repeats strings for pretty scripts

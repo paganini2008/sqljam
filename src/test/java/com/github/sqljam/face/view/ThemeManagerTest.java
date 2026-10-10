@@ -29,8 +29,6 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.service.SettingsStore;
-import atlantafx.base.theme.NordDark;
-import atlantafx.base.theme.PrimerDark;
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.scene.control.Menu;
@@ -39,6 +37,8 @@ import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioMenuItem;
 import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
+import atlantafx.base.theme.NordDark;
+import atlantafx.base.theme.PrimerDark;
 
 /**
  * @Description: ThemeManagerTest

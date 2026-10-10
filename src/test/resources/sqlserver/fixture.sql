@@ -84,6 +84,10 @@ CREATE TABLE dbo.sjs_types (
     c_hierarchyid      HIERARCHYID,
     c_geography        GEOGRAPHY,
     c_geometry         GEOMETRY,
+    c_datetime2_0      DATETIME2(0),
+    c_time0            TIME(0),
+    c_dto0             DATETIMEOFFSET(0),
+    c_decimal38        DECIMAL(38,0),
     c_rowversion       ROWVERSION,
     c_computed         AS (CAST(c_int AS BIGINT) * 2),
     c_persisted        AS (CONCAT('#', id)) PERSISTED
@@ -104,3 +108,7 @@ INSERT INTO dbo.sjs_types (id, c_bit, c_tinyint, c_smallint, c_int, c_bigint, c_
 VALUES (2, 0, 0, 32767, 2147483647, 9223372036854775807, -0.000001, 0, -0.0001, 0, -1E100, -3.5, '0001-01-01',
     '00:00:00', '1753-01-01 00:00:00', '9999-12-31 23:59:59.9999999', '', '', N'', 0x00000000, 0x);
 INSERT INTO dbo.sjs_types (id) VALUES (3);
+UPDATE dbo.sjs_types SET c_datetime2_0 = '2024-02-29 23:59:59', c_time0 = '23:59:59',
+    c_dto0 = '2024-02-29 12:00:00 +08:00', c_decimal38 = 99999999999999999999999999999999999999 WHERE id = 1;
+UPDATE dbo.sjs_types SET c_datetime2_0 = '0001-01-01 00:00:00', c_time0 = '00:00:00',
+    c_dto0 = '1970-01-02 00:00:00 +00:00', c_decimal38 = -99999999999999999999999999999999999999 WHERE id = 2;

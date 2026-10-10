@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
+import javafx.application.Application;
 import atlantafx.base.theme.CupertinoDark;
 import atlantafx.base.theme.CupertinoLight;
 import atlantafx.base.theme.Dracula;
@@ -29,7 +30,6 @@ import atlantafx.base.theme.NordLight;
 import atlantafx.base.theme.PrimerDark;
 import atlantafx.base.theme.PrimerLight;
 import atlantafx.base.theme.Theme;
-import javafx.application.Application;
 
 /**
  * @Description: ThemeManager switches AtlantaFX themes of the application

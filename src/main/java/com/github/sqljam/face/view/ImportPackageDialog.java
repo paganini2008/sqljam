@@ -17,13 +17,16 @@ package com.github.sqljam.face.view;
 
 import java.io.File;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.ExportManifest;
+import com.github.sqljam.impexp.ParquetExporter;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
@@ -61,6 +64,8 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
     private final Label sourceValue = new Label();
     private final Label targetValue = new Label();
     private final Label filesValue = new Label();
+    private final Label formatValue = new Label();
+    private final Button viewButton = new Button(Messages.get("package.view"), Icons.of(Icons.TABLE));
     private final TableView<ExportManifest.TableEntry> tableView = new TableView<>();
     private final VBox summaryPane;
     private final ComboBox<ConnectionProfile> targetCombo = new ComboBox<>();
@@ -110,6 +115,8 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         sourceValue.setId("sourceValue");
         targetValue.setId("targetValue");
         filesValue.setId("filesValue");
+        formatValue.setId("formatValue");
+        viewButton.setId("viewPackageButton");
         tableView.setId("packageTables");
         targetCombo.setId("targetCombo");
         catalogCombo.setId("catalogCombo");
@@ -124,7 +131,14 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         });
         Button browseButton = new Button(null, Icons.of(Icons.FOLDER));
         browseButton.setOnAction(event -> chooseDirectory());
-        HBox directoryBox = new HBox(8, directoryField, browseButton);
+        // Files of the package are listed and previewed
+        viewButton.setOnAction(event -> {
+            File directory = new File(directoryField.getText().trim());
+            if (directory.isDirectory()) {
+                new PackageViewer(getDialogPane().getScene().getWindow(), context, directory).show();
+            }
+        });
+        HBox directoryBox = new HBox(8, directoryField, browseButton, viewButton);
         HBox.setHgrow(directoryField, Priority.ALWAYS);
 
         GridPane summaryGrid = grid();
@@ -133,6 +147,7 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         summaryGrid.addRow(2, new Label(Messages.get("import.manifest.source")), sourceValue);
         summaryGrid.addRow(3, new Label(Messages.get("import.manifest.target")), targetValue);
         summaryGrid.addRow(4, new Label(Messages.get("import.manifest.files")), filesValue);
+        summaryGrid.addRow(5, new Label(Messages.get("export.format")), formatValue);
         setupTableView();
         Label summaryTitle = new Label(Messages.get("import.section.package"));
         summaryTitle.getStyleClass().add("section-title");
@@ -157,7 +172,12 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
             }
         });
         GridPane targetGrid = grid();
-        targetGrid.addRow(0, new Label(Messages.get("export.database.connection")), targetCombo);
+        targetGrid.addRow(0, new Label(Messages.get("export.database.connection")), ConnectionDialog.targetField(
+                targetCombo, context, profile -> {
+                    // A data source of another type than the package is not listed
+                    filterTargets();
+                    ConnectionDialog.selectProfile(targetCombo, profile);
+                }));
         targetGrid.addRow(1, new Label(Messages.get("export.database.catalog")), catalogCombo);
         targetGrid.addRow(2, new Label(Messages.get("export.database.schema")), schemaCombo);
         targetGrid.add(stopOnErrorCheck, 1, 3);
@@ -273,10 +293,16 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
             return;
         }
         statusValue.setText(Messages.get("tree.loading"));
-        TaskRunner.run(() -> new Object[]{ExportManifest.read(directory), isScriptDirectory(directory)}, result -> {
-            directoryValid = (Boolean) result[1] || result[0] != null;
+        TaskRunner.run(() -> new Object[]{ExportManifest.read(directory), isScriptDirectory(directory),
+                isParquetDirectory(directory)}, result -> {
+            // Parquet files without manifest are not sql scripts, even with schema.sql
+            directoryValid = result[0] != null || (Boolean) result[1] && !(Boolean) result[2];
             showSummary((ExportManifest) result[0], directoryValid);
             validateTarget();
+            // Parquet files of other tools have no manifest, they are loaded by Import Parquet Files
+            if (!directoryValid && (Boolean) result[2]) {
+                warningLabel.setText(Messages.get("import.warning.parquetFiles"));
+            }
         }, e -> {
             directoryValid = false;
             showSummary(null, false);
@@ -289,6 +315,19 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
                 || new File(directory, "data").isDirectory();
     }
 
+    /**
+     * Directory with Parquet files (directly or in data/) but without manifest.json
+     */
+    static boolean isParquetDirectory(File directory) {
+        return hasParquetFiles(directory) || hasParquetFiles(new File(directory, "data"));
+    }
+
+    private static boolean hasParquetFiles(File directory) {
+        File[] files = directory.listFiles((parent, name) -> name.toLowerCase(Locale.ENGLISH)
+                .endsWith(ParquetExporter.PARQUET_EXTENSION));
+        return files != null && files.length > 0;
+    }
+
     private void showSummary(ExportManifest manifest, boolean valid) {
         this.manifest = manifest;
         tableView.getItems().clear();
@@ -299,6 +338,7 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
             sourceValue.setText("-");
             targetValue.setText("-");
             filesValue.setText("-");
+            formatValue.setText(valid ? Messages.get("export.format.sql") : "-");
             filterTargets();
             return;
         }
@@ -312,6 +352,8 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         long totalSize = manifest.getFiles().stream().mapToLong(ExportManifest.FileEntry::getSize).sum();
         filesValue.setText(Messages.format("import.manifest.filesValue", manifest.getFiles().size(),
                 FileUtils.byteCountToDisplaySize(totalSize)));
+        formatValue.setText(Messages.get(manifest.getDataFormat() == DataFormat.PARQUET ? "export.format.parquet"
+                : "export.format.sql"));
         tableView.getItems().setAll(manifest.getTables());
         filterTargets();
     }
@@ -412,7 +454,16 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
                     : catalogs.contains(profile.getDatabase()) ? profile.getDatabase() : catalogs.get(0);
             catalogCombo.setValue(preferred);
             schemaCombo.setDisable(!profile.getDbType().isSchemaSupported());
-        }, e -> Dialogs.showError(getDialogPane().getScene().getWindow(), Messages.get("export.loadError"), e));
+        }, this::showLoadError);
+    }
+
+    /**
+     * Errors of loading after the dialog is closed are not shown
+     */
+    private void showLoadError(Throwable e) {
+        if (isShowing()) {
+            Dialogs.showError(getDialogPane().getScene().getWindow(), Messages.get("export.loadError"), e);
+        }
     }
 
     private void loadSchemas(ConnectionProfile profile, String catalog) {
@@ -424,7 +475,7 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
             if (StringUtils.isNotBlank(preferred)) {
                 schemaCombo.setValue(preferred);
             }
-        }, e -> Dialogs.showError(getDialogPane().getScene().getWindow(), Messages.get("export.loadError"), e));
+        }, this::showLoadError);
     }
 
     ImportRequest buildRequest() {

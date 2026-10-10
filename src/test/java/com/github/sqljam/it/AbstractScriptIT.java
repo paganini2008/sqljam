@@ -59,7 +59,8 @@ public abstract class AbstractScriptIT {
     @ParameterizedTest(name = "script for {0}")
     @EnumSource(ItDatabase.class)
     void exportAndImport(ItDatabase target) throws Exception {
-        assumeTrue(!(source == ItDatabase.ORACLE && target == ItDatabase.ORACLE));
+        // Test users of Oracle and MariaDB have one schema, the same database type is verified by copyIntoSameSchema
+        assumeTrue(!(source == target && source.isSingleSchema()));
         assumeTrue(AbstractImportIT.isTargetSelected(target));
         assumeTrue(source.isAvailable() && target.isAvailable());
         source.loadFixture();
@@ -84,7 +85,10 @@ public abstract class AbstractScriptIT {
         assertEquals(List.of(), listener.getErrors());
         assertTrue(listener.isCompleted(), "Export progress 100%");
         assertTrue(new File(dir, ScriptExportHandler.SCHEMA_FILE_NAME).exists(), "schema.sql");
-        assertTrue(new File(dir, LobManifestWriter.MANIFEST_FILE_NAME).exists(), "lob-manifest.json");
+        // ClickHouse has no LOB types, LOB values of ClickHouse targets are in INSERT statements
+        boolean lobSeparated = source != ItDatabase.CLICKHOUSE
+                && target.getDbType().createDialect().isLobSeparationSupported();
+        assertEquals(lobSeparated, new File(dir, LobManifestWriter.MANIFEST_FILE_NAME).exists(), "lob-manifest.json");
         List<File> dataFiles = ScriptImporter.getDataFiles(dir);
         assertTrue(dataFiles.size() > 1, "Data files are split");
         assertTrue(dataFiles.stream().anyMatch(file -> file.getName().endsWith("_2.sql")), "Part file naming");
@@ -107,7 +111,7 @@ public abstract class AbstractScriptIT {
                 throw new AssertionError(e.getMessage() + "\nErrors: " + listener.getErrors(), e);
             }
             assertEquals(List.of(), listener.getErrors());
-            assertTrue(importer.getLobCount() > 0, "LOB values restored");
+            assertEquals(lobSeparated, importer.getLobCount() > 0, "LOB values restored");
             assertTrue(listener.isCompleted(), "Import progress 100%");
             new ItVerifier(source, target, connection).verifyAll();
         }
@@ -128,9 +132,10 @@ public abstract class AbstractScriptIT {
         scriptExporter.export(ExportMode.DDL_DATA);
         assertEquals(List.of(), listener.getErrors());
         assertEquals(List.of(new File(dir, ScriptExportHandler.DATA_FILE_NAME)), ScriptImporter.getDataFiles(dir));
-        // Foreign keys of SQLite are defined in create table statements
-        assertEquals(source != ItDatabase.SQLITE, new File(dir, ScriptExportHandler.CONSTRAINT_FILE_NAME).exists(),
-                "constraints.sql");
+        // Foreign keys of SQLite and DuckDB are defined in create table statements
+        // ClickHouse has no foreign keys
+        assertEquals(!source.getDbType().createDialect().isForeignKeyInline() && source != ItDatabase.CLICKHOUSE,
+                new File(dir, ScriptExportHandler.CONSTRAINT_FILE_NAME).exists(), "constraints.sql");
     }
 
     /**

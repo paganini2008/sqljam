@@ -58,8 +58,12 @@ public class ConnectionProfile {
      * Jdbc url connecting to the given database (catalog), PostgreSQL connects to one database per connection
      */
     public String getJdbcUrl(String catalog) {
+        if (dbType != null && dbType.isFileBased()) {
+            // The catalog of a database file is the file itself
+            catalog = null;
+        }
         if (StringUtils.isNotBlank(url) && (StringUtils.isBlank(catalog) || StringUtils.equals(catalog, database))) {
-            return url;
+            return dbType != null ? dbType.normalizeUrl(url) : url;
         }
         return dbType.getUrl(hostname, port, StringUtils.defaultIfBlank(catalog, database));
     }

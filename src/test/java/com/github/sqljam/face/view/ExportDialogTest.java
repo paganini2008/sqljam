@@ -22,9 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
 import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
@@ -35,9 +40,13 @@ import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.impexp.DataFileStrategy;
+import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.impexp.ExportListener;
 import com.github.sqljam.impexp.ExportMode;
 import com.github.sqljam.impexp.IdentifierCase;
+import com.github.sqljam.impexp.ImpExpException;
+import com.github.sqljam.impexp.TableQuery;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -263,6 +272,10 @@ class ExportDialogTest {
             ComboBox<ConnectionProfile> targetCombo = (ComboBox<ConnectionProfile>) node("targetCombo");
             targetCombo.setValue(targetCombo.getItems().get(0));
         });
+        @SuppressWarnings("unchecked")
+        ComboBox<String> targetSchema = (ComboBox<String>) node("targetSchemaCombo");
+        FxTestSupport.waitUntil(() -> !targetSchema.getItems().isEmpty());
+        FxTestSupport.run(() -> targetSchema.getEditor().setText("COPY"));
         assertFalse(startDisabled(), error());
     }
 
@@ -392,5 +405,159 @@ class ExportDialogTest {
         });
         assertTrue(startDisabled());
         assertEquals("Please choose a source data source", error());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void mapsParquetFormat() {
+        open(schemaNode());
+        setText("directoryField", dir.getAbsolutePath());
+        // SQL is the default format, compression is only for Parquet
+        assertTrue(FxTestSupport.call(() -> ((RadioButton) node("sqlFormatRadio")).isSelected()));
+        assertTrue(FxTestSupport.call(() -> node("compressionCombo").isDisabled()));
+        assertEquals(DataFormat.SQL, build().getDataFormat());
+        FxTestSupport.run(() -> {
+            ((RadioButton) node("parquetFormatRadio")).setSelected(true);
+            ((ComboBox<String>) node("compressionCombo")).setValue("SNAPPY");
+        });
+        assertFalse(FxTestSupport.call(() -> node("compressionCombo").isDisabled()));
+        // Options of sql data files are disabled
+        for (String id : new String[]{"singleFileRadio", "perTableRadio", "maxFileSizeSpinner",
+                "lobSeparatedCheck"}) {
+            assertTrue(FxTestSupport.call(() -> node(id).isDisabled()), id);
+        }
+        String hint = FxTestSupport.call(() -> ((Label) node("layoutHint")).getText());
+        assertEquals("schema.sql\ndata/<table>.parquet\nconstraints.sql\nmanifest.json", hint);
+        assertEquals(List.of("ZSTD", "SNAPPY", "GZIP", "UNCOMPRESSED"),
+                FxTestSupport.call(() -> List.copyOf(((ComboBox<String>) node("compressionCombo")).getItems())));
+        assertFalse(startDisabled(), error());
+        TransferRequest request = build();
+        assertEquals(DataFormat.PARQUET, request.getDataFormat());
+        assertEquals("SNAPPY", request.getCompression());
+        // Back to SQL
+        FxTestSupport.run(() -> ((RadioButton) node("sqlFormatRadio")).setSelected(true));
+        assertFalse(FxTestSupport.call(() -> node("perTableRadio").isDisabled()));
+        assertEquals(DataFormat.SQL, build().getDataFormat());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void groupsScriptDatabaseTypesByCategory() {
+        open(schemaNode());
+        List<DbType> types = FxTestSupport.call(() -> List.copyOf(((ComboBox<DbType>) node("scriptDbTypeCombo"))
+                .getItems()));
+        assertEquals(DbTypeCells.getDbTypesByCategory(), types);
+        // OLAP databases are listed after relational databases
+        assertEquals(List.of(DbType.DUCKDB, DbType.CLICKHOUSE), types.subList(types.size() - 2, types.size()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private void selectSameSchemaAsTarget() {
+        FxTestSupport.run(() -> ((RadioButton) node("databaseRadio")).setSelected(true));
+        ComboBox<ConnectionProfile> targetCombo = (ComboBox<ConnectionProfile>) node("targetCombo");
+        FxTestSupport.run(() -> targetCombo.setValue(targetCombo.getItems().get(0)));
+        ComboBox<String> targetSchema = (ComboBox<String>) node("targetSchemaCombo");
+        FxTestSupport.waitUntil(() -> !targetSchema.getItems().isEmpty());
+        FxTestSupport.run(() -> targetSchema.getEditor().setText(UiDatabase.SCHEMA));
+    }
+
+    @Test
+    void requiresTableNameToCopyInSameSchema() {
+        open(schemaNode());
+        selectSameSchemaAsTarget();
+        // The tables would be imported into themselves
+        assertTrue(startDisabled());
+        assertEquals("Source and target are the same tables, please choose another schema or a target table name"
+                + " such as {table}_copy", error());
+        setText("tableNamePatternField", "{table}");
+        assertTrue(startDisabled());
+        setText("tableNamePatternField", "{table}_copy");
+        assertFalse(startDisabled(), error());
+        TransferRequest request = build();
+        assertEquals("{table}_copy", request.getTableNamePattern());
+        assertEquals(UiDatabase.SCHEMA, request.getTargetSchema());
+        // A name without {table} is the name of one table
+        setText("tableNamePatternField", "T_BACKUP");
+        assertEquals("The target table name must contain {table} when several tables are imported", error());
+        // Another schema needs no table name
+        setText("tableNamePatternField", "");
+        FxTestSupport.run(() -> ((ComboBox<?>) node("targetSchemaCombo")).getEditor().setText("COPY"));
+        assertFalse(startDisabled(), error());
+        assertNull(build().getTableNamePattern());
+    }
+
+    @Test
+    void copiesTablesInSameSchema() throws Exception {
+        TransferRequest request = new TransferRequest();
+        request.setSource(profile);
+        request.setSourceCatalog(UiDatabase.CATALOG);
+        request.setSourceSchema(UiDatabase.SCHEMA);
+        request.setTables(List.of("T_ONE", "T_PAGED"));
+        request.setTarget(TransferRequest.Target.DATABASE);
+        request.setTargetProfile(profile);
+        request.setTargetCatalog(UiDatabase.CATALOG);
+        request.setTargetSchema(UiDatabase.SCHEMA);
+        // The same tables are rejected, the source tables are kept
+        ImpExpException e = Assertions.assertThrows(
+                ImpExpException.class, () -> context.getTransferService().transfer(request,
+                        ExportListener.NONE));
+        assertTrue(e.getMessage().startsWith("Source and target tables are the same"), e.getMessage());
+        request.setTableNamePattern("{table}_copy");
+        context.getTransferService().transfer(request, ExportListener.NONE);
+        try (Connection connection = DriverManager.getConnection(profile.getJdbcUrl(), "sa", "");
+             Statement statement = connection.createStatement()) {
+            for (String[] table : new String[][]{{"T_ONE", "5"}, {"T_ONE_COPY", "5"},
+                    {"T_PAGED", String.valueOf(UiDatabase.PAGED_ROWS)},
+                    {"T_PAGED_COPY", String.valueOf(UiDatabase.PAGED_ROWS)}}) {
+                try (ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM " + table[0])) {
+                    rs.next();
+                    assertEquals(Integer.parseInt(table[1]), rs.getInt(1), table[0]);
+                }
+            }
+            // Keys and indexes of the copy have their own names
+            try (ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM INFORMATION_SCHEMA.INDEXES"
+                    + " WHERE TABLE_NAME = 'T_PAGED_COPY'")) {
+                rs.next();
+                assertEquals(2, rs.getInt(1));
+            }
+            statement.execute("DROP TABLE T_ONE_COPY");
+            statement.execute("DROP TABLE T_PAGED_COPY");
+        }
+    }
+
+    @Test
+    void exportsRowsOfQuery() {
+        TableQuery query = new TableQuery(List.of("ID", "NAME"), "ID > 200", null, "ID DESC");
+        dialog = FxTestSupport.call(() -> {
+            ExportDialog exportDialog = new ExportDialog(stage, context, tableNode("T_PAGED"), query);
+            exportDialog.show();
+            return exportDialog;
+        });
+        FxTestSupport.waitUntil(() -> list().getItems().size() == 3);
+        setText("directoryField", dir.getAbsolutePath());
+        // The query of the data viewer is shown for its table
+        String label = FxTestSupport.call(() -> ((Label) node("queryLabel")).getText());
+        assertEquals("Rows of T_PAGED: SELECT ID, NAME WHERE ID > 200 ORDER BY ID DESC", label);
+        assertTrue(FxTestSupport.call(() -> node("queryLabel").isVisible()));
+        TransferRequest request = build();
+        assertEquals(List.of("T_PAGED"), request.getTables());
+        assertEquals(query, request.getTableQueries().get("T_PAGED"));
+        // Other tables selected too: the query narrows its own table only
+        FxTestSupport.run(() -> ((Button) node("selectAllButton")).fire());
+        TransferRequest all = build();
+        assertTrue(all.getTables().isEmpty(), "All tables of the schema");
+        assertEquals(1, all.getTableQueries().size());
+        assertEquals(query, all.getTableQueries().get("T_PAGED"));
+        // A query without columns, condition and order narrows nothing
+        FxTestSupport.run(dialog::close);
+        dialog = FxTestSupport.call(() -> {
+            ExportDialog plain = new ExportDialog(stage, context, tableNode("T_PAGED"), new TableQuery());
+            plain.show();
+            plain.getDialogPane().applyCss();
+            plain.getDialogPane().layout();
+            return plain;
+        });
+        assertFalse(FxTestSupport.call(() -> node("queryLabel").isVisible()));
+        assertTrue(build().getTableQueries().isEmpty());
     }
 }

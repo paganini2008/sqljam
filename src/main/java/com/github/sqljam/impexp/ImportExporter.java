@@ -17,6 +17,7 @@ package com.github.sqljam.impexp;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.ImportExportHandler.ImportConfiguration;
+import com.github.sqljam.jdbc.ConnectionFactory;
 
 /**
  * @Description: ImportExporter copies tables from a source database into a target database
@@ -32,6 +33,8 @@ public class ImportExporter {
     private final ImportExportHandler importingExportHandler = new ImportExportHandler();
     private final Exporter exporter = new Exporter(importingExportHandler);
     private IdentifierCase identifierCase;
+    private Dialect targetDialect;
+    private Boolean sourceSchemaPreserved;
     private int targetMajorVersion = -1;
     private int targetMinorVersion = -1;
 
@@ -43,8 +46,31 @@ public class ImportExporter {
         exporter.setMetaDataOperations(metaDataOperations);
     }
 
+    /**
+     * Imports by connections of the factory instead of creating a connection pool, e.g. an existing connection
+     * shared by {@link com.github.sqljam.jdbc.SharedConnectionFactory}
+     */
+    public void setTargetConnectionFactory(ConnectionFactory connectionFactory) {
+        importingExportHandler.setConnectionFactory(connectionFactory);
+    }
+
     public void setExportListener(ExportListener exportListener) {
         exporter.setExportListener(exportListener);
+    }
+
+    /**
+     * Whether tables are imported into schemas with the same names as source schemas when no target schema is
+     * given. By default schemas are preserved if both databases support schemas.
+     */
+    public void setSourceSchemaPreserved(Boolean sourceSchemaPreserved) {
+        this.sourceSchemaPreserved = sourceSchemaPreserved;
+    }
+
+    /**
+     * Dialect of the target database with custom settings, created from the target database type by default
+     */
+    public void setTargetDialect(Dialect targetDialect) {
+        this.targetDialect = targetDialect;
     }
 
     public void setIdentifierCase(IdentifierCase identifierCase) {
@@ -76,10 +102,16 @@ public class ImportExporter {
         if (importConfiguration.getDbType() == null) {
             importConfiguration.setDbType(DbType.forUrl(importConfiguration.getUrl()));
         }
-        Dialect dialect = importConfiguration.getDbType().createDialect();
+        Dialect dialect = targetDialect != null ? targetDialect : importConfiguration.getDbType().createDialect();
         dialect.setSourceDbType(exportConfiguration.getDbType());
         if (identifierCase != null) {
             dialect.setIdentifierCase(identifierCase);
+        }
+        dialect.setTableNamePattern(importConfiguration.getTableNamePattern());
+        if (!dialect.isTableRenamed() && isSameTables(exportConfiguration, importConfiguration)) {
+            // Target tables would be dropped and created before rows are read from them
+            throw new ImpExpException("Source and target tables are the same, please choose another schema or a "
+                    + "table name pattern such as " + Dialect.TABLE_PLACEHOLDER + "_copy");
         }
         if (StringUtils.isNotBlank(importConfiguration.getTargetSchemaName())) {
             dialect.setTargetCatalogName(importConfiguration.getTargetCatalogName());
@@ -87,6 +119,8 @@ public class ImportExporter {
         } else if (StringUtils.isNotBlank(importConfiguration.getTargetCatalogName())
                 && !importConfiguration.getDbType().isSchemaSupported()) {
             dialect.setTargetCatalogName(importConfiguration.getTargetCatalogName());
+        } else if (sourceSchemaPreserved != null) {
+            dialect.setSourceSchemaPreserved(sourceSchemaPreserved);
         } else if (importConfiguration.getDbType().isSchemaSupported()
                 && exportConfiguration.getDbType().isSchemaSupported()) {
             // Schema level import: tables are imported into schemas with the same names
@@ -100,6 +134,33 @@ public class ImportExporter {
         exportConfiguration.setShowCreateUserSql(false);
         exportConfiguration.setShowCreateCatalogSql(false);
         exportConfiguration.setShowCreateSchemaSql(false);
+    }
+
+    /**
+     * Whether rows would be imported into the tables they are read from: the same database (url) and the same
+     * catalog and schema. A target catalog or schema which is not given means the source one.
+     */
+    static boolean isSameTables(Exporter.ExportConfiguration exportConfiguration,
+                                ImportConfiguration importConfiguration) {
+        if (exportConfiguration.getDbType() != importConfiguration.getDbType()
+                || StringUtils.isBlank(exportConfiguration.getUrl())
+                || !StringUtils.equals(exportConfiguration.getUrl().trim(), StringUtils.trim(importConfiguration.getUrl()))) {
+            return false;
+        }
+        return isSameName(exportConfiguration.getIncludedCatalogNames(), importConfiguration.getTargetCatalogName())
+                && isSameName(exportConfiguration.getIncludedSchemaNames(), importConfiguration.getTargetSchemaName());
+    }
+
+    private static boolean isSameName(String[] sourceNames, String targetName) {
+        if (StringUtils.isBlank(targetName) || sourceNames == null || sourceNames.length == 0) {
+            return true;
+        }
+        for (String sourceName : sourceNames) {
+            if (targetName.trim().equalsIgnoreCase(StringUtils.trim(sourceName))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public void export(ExportMode exportMode) throws Exception {

@@ -19,7 +19,9 @@ import java.sql.Types;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 
+import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.StringHelper;
@@ -294,11 +296,24 @@ public class SQLiteDialect extends Dialect {
         Object result = super.getJdbcValue(value, sourceDataType, sourceTypeName, columnSize);
         if (result instanceof LocalDateTime) {
             return formatTimestamp((LocalDateTime) result);
-        } else if (result instanceof LocalDate || result instanceof java.time.OffsetDateTime) {
+        } else if (result instanceof LocalDate || result instanceof OffsetDateTime) {
             return result.toString();
         } else if (result instanceof LocalTime) {
             return formatTime((LocalTime) result);
         }
         return result;
+    }
+
+    /**
+     * Values of columns without type (or ANY) are read as text for other databases, they keep their storage class
+     * for SQLite
+     */
+    @Override
+    public String getSelectColumnExpression(String columnName, String typeName) {
+        String type = StringUtils.trimToEmpty(typeName);
+        if ((type.isEmpty() || "ANY".equalsIgnoreCase(type)) && getReadTargetDbType() != DbType.SQLITE) {
+            return String.format("CAST(%1$s AS TEXT) AS %1$s", quoteIdentifier(columnName));
+        }
+        return super.getSelectColumnExpression(columnName, typeName);
     }
 }

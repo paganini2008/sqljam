@@ -22,6 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDate;
@@ -29,7 +30,10 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
+import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+import java.util.HashMap;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -205,7 +209,7 @@ class DialectTest {
                 Types.TIME_WITH_TIMEZONE, "timetz", 0));
         assertEquals(LocalTime.of(12, 0), postgresql.getJdbcValue("12:00:00+08", Types.TIME, "timetz", 0));
         OffsetDateTime offsetDateTime = OffsetDateTime.of(2024, 1, 1, 0, 0, 0, 0, ZoneOffset.UTC);
-        assertEquals(offsetDateTime.atZoneSameInstant(java.time.ZoneId.systemDefault()).toLocalDateTime(),
+        assertEquals(offsetDateTime.atZoneSameInstant(ZoneId.systemDefault()).toLocalDateTime(),
                 postgresql.getJdbcValue(offsetDateTime, Types.TIMESTAMP_WITH_TIMEZONE, "timestamptz", 0));
         // Fractional seconds are truncated to the precision of target database
         assertEquals(LocalDateTime.of(9999, 12, 31, 23, 59, 59, 999_999_000), postgresql.getJdbcValue(
@@ -251,7 +255,7 @@ class DialectTest {
         assertEquals("TIME '10:20:30.5'", dialect.getStringValue(null, null, "t", "c",
                 LocalTime.of(10, 20, 30, 500_000_000)));
         assertEquals("TIME '10:20:30'", dialect.getStringValue(null, null, "t", "c",
-                java.sql.Time.valueOf("10:20:30")));
+                Time.valueOf("10:20:30")));
         assertEquals("'2024-01-01 08:00:00+08:00'", dialect.getStringValue(null, null, "t", "c",
                 OffsetDateTime.of(2024, 1, 1, 8, 0, 0, 0, ZoneOffset.ofHours(8))));
         assertEquals("'12:00:00+08:00'", dialect.getStringValue(null, null, "t", "c",
@@ -261,7 +265,7 @@ class DialectTest {
         assertEquals("'" + uuid + "'", dialect.getStringValue(null, null, "t", "c", uuid));
         assertTrue(dialect.getStringValue(null, null, "t", "c", new java.util.Date(0)).startsWith("TIMESTAMP '"));
         assertTrue(dialect.getStringValue(null, null, "t", "c",
-                java.time.ZonedDateTime.now()).startsWith("TIMESTAMP '"));
+                ZonedDateTime.now()).startsWith("TIMESTAMP '"));
         assertEquals("X''", dialect.getEmptyLobLiteral(true));
         assertEquals("''", dialect.getEmptyLobLiteral(false));
     }
@@ -288,7 +292,7 @@ class DialectTest {
                 new String[]{"user_id"}, false, null));
         assertEquals("uidx_orders_code", dialect.getIndexNameStatement(null, null, "orders", new String[]{"code"},
                 true, null));
-        assertNull(dialect.getDefinePartitionTableStatement(null, null, "t", "RANGE", "id", new java.util.HashMap<>()));
+        assertNull(dialect.getDefinePartitionTableStatement(null, null, "t", "RANGE", "id", new HashMap<>()));
         assertNull(dialect.getSessionStatements());
         assertNull(dialect.getStatementBeforeInsert(null, null, "t", true));
         assertNull(dialect.getStatementAfterInsert(null, null, "t", true));

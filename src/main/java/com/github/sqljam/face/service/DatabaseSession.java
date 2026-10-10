@@ -16,6 +16,7 @@
 package com.github.sqljam.face.service;
 
 import java.io.Closeable;
+import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
@@ -48,6 +49,7 @@ import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.HikariDataSourceConnectionFactory;
 import com.github.sqljam.impexp.MetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
+import com.github.sqljam.impexp.TableQuery;
 import com.github.sqljam.jdbc.ConnectionFactory;
 import com.github.sqljam.jdbc.JdbcUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -308,24 +310,40 @@ public class DatabaseSession implements Closeable {
      */
     public DataPage getData(String catalog, String schema, String table, int pageNumber, int pageSize)
             throws SQLException {
-        long totalRows = countRows(catalog, schema, table);
+        return getData(catalog, schema, table, null, pageNumber, pageSize);
+    }
+
+    /**
+     * A page of rows narrowed by a query: selected columns, condition, groups and order. Rows are ordered by the
+     * order of the query, then by primary key (group columns of grouped rows).
+     *
+     * @param query      null for all rows and columns
+     * @param pageNumber 1-based page number
+     */
+    public DataPage getData(String catalog, String schema, String table, TableQuery query, int pageNumber,
+                            int pageSize) throws SQLException {
+        long totalRows;
+        try (Connection connection = getConnection(catalog)) {
+            String countSql = dialect.getCountQueryStatement(getMetaCatalog(catalog), schema, table, query);
+            Long count = JdbcUtils.fetchOne(connection, countSql, Long.class);
+            totalRows = count != null ? count : 0;
+        }
         try (Connection connection = getConnection(catalog)) {
             Dialect dialect = this.dialect.forVersion(connection.getMetaData().getDatabaseMajorVersion(),
                     connection.getMetaData().getDatabaseMinorVersion());
             List<String> primaryKeys = metaDataOperations.getPrimaryKeyInfos(connection.getMetaData(),
                     getMetaCatalog(catalog), schema, table).stream()
                     .sorted(Comparator.comparingInt(info -> TableMetaData.getInt(info, "KEY_SEQ")))
-                    .map(info -> dialect.quoteIdentifier((String) info.get("COLUMN_NAME")))
-                    .collect(Collectors.toList());
+                    .map(info -> (String) info.get("COLUMN_NAME")).collect(Collectors.toList());
             List<Map<String, Object>> columnInfos = new ArrayList<>(metaDataOperations.getColumnInfos(
                     connection.getMetaData(), getMetaCatalog(catalog), schema, table));
             columnInfos.sort(Comparator.comparingInt(info -> TableMetaData.getInt(info, "ORDINAL_POSITION")));
             String sql = columnInfos.isEmpty() ? dialect.getSelectTableStatement(getMetaCatalog(catalog), schema,
-                    table) : dialect.getSelectTableStatement(getMetaCatalog(catalog), schema, table,
+                    table) : dialect.getQueryStatement(getMetaCatalog(catalog), schema, table,
                     columnInfos.stream().map(info -> (String) info.get("COLUMN_NAME")).toArray(String[]::new),
-                    columnInfos.stream().map(info -> (String) info.get("TYPE_NAME")).toArray(String[]::new));
-            String pageSql = dialect.getPageStatement(sql, primaryKeys.isEmpty() ? null
-                    : String.join(",", primaryKeys), pageSize, Math.max(pageNumber - 1, 0) * pageSize);
+                    columnInfos.stream().map(info -> (String) info.get("TYPE_NAME")).toArray(String[]::new), query);
+            String pageSql = dialect.getPageStatement(sql, dialect.getQueryOrderBy(query, primaryKeys), pageSize,
+                    Math.max(pageNumber - 1, 0) * pageSize);
             List<String> columns = new ArrayList<>();
             List<List<String>> rows = new ArrayList<>();
             try (PreparedStatement ps = connection.prepareStatement(pageSql); ResultSet rs = ps.executeQuery()) {
@@ -368,7 +386,7 @@ public class DatabaseSession implements Closeable {
         if (value instanceof Object[]) {
             return Arrays.deepToString((Object[]) value);
         }
-        String text = value instanceof java.math.BigDecimal ? ((java.math.BigDecimal) value).toPlainString()
+        String text = value instanceof BigDecimal ? ((BigDecimal) value).toPlainString()
                 : value.toString();
         return text.length() > MAX_CELL_LENGTH ? text.substring(0, MAX_CELL_LENGTH) + "..." : text;
     }

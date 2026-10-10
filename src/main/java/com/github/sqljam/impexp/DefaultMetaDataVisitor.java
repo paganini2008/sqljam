@@ -94,15 +94,23 @@ public class DefaultMetaDataVisitor implements MetaDataVisitor {
                     metaData.getTableName());
             addStatements(table.getCreateTableStatements(), statements);
             String tableOptions = configuration.getDialect().getTableOptions(metaData.getCatalogName(),
-                    metaData.getSchemaName(), metaData.getTableName(), metaData.getDetail());
+                    metaData.getSchemaName(), configuration.getDialect().getTargetTableName(metaData.getTableName()),
+                    metaData.getDetail(),
+                    metaData.getPrimaryKeyColumnNames());
             if (StringUtils.isNotBlank(tableOptions)) {
                 table.getTableOptions().add(tableOptions);
             }
             if (configuration.isTableRecreated()) {
                 String dropStatement = configuration.getDialect().getDropTableStatement(metaData.getCatalogName(),
                         metaData.getSchemaName(),
-                        metaData.getTableName());
-                table.getBeforeStatements().add(0, dropStatement);
+                        configuration.getDialect().getTargetTableName(metaData.getTableName()));
+                if (configuration.getDialect().isForeignKeyOrderRequired()) {
+                    // Tables are visited with referenced tables first, they are dropped in the reverse order
+                    Schema schema = getDdlScripter().getSchema(metaData.getCatalogName(), metaData.getSchemaName());
+                    schema.getBeforeStatements().add(0, dropStatement);
+                } else {
+                    table.getBeforeStatements().add(0, dropStatement);
+                }
             }
         }
     }
@@ -117,7 +125,7 @@ public class DefaultMetaDataVisitor implements MetaDataVisitor {
             if (configuration.isTableRecreated()) {
                 String dropStatement = configuration.getDialect().getDropTableStatement(metaData.getCatalogName(),
                         metaData.getSchemaName(),
-                        metaData.getTableName());
+                        configuration.getDialect().getTargetTableName(metaData.getTableName()));
                 table.getBeforeStatements().add(0, dropStatement);
             }
         }
@@ -130,10 +138,19 @@ public class DefaultMetaDataVisitor implements MetaDataVisitor {
             Table table = getDdlScripter().getTable(metaData.getCatalogName(), metaData.getSchemaName(),
                     metaData.getTableName());
             addStatements(table.getColumnStatements(), statements);
+            // User defined types are created before the tables of the schema, once
+            String userTypeStatement = metaData.getUserTypeStatement();
+            if (StringUtils.isNotBlank(userTypeStatement)) {
+                Schema schema = getDdlScripter().getSchema(metaData.getCatalogName(), metaData.getSchemaName());
+                if (!schema.getBeforeStatements().contains(userTypeStatement)) {
+                    schema.getBeforeStatements().add(userTypeStatement);
+                }
+            }
             if (metaData.unwrap(TableMetaData.class).getIncrementalColumnNames(configuration.getDialect())
                     .contains(metaData.getColumnName())) {
                 String[] afterStatements = configuration.getDialect().getStatementAfterIncrementalColumnCreated(
-                        metaData.getCatalogName(), metaData.getSchemaName(), metaData.getTableName(),
+                        metaData.getCatalogName(), metaData.getSchemaName(),
+                        configuration.getDialect().getTargetTableName(metaData.getTableName()),
                         metaData.getColumnName());
                 if (ArrayUtils.isNotEmpty(afterStatements)) {
                     addStatements(table.getAfterStatements(), afterStatements);

@@ -115,7 +115,7 @@ class DdlScripterTest {
         assertEquals(DbType.MYSQL, DbType.forName("mysql"));
         assertNull(DbType.forName("db2"));
         assertEquals(DbType.MYSQL, DbType.forUrl("jdbc:mysql://localhost:3306/test"));
-        assertEquals(DbType.MYSQL, DbType.forUrl("jdbc:mariadb://localhost:3306/test"));
+        assertEquals(DbType.MARIADB, DbType.forUrl("jdbc:mariadb://localhost:3306/test"));
         assertEquals(DbType.POSTGRESQL, DbType.forUrl("jdbc:postgresql://localhost/demo"));
         assertEquals(DbType.ORACLE, DbType.forUrl("jdbc:oracle:thin:@localhost:1521/demo"));
         assertEquals(DbType.SQLSERVER, DbType.forUrl("jdbc:sqlserver://localhost:1433;databaseName=demo"));

@@ -23,6 +23,7 @@ import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -38,6 +39,7 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.sqljam.jdbc.JdbcUtils;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -49,71 +51,31 @@ import lombok.extern.slf4j.Slf4j;
  * @Version 1.0.0
  */
 @Slf4j
-public class ScriptImporter {
+public class ScriptImporter extends AbstractFileImporter {
 
     private static final Pattern PART_FILE = Pattern.compile("^(.*?)(?:_(\\d+))?\\.sql$");
 
-    private final Connection connection;
-    private final DbType dbType;
-    private boolean stopOnError = true;
-    private int batchSize = SqlScriptRunner.DEFAULT_BATCH_SIZE;
-    private ExportListener exportListener = ExportListener.NONE;
-    private int executedCount;
-    private int failedCount;
     private int lobCount;
-    /**
-     * Overall progress in bytes of sql files and LOB files
-     */
-    private long totalBytes;
-    private long completedBytes;
 
     public ScriptImporter(Connection connection, DbType dbType) {
-        this.connection = connection;
-        this.dbType = dbType;
+        super(connection, dbType);
     }
 
-    public void setStopOnError(boolean stopOnError) {
-        this.stopOnError = stopOnError;
-    }
-
-    /**
-     * INSERT statements per batch, 1 or less executes statement by statement
-     */
-    public void setBatchSize(int batchSize) {
-        this.batchSize = batchSize;
-    }
-
-    public void setExportListener(ExportListener exportListener) {
-        this.exportListener = exportListener != null ? exportListener : ExportListener.NONE;
-    }
-
-    public int getExecutedCount() {
-        return executedCount;
-    }
-
-    public int getFailedCount() {
-        return failedCount;
-    }
-
+    @Override
     public int getLobCount() {
         return lobCount;
     }
 
     /**
-     * Imports an export directory. Files are executed in the order of manifest.json if it exists, otherwise they are
-     * discovered by the directory layout.
+     * Directories without manifest.json are discovered by the layout: schema.sql, data files, lob/ and
+     * constraints.sql of the directory or its sub directories (catalogs)
      */
-    public void importDirectory(File dir) throws IOException, SQLException {
-        ExportManifest manifest = ExportManifest.read(dir);
-        if (manifest != null) {
-            boolean successful = false;
-            try {
-                importManifest(dir, manifest);
-                successful = true;
-            } finally {
-                exportListener.onEnd(successful);
-            }
-            return;
+    @Override
+    protected void importDirectoryWithoutManifest(File dir) throws IOException, SQLException {
+        File[] parquetFiles = new File(dir, "data").listFiles((parent, name) -> name.endsWith(
+                ParquetExporter.PARQUET_EXTENSION));
+        if (parquetFiles != null && parquetFiles.length > 0) {
+            throw new ImpExpException("Parquet files without manifest are imported by ParquetImporter: " + dir);
         }
         List<File> units = new ArrayList<>();
         if (isScriptDirectory(dir)) {
@@ -147,62 +109,24 @@ public class ScriptImporter {
     }
 
     /**
-     * Validates the manifest and executes its files in order
+     * LOB files are counted by the size of their directory
      */
-    private static long sizeOf(File file) {
-        if (file.isDirectory()) {
-            File[] files = file.listFiles();
-            long size = 0;
-            if (files != null) {
-                for (File child : files) {
-                    size += sizeOf(child);
-                }
-            }
-            return size;
-        }
-        return file.exists() ? file.length() : 0;
-    }
-
-    private void startProgress(long totalBytes) {
-        this.totalBytes = Math.max(totalBytes, 1);
-        this.completedBytes = 0;
-        exportListener.onProgress(0, this.totalBytes);
-    }
-
-    private void completeBytes(long bytes) {
-        completedBytes += bytes;
-        exportListener.onProgress(Math.min(completedBytes, totalBytes), totalBytes);
-    }
-
-    private void importManifest(File dir, ExportManifest manifest) throws IOException, SQLException {
-        if (!ExportManifest.FORMAT.equals(manifest.getFormat())) {
-            throw new ImpExpException("Unknown export format: " + manifest.getFormat());
-        }
-        if (manifest.getStatus() != ExportManifest.Status.COMPLETED) {
-            throw new ImpExpException("The export is not completed: " + manifest.getStatus());
-        }
-        DbType targetDbType = manifest.getTarget().getDbType();
-        if (dbType != null && targetDbType != null && dbType != targetDbType) {
-            throw new ImpExpException(String.format("The scripts are generated for %s, but the target database is %s",
-                    targetDbType.getDisplayName(), dbType.getDisplayName()));
-        }
-        for (ExportManifest.FileEntry fileEntry : manifest.getFiles()) {
-            File file = new File(dir, fileEntry.getPath());
-            if (!file.exists()) {
-                throw new ImpExpException("File not found: " + fileEntry.getPath());
-            }
-            if (StringUtils.isNotBlank(fileEntry.getSha256()) && !fileEntry.getSha256().equals(
-                    ExportManifest.sha256(file))) {
-                throw new ImpExpException("File is modified or corrupted (checksum mismatch): " + fileEntry.getPath());
-            }
-        }
+    @Override
+    protected long getManifestBytes(File dir, ExportManifest manifest) {
         long bytes = 0;
         for (ExportManifest.FileEntry fileEntry : manifest.getFiles()) {
             File file = new File(dir, fileEntry.getPath());
             bytes += fileEntry.getType() == ExportManifest.FileType.LOB_MANIFEST
                     ? sizeOf(new File(file.getParentFile(), LobManifestWriter.LOB_DIR_NAME)) : file.length();
         }
-        startProgress(bytes);
+        return bytes;
+    }
+
+    @Override
+    protected void importManifest(File dir, ExportManifest manifest) throws IOException, SQLException {
+        if (manifest.getDataFormat() == DataFormat.PARQUET) {
+            throw new ImpExpException("Packages of Parquet files are imported by ParquetImporter");
+        }
         for (ExportManifest.FileEntry fileEntry : manifest.getFiles()) {
             File file = new File(dir, fileEntry.getPath());
             if (fileEntry.getType() == ExportManifest.FileType.LOB_MANIFEST) {
@@ -262,40 +186,13 @@ public class ScriptImporter {
         return new String[]{file.getName(), ""};
     }
 
-    private void runScript(File file) throws IOException, SQLException {
-        if (!file.exists()) {
-            return;
-        }
-        exportListener.onMessage("Executing script: " + file.getName());
-        SqlScriptRunner runner = new SqlScriptRunner(connection);
-        runner.setStopOnError(stopOnError);
-        runner.setBatchSize(batchSize);
-        long fileBytes = file.length();
-        runner.setExportListener(new ForwardingListener(exportListener) {
-
-            @Override
-            public void onProgress(long processed, long total) {
-                // Progress of statements in the file is converted to bytes
-                long bytes = total > 0 ? fileBytes * processed / total : 0;
-                exportListener.onProgress(Math.min(completedBytes + bytes, totalBytes), totalBytes);
-            }
-        });
-        try {
-            runner.runScript(file);
-        } finally {
-            executedCount += runner.getExecutedCount();
-            failedCount += runner.getFailedCount();
-            completeBytes(fileBytes);
-        }
-    }
-
     /**
      * Restores LOB values by primary keys: UPDATE table SET column = ? WHERE key = ?
      */
     private void restoreLobs(File dir, File manifest) throws IOException, SQLException {
         ObjectMapper objectMapper = new ObjectMapper();
         boolean autoCommit = connection.getAutoCommit();
-        connection.setAutoCommit(false);
+        boolean transactional = JdbcUtils.beginTransaction(connection);
         try (JsonParser parser = objectMapper.getFactory().createParser(manifest)) {
             Dialect dialect = createDialect(objectMapper, manifest);
             while (parser.nextToken() != null) {
@@ -306,12 +203,18 @@ public class ScriptImporter {
                     }
                 }
             }
-            connection.commit();
+            if (transactional) {
+                connection.commit();
+            }
         } catch (SQLException | IOException | RuntimeException e) {
-            connection.rollback();
+            if (transactional) {
+                connection.rollback();
+            }
             throw e;
         } finally {
-            connection.setAutoCommit(autoCommit);
+            if (transactional) {
+                connection.setAutoCommit(autoCommit);
+            }
         }
         exportListener.onMessage(String.format("%d LOB values restored", lobCount));
     }
@@ -397,7 +300,7 @@ public class ScriptImporter {
         for (String keyName : keyNames) {
             JsonNode value = key.get(keyName);
             if (value == null || value.isNull()) {
-                ps.setNull(index++, java.sql.Types.VARCHAR);
+                ps.setNull(index++, Types.VARCHAR);
             } else if (value.isIntegralNumber()) {
                 ps.setLong(index++, value.asLong());
             } else if (value.isNumber()) {
@@ -407,34 +310,6 @@ public class ScriptImporter {
             } else {
                 ps.setString(index++, value.asText());
             }
-        }
-    }
-
-    /**
-     * Forwards errors of scripts, the end of each script is not the end of the import
-     */
-    private static class ForwardingListener implements ExportListener {
-
-
-        private final ExportListener delegate;
-
-        ForwardingListener(ExportListener delegate) {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public void onMessage(String message) {
-            delegate.onMessage(message);
-        }
-
-        @Override
-        public void onError(String message, Throwable e) {
-            delegate.onError(message, e);
-        }
-
-        @Override
-        public boolean isCancelled() {
-            return delegate.isCancelled();
         }
     }
 }

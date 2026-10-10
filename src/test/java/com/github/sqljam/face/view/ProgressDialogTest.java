@@ -38,6 +38,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 
 /**
  * @Description: ProgressDialogTest verifies progress, errors, cancellation and finish states
@@ -209,8 +210,8 @@ class ProgressDialogTest {
             }
             return null;
         }, null, null));
-        FxTestSupport.run(() -> dialog.getStage().fireEvent(new javafx.stage.WindowEvent(dialog.getStage(),
-                javafx.stage.WindowEvent.WINDOW_CLOSE_REQUEST)));
+        FxTestSupport.run(() -> dialog.getStage().fireEvent(new WindowEvent(dialog.getStage(),
+                WindowEvent.WINDOW_CLOSE_REQUEST)));
         assertTrue(listener.isCancelled());
     }
 
@@ -226,6 +227,7 @@ class ProgressDialogTest {
         assertEquals(2, dialog.getErrorLogCount());
         assertEquals(0.0, progress(dialog, "overallBar"), 0.001);
         assertFalse(FxTestSupport.call(() -> root(dialog).lookup("#openFolderButton").isVisible()));
+        assertFalse(FxTestSupport.call(() -> root(dialog).lookup("#viewPackageButton").isVisible()));
     }
 
     @Test
@@ -241,6 +243,8 @@ class ProgressDialogTest {
         assertEquals("Completed", text(dialog, "progressStatus"));
         assertEquals("Overall 100%", text(dialog, "percentLabel"));
         assertTrue(FxTestSupport.call(() -> root(dialog).lookup("#openFolderButton").isVisible()));
+        // Files of the export are viewed in the package viewer
+        assertTrue(FxTestSupport.call(() -> root(dialog).lookup("#viewPackageButton").isVisible()));
         assertTrue(text(dialog, "manifestLabel").endsWith("manifest.json"));
         assertTrue(text(dialog, "elapsedLabel").startsWith("Elapsed 00:00:0"));
     }

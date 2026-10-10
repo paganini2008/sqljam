@@ -16,13 +16,16 @@
 package com.github.sqljam.face.view;
 
 import java.io.IOException;
+import java.util.Comparator;
 import java.util.function.Consumer;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.service.ExampleDatabase;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
+import javafx.collections.transformation.SortedList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -31,6 +34,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Separator;
 import javafx.scene.control.TextField;
+import javafx.scene.control.Tooltip;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
@@ -50,7 +54,10 @@ public class LoginView extends StackPane {
     private final AppContext context;
     private final ObservableList<ConnectionProfile> profiles = FXCollections.observableArrayList();
     private final FilteredList<ConnectionProfile> filteredProfiles = new FilteredList<>(profiles, profile -> true);
-    private final ListView<ConnectionProfile> profileList = new ListView<>(filteredProfiles);
+    // Profiles are grouped by category: relational databases, OLAP databases
+    private final SortedList<ConnectionProfile> sortedProfiles = new SortedList<>(filteredProfiles,
+            Comparator.comparing(DbTypeCells::categoryOf));
+    private final ListView<ConnectionProfile> profileList = new ListView<>(sortedProfiles);
     private final ConnectionForm connectionForm = new ConnectionForm();
     private final Button loginButton = new Button(Messages.get("login.login"), Icons.of(Icons.CONNECT));
     private final Button testButton = new Button(Messages.get("connection.test"));
@@ -94,7 +101,16 @@ public class LoginView extends StackPane {
         deleteButton.setId("deleteButton");
         deleteButton.disableProperty().bind(profileList.getSelectionModel().selectedItemProperty().isNull());
         deleteButton.setOnAction(event -> deleteSelected());
-        HBox listButtons = new HBox(8, newButton, deleteButton);
+        // The example database comes back after the user removed it
+        Button exampleButton = new Button(Messages.get("example.button"), Icons.of(Icons.CATALOG));
+        exampleButton.setId("exampleButton");
+        exampleButton.setTooltip(new Tooltip(Messages.get("example.button.tooltip")));
+        exampleButton.setOnAction(event -> ExampleActions.restore(getScene().getWindow(), context, profile -> {
+            reloadProfiles();
+            profileList.getItems().stream().filter(ExampleDatabase::isExample).findFirst()
+                    .ifPresent(profileList.getSelectionModel()::select);
+        }));
+        HBox listButtons = new HBox(8, newButton, deleteButton, exampleButton);
         Label savedLabel = new Label(Messages.get("login.savedConnections"));
         savedLabel.getStyleClass().add("section-title");
         VBox left = new VBox(10, savedLabel, searchField, profileList, listButtons);
@@ -109,7 +125,11 @@ public class LoginView extends StackPane {
         Label subtitle = new Label(Messages.get("login.subtitle"));
         subtitle.getStyleClass().add("login-subtitle");
         VBox header = new VBox(2, title, subtitle);
-        HBox headerBox = new HBox(16, logo, header);
+        // The GitHub mark of the source repository at the top right, the card keeps its size
+        Region headerSpacer = new Region();
+        HBox.setHgrow(headerSpacer, Priority.ALWAYS);
+        Label repositoryMark = Branding.repositoryMark(context::openDocument);
+        HBox headerBox = new HBox(16, logo, header, headerSpacer, repositoryMark);
         headerBox.setAlignment(Pos.CENTER_LEFT);
 
         testButton.setOnAction(event -> connectionForm.testConnection(null));

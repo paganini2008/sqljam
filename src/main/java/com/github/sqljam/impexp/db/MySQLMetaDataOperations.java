@@ -118,6 +118,12 @@ public class MySQLMetaDataOperations extends MetaDataOperations {
             if (StringUtils.isNotBlank(columnType)) {
                 columnInfo.put("TYPE_NAME", columnType);
             }
+            int dimensions = getVectorDimensions(columnType);
+            if (dimensions > 0) {
+                // Vectors are text of other databases, e.g. [1.00000e+00,2.50000e+00]
+                columnInfo.put("DATA_TYPE", Types.VARCHAR);
+                columnInfo.put("COLUMN_SIZE", dimensions * 16 + 2);
+            }
             String extra = StringUtils.defaultString((String) columnDetail.get("EXTRA"));
             String expression = (String) columnDetail.get("GENERATION_EXPRESSION");
             if (StringUtils.isNotBlank(expression)) {
@@ -129,10 +135,31 @@ public class MySQLMetaDataOperations extends MetaDataOperations {
                 columnInfo.put("COLUMN_DEF", null);
                 continue;
             }
-            columnInfo.put("COLUMN_DEF", getDefaultValue((String) columnDetail.get("COLUMN_DEFAULT"), extra,
+            // Connector/J reports columns with expression defaults (EXTRA DEFAULT_GENERATED) as generated
+            columnInfo.put("IS_GENERATEDCOLUMN", "NO");
+            columnInfo.put("COLUMN_DEF", getColumnDefault((String) columnDetail.get("COLUMN_DEFAULT"), extra,
                     TableMetaData.getInt(columnInfo, "DATA_TYPE"), columnType));
         }
         return columnInfos;
+    }
+
+    /**
+     * Default value of a column as sql, by COLUMN_DEFAULT and EXTRA of information_schema
+     */
+    protected String getColumnDefault(String defaultValue, String extra, int dataType, String columnType) {
+        return getDefaultValue(defaultValue, extra, dataType, columnType);
+    }
+
+    /**
+     * Dimensions of a VECTOR column, 0 for other types
+     */
+    static int getVectorDimensions(String columnType) {
+        String type = StringUtils.defaultString(columnType).trim().toLowerCase(Locale.ENGLISH);
+        if (!type.startsWith("vector")) {
+            return 0;
+        }
+        String digits = type.replaceAll("\\D", "");
+        return digits.isEmpty() ? 2048 : Integer.parseInt(digits);
     }
 
     /**
