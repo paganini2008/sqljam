@@ -48,8 +48,18 @@ public class ForeignKeyMetaData implements TiedMetaData {
         String[] columnNames = details.stream().map(info -> (String) info.get("FKCOLUMN_NAME")).toArray(String[]::new);
         String[] refColumnNames = details.stream().map(info -> (String) info.get("PKCOLUMN_NAME"))
                 .toArray(String[]::new);
-        String statement = getDialect().getCreateForeignKeyStatement(getCatalogName(), getSchemaName(), getTableName(),
-                foreignKeyName, columnNames, getReferencedTableName(), refColumnNames,
+        Dialect dialect = getDialect();
+        String refTableName = getReferencedTableName();
+        String fkName = foreignKeyName;
+        if (dialect.isTableRenamed()) {
+            // Copies reference copies of tables which are copied together, other tables are referenced as they are
+            if (unwrap(SchemaMetaData.class).findTableMetaData(refTableName).isPresent()) {
+                refTableName = dialect.getTargetTableName(refTableName);
+            }
+            fkName = dialect.getTargetTableName(foreignKeyName);
+        }
+        String statement = dialect.getCreateForeignKeyStatement(getCatalogName(), getSchemaName(),
+                dialect.getTargetTableName(getTableName()), fkName, columnNames, refTableName, refColumnNames,
                 getRuleName(getDetail().get("UPDATE_RULE")), getRuleName(getDetail().get("DELETE_RULE")));
         return new String[]{statement};
     }

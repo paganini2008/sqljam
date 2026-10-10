@@ -87,6 +87,8 @@ CREATE TABLE sjo_types (
     c_xml             XMLTYPE,
     c_json            JSON,
     c_boolean         BOOLEAN,
+    c_vector          VECTOR(3, FLOAT32),
+    c_timestamp9      TIMESTAMP(9),
     c_gen             NUMBER GENERATED ALWAYS AS (c_number10 * 2) VIRTUAL
 );
 INSERT INTO sjo_types (id, c_number, c_number10, c_number_ps, c_float, c_float10, c_binary_float, c_binary_double,
@@ -104,3 +106,7 @@ INSERT INTO sjo_types (id, c_number, c_number10, c_number_ps, c_float, c_float10
 VALUES (2, 0, 2147483647, -0.000001, -1.5, 0, -3.5, -1E100, ' ', ' ', ' ', EMPTY_BLOB(), HEXTORAW('00'),
     DATE '1970-01-01', TIMESTAMP '9999-12-31 23:59:59.999999', FALSE);
 INSERT INTO sjo_types (id) VALUES (3);
+UPDATE sjo_types SET c_vector = TO_VECTOR('[1, 2.5, -3]', 3, FLOAT32),
+    c_timestamp9 = TIMESTAMP '2024-02-29 12:00:00.123456789' WHERE id = 1;
+UPDATE sjo_types SET c_vector = TO_VECTOR('[0, 0, 0]', 3, FLOAT32),
+    c_timestamp9 = TIMESTAMP '1970-01-01 00:00:00.000000001' WHERE id = 2;

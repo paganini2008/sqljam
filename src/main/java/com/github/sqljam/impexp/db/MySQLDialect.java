@@ -15,11 +15,15 @@
  */
 package com.github.sqljam.impexp.db;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.sql.Types;
+import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
-import java.util.Arrays;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.DbType;
@@ -223,6 +227,54 @@ public class MySQLDialect extends Dialect {
         return null;
     }
 
+    /**
+     * Vectors are read as text for other databases and for viewing, their binary is kept for the same database type
+     */
+    @Override
+    public String getSelectColumnExpression(String columnName, String typeName) {
+        if (MySQLMetaDataOperations.getVectorDimensions(typeName) > 0 && getReadTargetDbType() != getDbType()) {
+            return String.format("%s(%s) AS %s", getVectorTextFunction(), quoteIdentifier(columnName),
+                    quoteIdentifier(columnName));
+        }
+        return super.getSelectColumnExpression(columnName, typeName);
+    }
+
+    /**
+     * VECTOR columns of the target are written by their binary, vectors of other databases are text
+     */
+    @Override
+    public boolean isTargetTypeConversionRequired() {
+        return true;
+    }
+
+    /**
+     * Text of a vector, e.g. [1,2.5,-3], is converted to the binary of VECTOR: little endian floats
+     */
+    @Override
+    public Object getTargetJdbcValue(Object value, String targetTypeName) {
+        if (!(value instanceof CharSequence) || !"vector".equalsIgnoreCase(StringUtils.trim(targetTypeName))) {
+            return value;
+        }
+        String text = value.toString().trim();
+        if (!text.startsWith("[") || !text.endsWith("]")) {
+            return value;
+        }
+        String body = text.substring(1, text.length() - 1).trim();
+        String[] items = body.isEmpty() ? new String[0] : body.split(",");
+        ByteBuffer buffer = ByteBuffer.allocate(items.length * 4).order(ByteOrder.LITTLE_ENDIAN);
+        for (String item : items) {
+            buffer.putFloat(Float.parseFloat(item.trim()));
+        }
+        return buffer.array();
+    }
+
+    /**
+     * Function converting a vector to text
+     */
+    protected String getVectorTextFunction() {
+        return "VECTOR_TO_STRING";
+    }
+
     @Override
     public String getCreateUserStatement(String username, String password) {
         return String.format("CREATE USER IF NOT EXISTS '%s'@'%%' IDENTIFIED BY '%s'", username, password);
@@ -361,7 +413,7 @@ public class MySQLDialect extends Dialect {
                 defaultValue = null;
             }
             // Fractional seconds precision of CURRENT_TIMESTAMP must match the column
-            java.util.regex.Matcher precision = java.util.regex.Pattern.compile("^(datetime|timestamp)\\((\\d)\\)$")
+            Matcher precision = Pattern.compile("^(datetime|timestamp)\\((\\d)\\)$")
                     .matcher(lowerTypeName);
             if (defaultValue != null && precision.matches()
                     && defaultValue.equalsIgnoreCase(getCurrentTimestampExpression())) {

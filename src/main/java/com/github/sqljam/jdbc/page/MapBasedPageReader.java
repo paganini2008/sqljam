@@ -89,14 +89,14 @@ public class MapBasedPageReader implements PageReader<Map<String, Object>> {
             connection = connectionFactory.getConnection();
             String boundSql = dialect != null ? dialect.getPageStatement(sql, orderBy, limit, offset)
                     : String.format("%s limit %d offset %d", sql, limit, offset);
-            return new DefaultPageContent<>(fetchAll(connection, boundSql, args), null);
+            return new DefaultPageContent<>(fetchAll(connection, boundSql, args, dialect), null);
         } finally {
             connectionFactory.close(connection);
         }
     }
 
-    private static List<Map<String, Object>> fetchAll(Connection connection, String sql, Object[] args)
-            throws SQLException {
+    private static List<Map<String, Object>> fetchAll(Connection connection, String sql, Object[] args,
+                                                      Dialect dialect) throws SQLException {
         List<Map<String, Object>> list = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             JdbcUtils.setValues(ps, args);
@@ -117,7 +117,9 @@ public class MapBasedPageReader implements PageReader<Map<String, Object>> {
                         if ("rn__".equalsIgnoreCase(columnLabel)) {
                             continue;
                         }
-                        row.put(columnLabel, JdbcUtils.getColumnValue(rs, i, columnTypes[i - 1], columnTypeNames[i - 1]));
+                        row.put(columnLabel, dialect != null ? dialect.getColumnValue(rs, i, columnTypes[i - 1],
+                                columnTypeNames[i - 1]) : JdbcUtils.getColumnValue(rs, i, columnTypes[i - 1],
+                                columnTypeNames[i - 1]));
                     }
                     list.add(row);
                 }

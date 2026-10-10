@@ -32,6 +32,7 @@ import java.util.Locale;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.jdbc.JdbcUtils;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
@@ -75,6 +76,11 @@ public class SqlScriptRunner {
     private int batchSize = DEFAULT_BATCH_SIZE;
     private Boolean oracle;
     private ExportListener exportListener = ExportListener.NONE;
+    private Statement statement;
+    /**
+     * Whether statements run in a transaction, false if the database has no transactions (ClickHouse)
+     */
+    private boolean transactional;
 
     @Getter
     private int executedCount;
@@ -116,8 +122,9 @@ public class SqlScriptRunner {
 
     public void runScript(Reader reader) throws IOException, SQLException {
         boolean autoCommit = connection.getAutoCommit();
-        connection.setAutoCommit(false);
-        try (Statement statement = connection.createStatement()) {
+        transactional = JdbcUtils.beginTransaction(connection);
+        statement = connection.createStatement();
+        try {
             List<String> statements = parseStatements(reader);
             int total = statements.size();
             List<String> batch = new ArrayList<>();
@@ -132,38 +139,75 @@ public class SqlScriptRunner {
                 if (batchSize > 1 && isBatchable(sql)) {
                     if (batch.isEmpty() && uncommitted > 0) {
                         // A batch is rolled back alone when it fails
-                        connection.commit();
+                        commit();
                         uncommitted = 0;
                     }
                     batch.add(sql);
                     if (batch.size() >= batchSize) {
-                        executeBatch(statement, batch);
+                        executeBatch(batch);
                         exportListener.onProgress(index, total);
                     }
                     continue;
                 }
                 if (!batch.isEmpty()) {
-                    executeBatch(statement, batch);
+                    executeBatch(batch);
                 }
-                if (execute(statement, sql)) {
+                if (execute(sql)) {
                     exportListener.onProgress(index, total);
                     if (++uncommitted >= batchCommitSize) {
-                        connection.commit();
+                        commit();
                         uncommitted = 0;
                         exportListener.onMessage(String.format("%d statements executed", executedCount));
                     }
                 }
             }
             if (!batch.isEmpty()) {
-                executeBatch(statement, batch);
+                executeBatch(batch);
             }
-            connection.commit();
+            commit();
             exportListener.onProgress(total, total);
         } finally {
+            closeStatement();
             // A closed connection would hide the original exception
-            if (!connection.isClosed()) {
+            if (transactional && !connection.isClosed()) {
                 connection.setAutoCommit(autoCommit);
             }
+        }
+    }
+
+    /**
+     * Commits executed statements, they are committed already if the database has no transactions
+     */
+    private void commit() throws SQLException {
+        if (transactional) {
+            connection.commit();
+        }
+    }
+
+    private void rollback() throws SQLException {
+        if (transactional) {
+            connection.rollback();
+        }
+    }
+
+    /**
+     * The statement in use. DuckDB closes a statement when its sql fails, a new one is created then.
+     */
+    private Statement statement() throws SQLException {
+        if (statement == null || statement.isClosed()) {
+            statement = connection.createStatement();
+        }
+        return statement;
+    }
+
+    private void closeStatement() {
+        if (statement != null) {
+            try {
+                statement.close();
+            } catch (SQLException e) {
+                // Closed already
+            }
+            statement = null;
         }
     }
 
@@ -174,33 +218,33 @@ public class SqlScriptRunner {
     /**
      * Executes and commits a batch. A failed batch is rolled back and executed statement by statement
      */
-    private void executeBatch(Statement statement, List<String> batch) throws SQLException {
+    private void executeBatch(List<String> batch) throws SQLException {
         try {
             if (isOracle()) {
                 for (String sql : getOracleBlockStatements(batch)) {
-                    statement.execute(sql);
+                    statement().execute(sql);
                 }
             } else {
                 for (String sql : batch) {
-                    statement.addBatch(sql);
+                    statement().addBatch(sql);
                 }
-                statement.executeBatch();
+                statement().executeBatch();
             }
-            connection.commit();
+            commit();
             executedCount += batch.size();
         } catch (SQLException e) {
             if (connection.isClosed()) {
                 throw e;
             }
-            statement.clearBatch();
-            connection.rollback();
+            statement().clearBatch();
+            rollback();
             if (log.isDebugEnabled()) {
                 log.debug("Batch failed, statements are executed one by one: {}", e.getMessage());
             }
             for (String sql : batch) {
-                execute(statement, sql);
+                execute(sql);
             }
-            connection.commit();
+            commit();
         } finally {
             batch.clear();
         }
@@ -210,10 +254,10 @@ public class SqlScriptRunner {
      * Executes a statement, returns false if it fails and errors are ignored. When errors are ignored, a savepoint
      * keeps the transaction usable after a failure (PostgreSQL aborts the whole transaction otherwise)
      */
-    private boolean execute(Statement statement, String sql) throws SQLException {
-        Savepoint savepoint = stopOnError ? null : connection.setSavepoint();
+    private boolean execute(String sql) throws SQLException {
+        Savepoint savepoint = stopOnError || !transactional ? null : connection.setSavepoint();
         try {
-            statement.execute(sql);
+            statement().execute(sql);
             executedCount++;
             releaseSavepoint(savepoint);
             return true;
@@ -226,10 +270,12 @@ public class SqlScriptRunner {
             }
             exportListener.onError(message, e);
             if (stopOnError) {
-                connection.rollback();
+                rollback();
                 throw e;
             }
-            connection.rollback(savepoint);
+            if (savepoint != null) {
+                connection.rollback(savepoint);
+            }
             return false;
         }
     }

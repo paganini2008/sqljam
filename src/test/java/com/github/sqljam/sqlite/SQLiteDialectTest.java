@@ -107,7 +107,9 @@ class SQLiteDialectTest {
         assertEquals(Types.TIMESTAMP, resolve("DATETIME", 2000000000));
         assertEquals(Types.TIME, resolve("TIME", 2000000000));
         assertEquals(Types.BLOB, resolve("BLOB", 2000000000));
-        assertEquals(Types.BLOB, resolve("", 2000000000));
+        // Columns without type (or ANY) keep values of any type, they are text of other databases
+        assertEquals(Types.VARCHAR, resolve("", 2000000000));
+        assertEquals(Types.VARCHAR, resolve("ANY", 2000000000));
         assertEquals(Types.CLOB, resolve("TEXT", 2000000000));
         assertEquals(Types.CHAR, resolve("CHARACTER", 20));
         assertEquals(Types.VARCHAR, resolve("VARCHAR(20)", 20));

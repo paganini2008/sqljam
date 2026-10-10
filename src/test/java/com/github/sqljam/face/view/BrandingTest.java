@@ -22,7 +22,9 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,10 +32,15 @@ import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.face.Banner;
+import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.Alert;
+import javafx.scene.control.Hyperlink;
+import javafx.scene.control.Label;
+import javafx.scene.control.Labeled;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 
@@ -50,6 +57,7 @@ class BrandingTest {
     File dir;
 
     private Stage stage;
+    private final List<String> opened = new ArrayList<>();
 
     @Start
     void start(Stage stage) {
@@ -103,7 +111,7 @@ class BrandingTest {
 
     @Test
     void about() {
-        Alert about = FxTestSupport.call(() -> Dialogs.createAbout(stage));
+        Alert about = FxTestSupport.call(() -> Dialogs.createAbout(stage, opened::add));
         assertEquals("SqlJam " + Banner.getVersion(), about.getHeaderText());
         assertNotNull(about.getGraphic());
         assertEquals("aboutLogo", about.getGraphic().getId());
@@ -114,9 +122,41 @@ class BrandingTest {
         assertSame(stage, about.getOwner());
 
         // An owner without a scene is not set, JavaFX would fail with a NullPointerException
-        Alert withoutOwner = FxTestSupport.call(() -> Dialogs.createAbout(new Stage()));
+        Alert withoutOwner = FxTestSupport.call(() -> Dialogs.createAbout(new Stage(), null));
         assertNull(withoutOwner.getOwner());
-        Alert noOwner = FxTestSupport.call(() -> Dialogs.createAbout(null));
+        Alert noOwner = FxTestSupport.call(() -> Dialogs.createAbout(null, null));
         assertNull(noOwner.getOwner());
+        // Version, home page, repository, author, email and license, the links are opened in the browser
+        String details = FxTestSupport.call(() -> ((GridPane) about.getDialogPane().lookup("#aboutDetails"))
+                .getChildren().stream().map(node -> ((Labeled) node).getText()).collect(Collectors.joining("|")));
+        for (String text : List.of("Version", Banner.getVersion(), "Home page", Branding.HOMEPAGE_URL,
+                "Repository", Branding.REPOSITORY_URL, "Author", "Fred Feng", "Email", Branding.EMAIL, "License",
+                "Apache License 2.0")) {
+            assertTrue(details.contains(text), details);
+        }
+        for (String id : List.of("#aboutHomepage", "#aboutRepository", "#aboutEmail")) {
+            FxTestSupport.run(() -> ((Hyperlink) about.getDialogPane().lookup(id)).fire());
+        }
+        assertEquals(List.of(Branding.HOMEPAGE_URL, Branding.REPOSITORY_URL, "mailto:" + Branding.EMAIL), opened);
+        // Links without a browser do nothing
+        FxTestSupport.run(() -> ((Hyperlink) noOwner.getDialogPane().lookup("#aboutHomepage")).fire());
+        assertEquals(3, opened.size());
+    }
+
+    @Test
+    void repositoryMark() {
+        Label mark = FxTestSupport.call(() -> Branding.repositoryMark(opened::add));
+        // An icon without text, the url is shown by the tooltip
+        assertNull(mark.getText());
+        assertNotNull(mark.getGraphic());
+        assertEquals("https://github.com/paganini2008/sqljam", FxTestSupport.call(() -> mark.getTooltip()
+                .getText()));
+        // A click opens the repository
+        assertEquals(Cursor.HAND, mark.getCursor());
+        FxTestSupport.run(() -> mark.getOnMouseClicked().handle(null));
+        assertEquals(List.of(Branding.REPOSITORY_URL), opened);
+        // Without a browser it is not clickable
+        Label plain = FxTestSupport.call(() -> Branding.repositoryMark(null));
+        assertNull(plain.getOnMouseClicked());
     }
 }

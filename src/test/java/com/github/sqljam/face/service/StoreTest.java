@@ -21,9 +21,11 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import com.github.sqljam.config.Config;
@@ -114,7 +116,7 @@ class StoreTest {
         assertEquals("(2 bytes) 0x0AFF", DatabaseSession.formatValue(new byte[]{10, -1}));
         assertTrue(DatabaseSession.formatValue(new byte[20]).endsWith("..."));
         assertEquals("[1, 2]", DatabaseSession.formatValue(new Object[]{1, 2}));
-        assertEquals("1.50", DatabaseSession.formatValue(new java.math.BigDecimal("1.50")));
+        assertEquals("1.50", DatabaseSession.formatValue(new BigDecimal("1.50")));
         assertEquals(1003, DatabaseSession.formatValue("x".repeat(2000)).length());
         assertEquals("CASCADE", DatabaseSession.getRuleName(0));
         assertEquals("SET NULL", DatabaseSession.getRuleName(2));
@@ -141,7 +143,7 @@ class StoreTest {
         assertEquals(2, version[1]);
         assertEquals(0, TransferService.parseVersion("8")[1]);
         assertEquals(12, TransferService.parseVersion("12c")[0]);
-        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+        Assertions.assertThrows(IllegalArgumentException.class,
                 () -> TransferService.parseVersion("abc"));
     }
 }

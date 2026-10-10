@@ -51,6 +51,9 @@ public final class Icons {
     public static final String LAST = "fth-chevrons-right";
     public static final String CONNECT = "fth-link";
     public static final String OPEN = "fth-external-link";
+    public static final String GITHUB = "fth-github";
+    public static final String DISCONNECT = "fth-power";
+    public static final String EXIT = "fth-log-out";
 
     private Icons() {
     }

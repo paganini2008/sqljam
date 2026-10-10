@@ -17,13 +17,19 @@ package com.github.sqljam.face.view;
 
 import java.io.IOException;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import com.github.sqljam.face.model.ConnectionProfile;
 import javafx.event.ActionEvent;
+import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.Tooltip;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
 import javafx.stage.Window;
 
 /**
@@ -72,6 +78,32 @@ public class ConnectionDialog extends Dialog<ConnectionProfile> {
             }
         });
         setResultConverter(buttonType -> buttonType == ButtonType.OK ? form.getProfile() : null);
+    }
+
+    /**
+     * Target data source of an import: the combo box and a button creating a new data source, which is passed to
+     * the consumer to be listed and selected
+     */
+    public static HBox targetField(ComboBox<ConnectionProfile> combo, AppContext context,
+                                   Consumer<ConnectionProfile> onCreated) {
+        Button newButton = new Button(null, Icons.of(Icons.ADD));
+        newButton.setId("newTargetButton");
+        newButton.setTooltip(new Tooltip(Messages.get("action.newTargetConnection")));
+        newButton.setOnAction(event -> show(combo.getScene() != null ? combo.getScene().getWindow() : null, context,
+                null).ifPresent(onCreated));
+        combo.setMaxWidth(Double.MAX_VALUE);
+        HBox.setHgrow(combo, Priority.ALWAYS);
+        HBox field = new HBox(6, combo, newButton);
+        field.setAlignment(Pos.CENTER_LEFT);
+        return field;
+    }
+
+    /**
+     * Selects the data source of the same id in the combo box, the selection is kept if it is not listed
+     */
+    public static void selectProfile(ComboBox<ConnectionProfile> combo, ConnectionProfile profile) {
+        combo.getItems().stream().filter(item -> item.getId().equals(profile.getId())).findFirst()
+                .ifPresent(combo::setValue);
     }
 
     public static Optional<ConnectionProfile> show(Window owner, AppContext context, ConnectionProfile profile) {

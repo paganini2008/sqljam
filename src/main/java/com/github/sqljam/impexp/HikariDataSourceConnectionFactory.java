@@ -17,8 +17,9 @@ package com.github.sqljam.impexp;
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import com.github.sqljam.jdbc.ConnectionFactory;
+
 import com.github.sqljam.config.Config;
+import com.github.sqljam.jdbc.ConnectionFactory;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 

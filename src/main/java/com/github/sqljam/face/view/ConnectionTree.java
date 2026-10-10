@@ -24,9 +24,11 @@ import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.DbType;
+import javafx.application.Platform;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
@@ -52,11 +54,15 @@ public class ConnectionTree extends TreeView<DbNode> {
     @Setter
     private Consumer<DbNode> onImportScripts;
     @Setter
+    private Consumer<DbNode> onImportParquet;
+    @Setter
     private Consumer<DbNode> onEditConnection;
     @Setter
     private Consumer<DbNode> onDeleteConnection;
     @Setter
     private Consumer<String> onStatus;
+    @Setter
+    private Consumer<ConnectionProfile> onDisconnect;
 
     public ConnectionTree(AppContext context) {
         this.context = context;
@@ -75,6 +81,46 @@ public class ConnectionTree extends TreeView<DbNode> {
         rootItem.getChildren().clear();
         for (ConnectionProfile profile : context.getProfileRegistry().getProfiles()) {
             rootItem.getChildren().add(new LazyItem(DbNode.connection(profile)));
+        }
+    }
+
+    /**
+     * Adds connections of saved profiles which are not in the tree yet, e.g. created as the target of an import,
+     * opened connections are kept
+     */
+    public void addNewConnections() {
+        for (ConnectionProfile profile : context.getProfileRegistry().getProfiles()) {
+            boolean exists = rootItem.getChildren().stream().anyMatch(item -> item.getValue().getProfile().getId()
+                    .equals(profile.getId()));
+            if (!exists) {
+                rootItem.getChildren().add(new LazyItem(DbNode.connection(profile)));
+            }
+        }
+    }
+
+    /**
+     * Whether the connection of the item is opened: its children are loaded
+     */
+    public boolean isConnected(TreeItem<DbNode> item) {
+        return item instanceof LazyItem && item.getValue().getKind() == DbNode.Kind.CONNECTION
+                && ((LazyItem) item).loaded;
+    }
+
+    /**
+     * Closes the session of the connection, the connection is opened again when it is expanded
+     */
+    public void disconnect(TreeItem<DbNode> item) {
+        if (!isConnected(item)) {
+            return;
+        }
+        ConnectionProfile profile = item.getValue().getProfile();
+        ((LazyItem) item).unload();
+        context.getSessionManager().closeSession(profile.getId());
+        if (onDisconnect != null) {
+            onDisconnect.accept(profile);
+        }
+        if (onStatus != null) {
+            onStatus.accept(Messages.format("tree.disconnected", profile.getName()));
         }
     }
 
@@ -120,7 +166,7 @@ public class ConnectionTree extends TreeView<DbNode> {
             case CONNECTION:
                 String product = session.getDatabaseProduct();
                 if (onStatus != null) {
-                    javafx.application.Platform.runLater(() -> onStatus.accept(profile.getName() + " - " + product));
+                    Platform.runLater(() -> onStatus.accept(profile.getName() + " - " + product));
                 }
                 // Databases of the server, Oracle and SQLite have no databases
                 List<String> catalogs = session.getCatalogs();
@@ -180,6 +226,15 @@ public class ConnectionTree extends TreeView<DbNode> {
         @Override
         public boolean isLeaf() {
             return false;
+        }
+
+        /**
+         * Collapsed with a placeholder child, the children are loaded again when it is expanded
+         */
+        void unload() {
+            loaded = false;
+            setExpanded(false);
+            getChildren().setAll(Collections.singletonList(new TreeItem<>(DbNode.loading())));
         }
 
         void reload() {
@@ -255,7 +310,7 @@ public class ConnectionTree extends TreeView<DbNode> {
                     break;
             }
             if (node.getKind() == DbNode.Kind.TABLE && node.getTable().getRemarks() != null) {
-                setTooltip(new javafx.scene.control.Tooltip(node.getTable().getRemarks()));
+                setTooltip(new Tooltip(node.getTable().getRemarks()));
             } else {
                 setTooltip(null);
             }
@@ -266,12 +321,23 @@ public class ConnectionTree extends TreeView<DbNode> {
             ContextMenu menu = new ContextMenu();
             switch (node.getKind()) {
                 case CONNECTION:
-                    menu.getItems().addAll(
-                            menuItem("tree.connect", Icons.CONNECT, () -> getTreeItem().setExpanded(true)),
+                    // Connect before the connection is opened, disconnect after it is opened
+                    MenuItem connect = menuItem("tree.connect", Icons.CONNECT, () -> getTreeItem().setExpanded(true));
+                    connect.setId("connectMenuItem");
+                    MenuItem disconnect = menuItem("tree.disconnect", Icons.DISCONNECT, () -> disconnect(
+                            getTreeItem()));
+                    disconnect.setId("disconnectMenuItem");
+                    menu.setOnShowing(event -> {
+                        boolean connected = isConnected(getTreeItem());
+                        connect.setVisible(!connected);
+                        disconnect.setVisible(connected);
+                    });
+                    menu.getItems().addAll(connect, disconnect,
                             menuItem("action.refresh", Icons.REFRESH, ConnectionTree.this::refreshSelected),
                             new SeparatorMenuItem(),
                             menuItem("action.export", Icons.EXPORT, () -> fire(onExport, node)),
                             menuItem("action.importScripts", Icons.IMPORT, () -> fire(onImportScripts, node)),
+                            menuItem("action.importParquet", Icons.IMPORT, () -> fire(onImportParquet, node)),
                             new SeparatorMenuItem(),
                             menuItem("action.editConnection", Icons.EDIT, () -> fire(onEditConnection, node)),
                             menuItem("action.deleteConnection", Icons.DELETE, () -> fire(onDeleteConnection, node)));
@@ -282,7 +348,8 @@ public class ConnectionTree extends TreeView<DbNode> {
                             menuItem("action.refresh", Icons.REFRESH, ConnectionTree.this::refreshSelected),
                             new SeparatorMenuItem(),
                             menuItem("action.export", Icons.EXPORT, () -> fire(onExport, node)),
-                            menuItem("action.importScripts", Icons.IMPORT, () -> fire(onImportScripts, node)));
+                            menuItem("action.importScripts", Icons.IMPORT, () -> fire(onImportScripts, node)),
+                            menuItem("action.importParquet", Icons.IMPORT, () -> fire(onImportParquet, node)));
                     break;
                 case TABLE:
                     menu.getItems().addAll(

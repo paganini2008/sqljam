@@ -121,7 +121,7 @@ public class IndexMetaData implements TiedMetaData {
 
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
-        String tableName = getTableName();
+        String tableName = getDialect().getTargetTableName(getTableName());
         boolean partition = tableMetaData.isPartitionTable();
         int typeIndex = TableMetaData.getInt(detail, "TYPE");
         String indexType = typeIndex == DatabaseMetaData.tableIndexHashed ? "HASH" : null;

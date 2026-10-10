@@ -24,6 +24,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -185,7 +186,7 @@ class SqlScriptRunnerTest {
         assertFalse(SqlScriptRunner.isBatchable("UPDATE t SET a = 1"));
         assertFalse(SqlScriptRunner.isBatchable("BEGIN INSERT INTO t VALUES (1); END;"));
 
-        List<String> batch = new java.util.ArrayList<>();
+        List<String> batch = new ArrayList<>();
         for (int i = 1; i <= SqlScriptRunner.ORACLE_BLOCK_SIZE + 1; i++) {
             batch.add("INSERT INTO FENGY.T(ID,NAME) VALUES (" + i + ",'a;b')");
         }

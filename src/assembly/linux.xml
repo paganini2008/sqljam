@@ -19,6 +19,10 @@
             <unpackOptions>
                 <excludes>
                     <exclude>META-INF/MANIFEST.MF</exclude>
+                    <!-- DuckDB natives of other platforms -->
+                    <exclude>libduckdb_java.so_linux_arm64</exclude>
+                    <exclude>libduckdb_java.so_osx_universal</exclude>
+                    <exclude>libduckdb_java.so_windows_amd64</exclude>
                 </excludes>
             </unpackOptions>
             <outputDirectory>/</outputDirectory>

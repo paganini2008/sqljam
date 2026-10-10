@@ -74,6 +74,11 @@ CREATE TABLE sjh_types (
     c_json          JSON,
     c_enum          ENUM('red', 'green', 'blue'),
     c_int_array     INTEGER ARRAY,
+    c_varchar_array VARCHAR(20) ARRAY,
+    c_interval_ym   INTERVAL YEAR TO MONTH,
+    c_timestamp9    TIMESTAMP(9),
+    c_time9         TIME(9),
+    c_row           ROW(a INTEGER, b VARCHAR(10)),
     c_java_object   JAVA_OBJECT,
     c_gen           BIGINT GENERATED ALWAYS AS (CAST(c_int AS BIGINT) * 2)
 );
@@ -90,3 +95,6 @@ INSERT INTO sjh_types (id, c_tinyint, c_smallint, c_int, c_bigint, c_numeric, c_
 VALUES (2, 127, 32767, 2147483647, 9223372036854775807, -0.000001, -3.5, -1E100, FALSE, '', '', DATE '1970-01-01',
     TIME '00:00:00', TIMESTAMP '9999-12-31 23:59:59.999999');
 INSERT INTO sjh_types (id) VALUES (3);
+UPDATE sjh_types SET c_varchar_array = ARRAY['a', 'b c'], c_interval_ym = INTERVAL '1-2' YEAR TO MONTH,
+    c_timestamp9 = TIMESTAMP '2024-02-29 12:00:00.123456789', c_time9 = TIME '23:59:59.123456789',
+    c_row = ROW(1, 'x') WHERE id = 1;

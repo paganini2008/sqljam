@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
@@ -69,6 +70,10 @@ public class TableMetaData implements TiedMetaData {
             log.info("Begin to process table: {}", tableName);
         }
         Exporter.ExportConfiguration configuration = visitor.getConfiguration();
+        TableQuery query = configuration != null ? configuration.getTableQuery(tableName) : null;
+        // Selected columns of a query, all columns if none
+        Predicate<String> selected = columnName -> query == null || query.getColumns().isEmpty()
+                || query.getColumns().contains(columnName);
         final boolean partitioned = isPartitioned();
         DatabaseMetaData databaseMetaData = getMetaData();
         List<Map<String, Object>> infoList = null;
@@ -80,10 +85,15 @@ public class TableMetaData implements TiedMetaData {
                 List<Map<String, Object>> pkInfos = infoList.stream()
                         .sorted(Comparator.comparingInt(info -> getInt(info, "KEY_SEQ")))
                         .collect(Collectors.toList());
-                pkInfos.forEach(info -> primaryKeyColumnNames.add((String) info.get("COLUMN_NAME")));
-                // Composite primary key is one constraint
-                String columnNames = StringUtils.join(primaryKeyColumnNames, ",");
-                primaryKeyMetaDatas.add(new PrimaryKeyMetaData(columnNames, pkInfos.get(0), this));
+                List<String> keyColumnNames = pkInfos.stream().map(info -> (String) info.get("COLUMN_NAME"))
+                        .collect(Collectors.toList());
+                // A primary key is kept if all of its columns are selected
+                if (keyColumnNames.stream().allMatch(selected)) {
+                    primaryKeyColumnNames.addAll(keyColumnNames);
+                    // Composite primary key is one constraint
+                    String columnNames = StringUtils.join(primaryKeyColumnNames, ",");
+                    primaryKeyMetaDatas.add(new PrimaryKeyMetaData(columnNames, pkInfos.get(0), this));
+                }
             }
         }
 
@@ -91,7 +101,9 @@ public class TableMetaData implements TiedMetaData {
                 getCatalogName(), getSchemaName(), tableName);
         for (Map<String, Object> columnInfo : infoList) {
             String columnName = (String) columnInfo.get("COLUMN_NAME");
-            columnMetaDatas.add(new ColumnMetaData(columnName, columnInfo, this));
+            if (selected.test(columnName)) {
+                columnMetaDatas.add(new ColumnMetaData(columnName, columnInfo, this));
+            }
         }
         for (ColumnMetaData columnMetaData : columnMetaDatas) {
             columnMetaData.accept(visitor);
@@ -112,6 +124,10 @@ public class TableMetaData implements TiedMetaData {
                 List<IndexMetaData> subList = MapUtils.getOrCreate(indexMetaDatas, indexName, ArrayList::new);
                 subList.add(new IndexMetaData(indexName, columnName, indexInfo, this));
             }
+            // Indexes are kept if all of their columns are selected
+            indexMetaDatas.values().removeIf(indexes -> !indexes.stream().map(IndexMetaData::getColumnName)
+                    .allMatch(selected));
+            removeDuplicateIndexes();
             for (Map.Entry<String, List<IndexMetaData>> entry : indexMetaDatas.entrySet()) {
                 if (entry.getValue().size() == 1) {
                     entry.getValue().get(0).accept(visitor);
@@ -137,6 +153,9 @@ public class TableMetaData implements TiedMetaData {
                 }
                 MapUtils.getOrCreate(fkGroups, fkName, ArrayList::new).add(fkInfo);
             }
+            // Foreign keys are kept if all of their columns are selected
+            fkGroups.values().removeIf(fkInfos -> !fkInfos.stream().map(info -> (String) info.get("FKCOLUMN_NAME"))
+                    .allMatch(selected));
             for (Map.Entry<String, List<Map<String, Object>>> entry : fkGroups.entrySet()) {
                 List<Map<String, Object>> fkInfos = entry.getValue().stream()
                         .sorted(Comparator.comparingInt(info -> getInt(info, "KEY_SEQ")))
@@ -220,7 +239,7 @@ public class TableMetaData implements TiedMetaData {
     public String[] getStatements() throws SQLException {
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
-        String tableName = getTableName();
+        String tableName = getDialect().getTargetTableName(getTableName());
         String statement = getDialect().getCreateTableStatement(catalogName, schemaName, tableName);
         return new String[]{statement};
     }
@@ -239,6 +258,35 @@ public class TableMetaData implements TiedMetaData {
 
     public List<String> getPrimaryKeyColumnNames() {
         return primaryKeyColumnNames;
+    }
+
+    /**
+     * Indexes of the same columns, e.g. an index of H2 for a foreign key next to an index created by the user, would
+     * get the same name in the target database, which also refuses a second index of the same columns. One index of
+     * the columns is kept, a unique index before others.
+     */
+    private void removeDuplicateIndexes() {
+        Map<List<String>, String> indexNames = new LinkedHashMap<>();
+        for (Map.Entry<String, List<IndexMetaData>> entry : new ArrayList<>(indexMetaDatas.entrySet())) {
+            if (entry.getValue().isEmpty()) {
+                continue;
+            }
+            List<String> columnNames = entry.getValue().stream().map(IndexMetaData::getColumnName)
+                    .collect(Collectors.toList());
+            String existing = indexNames.get(columnNames);
+            if (existing == null) {
+                indexNames.put(columnNames, entry.getKey());
+            } else if (isUniqueIndex(entry.getValue()) && !isUniqueIndex(indexMetaDatas.get(existing))) {
+                indexMetaDatas.remove(existing);
+                indexNames.put(columnNames, entry.getKey());
+            } else {
+                indexMetaDatas.remove(entry.getKey());
+            }
+        }
+    }
+
+    private static boolean isUniqueIndex(List<IndexMetaData> indexes) {
+        return IndexMetaData.isUnique(indexes.get(0).getDetail());
     }
 
     public List<IndexMetaData> getIndexMetaDatas() {

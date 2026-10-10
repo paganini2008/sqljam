@@ -18,6 +18,7 @@ package com.github.sqljam.config;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.Writer;
 import java.net.URISyntaxException;
@@ -67,7 +68,7 @@ public class Config {
         this.userFile = userFile;
         try (InputStream in = Config.class.getResourceAsStream("/" + FILE_NAME)) {
             if (in != null) {
-                defaults.load(new java.io.InputStreamReader(in, StandardCharsets.UTF_8));
+                defaults.load(new InputStreamReader(in, StandardCharsets.UTF_8));
             }
         } catch (IOException e) {
             throw new IllegalStateException("Unable to load default configuration", e);

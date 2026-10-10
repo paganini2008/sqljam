@@ -67,7 +67,12 @@ public class ExportManifest {
 
         LOB_MANIFEST,
 
-        CONSTRAINTS
+        CONSTRAINTS,
+
+        /**
+         * Rows of a table in a Parquet file
+         */
+        PARQUET
     }
 
     private String format = FORMAT;
@@ -75,6 +80,10 @@ public class ExportManifest {
     private Status status;
     private String createdAt = LocalDateTime.now().toString();
     private ExportMode exportMode;
+    /**
+     * Format of rows, SQL for packages written before Parquet was supported
+     */
+    private DataFormat dataFormat = DataFormat.SQL;
     private Database source = new Database();
     private Database target = new Database();
     private Map<String, Object> options = new LinkedHashMap<>();
@@ -125,6 +134,10 @@ public class ExportManifest {
         private long rows;
         private Set<String> dataFiles = new LinkedHashSet<>();
         private long lobFiles;
+        /**
+         * Identity columns of the table (Parquet packages), their values are kept and sequences are reset
+         */
+        private List<String> identityColumns = new ArrayList<>();
     }
 
     private static ObjectMapper createObjectMapper() {

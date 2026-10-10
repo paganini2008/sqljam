@@ -20,6 +20,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -62,9 +64,12 @@ public class ColumnMetaData implements TiedMetaData {
         Dialect dialect = getDialect();
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
-        String tableName = getTableName();
+        String tableName = dialect.getTargetTableName(getTableName());
         int dataType = TableMetaData.getInt(detail, "DATA_TYPE");
-        String typeName = (String) detail.get("TYPE_NAME");
+        String typeName = getUserTypeName(dialect);
+        if (typeName == null) {
+            typeName = (String) detail.get("TYPE_NAME");
+        }
         int columnSize = TableMetaData.getInt(detail, "COLUMN_SIZE");
         int columnScale = TableMetaData.getInt(detail, "DECIMAL_DIGITS");
         String comment = (String) detail.get("REMARKS");
@@ -86,7 +91,7 @@ public class ColumnMetaData implements TiedMetaData {
                     columnSize,
                     columnScale, defaultValue, nullable, comment);
         }
-        dialect.registerColumnTypeName(tableName, columnName,
+        dialect.registerColumnTypeName(getTableName(), columnName,
                 dialect.getColumnTypeName(dataType, typeName, columnSize, columnScale));
         return new String[]{statement};
     }
@@ -120,6 +125,32 @@ public class ColumnMetaData implements TiedMetaData {
     }
 
     /**
+     * User defined type (enum, domain) of the column for the same database type, null otherwise
+     */
+    @SuppressWarnings("unchecked")
+    private String getUserTypeName(Dialect dialect) {
+        Map<String, Object> userType = (Map<String, Object>) detail.get("USER_TYPE");
+        if (userType == null || dialect.isCrossDatabase()) {
+            return null;
+        }
+        return Dialect.VERBATIM_TYPE_PREFIX + dialect.getUserTypeName(getCatalogName(), getSchemaName(),
+                (String) userType.get("NAME"));
+    }
+
+    /**
+     * Statement creating the user defined type of the column for the same database type, null otherwise
+     */
+    @SuppressWarnings("unchecked")
+    public String getUserTypeStatement() {
+        Map<String, Object> userType = (Map<String, Object>) detail.get("USER_TYPE");
+        Dialect dialect = getDialect();
+        if (userType == null || dialect.isCrossDatabase()) {
+            return null;
+        }
+        return dialect.getCreateUserTypeStatement(getCatalogName(), getSchemaName(), userType);
+    }
+
+    /**
      * Objects referenced by default values (e.g. sequences) are moved to the target schema
      */
     private String replaceSchema(String defaultValue, Dialect dialect) {
@@ -130,8 +161,8 @@ public class ColumnMetaData implements TiedMetaData {
                 || dialect.isCrossDatabase()) {
             return defaultValue;
         }
-        String quotedSchema = java.util.regex.Pattern.quote(schemaName);
-        String replacement = java.util.regex.Matcher.quoteReplacement(dialect.quoteIdentifier(targetSchemaName));
+        String quotedSchema = Pattern.quote(schemaName);
+        String replacement = Matcher.quoteReplacement(dialect.quoteIdentifier(targetSchemaName));
         return defaultValue.replaceAll("(?i)(\\[" + quotedSchema + "\\]|\"" + quotedSchema + "\"|`" + quotedSchema
                 + "`|\\b" + quotedSchema + "\\b)(?=\\s*\\.)", replacement);
     }

@@ -22,10 +22,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import lombok.extern.slf4j.Slf4j;
-
-import org.apache.commons.lang3.ArrayUtils;
 
 /**
  * @Description: PartitionMetaData generates the partition clause of a partitioned table and its partitions (PostgreSQL)
@@ -130,7 +129,7 @@ public class PartitionMetaData implements TiedMetaData {
     public String[] getStatements() throws SQLException {
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
-        String tableName = getTableName();
+        String tableName = getDialect().getTargetTableName(getTableName());
         String partitionType = (String) detail.get("PARTITION_TYPE");
         String columnNames = (String) detail.get("PARTITION_COLUMN_NAMES");
         String statement = getDialect().getDefinePartitionTableStatement(catalogName, schemaName, tableName,

@@ -18,6 +18,7 @@ package com.github.sqljam.impexp.db;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -214,6 +215,11 @@ public class OracleMetaDataOperations extends MetaDataOperations {
             }
             if (StringUtils.isBlank((String) columnInfo.get("REMARKS"))) {
                 columnInfo.put("REMARKS", columnDetail.get("COMMENTS"));
+            }
+            if ("VECTOR".equalsIgnoreCase((String) columnInfo.get("TYPE_NAME"))) {
+                // Vectors are text of other databases, e.g. [1.0E+000,2.5E+000]
+                columnInfo.put("DATA_TYPE", Types.LONGVARCHAR);
+                columnInfo.put("COLUMN_SIZE", Integer.MAX_VALUE);
             }
         }
         return columnInfos;

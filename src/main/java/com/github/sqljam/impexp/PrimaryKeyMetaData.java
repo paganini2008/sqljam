@@ -89,8 +89,9 @@ public class PrimaryKeyMetaData implements TiedMetaData {
     public String[] getStatements() throws SQLException {
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
-        String tableName = getTableName();
-        String pkName = (String) detail.get("PK_NAME");
+        String tableName = getDialect().getTargetTableName(getTableName());
+        // Names of copied keys are derived from the target table
+        String pkName = getDialect().isTableRenamed() ? null : (String) detail.get("PK_NAME");
         String statement = getDialect().getCreatePrimaryKeyStatement(catalogName, schemaName, tableName, columnName,
                 pkName);
         return new String[]{statement};

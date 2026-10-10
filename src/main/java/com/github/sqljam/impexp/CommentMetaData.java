@@ -46,7 +46,7 @@ public class CommentMetaData implements TiedMetaData {
     public String[] getStatements() throws SQLException {
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
-        String tableName = getTableName();
+        String tableName = getDialect().getTargetTableName(getTableName());
         String comment = (String) detail.get("REMARKS");
         String statement;
         if (columnName == null) {

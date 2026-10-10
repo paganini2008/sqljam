@@ -15,8 +15,10 @@
  */
 package com.github.sqljam.impexp.db;
 
+import java.math.BigDecimal;
 import java.sql.Types;
 import java.time.LocalTime;
+import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Map;
 
@@ -123,6 +125,7 @@ public class OracleDialect extends Dialect {
                 case "blob":
                 case "binary_float":
                 case "binary_double":
+                case "vector":
                 case "xmltype":
                 case "json":
                 case "long":
@@ -403,8 +406,17 @@ public class OracleDialect extends Dialect {
         } else if (value instanceof LocalTime) {
             // Oracle has no TIME type, time values are stored as text
             return formatTime((LocalTime) value);
+        } else if ((value instanceof Double || value instanceof Float)
+                && Double.isFinite(((Number) value).doubleValue())) {
+            // The driver binds doubles as NUMBER of 15 digits, the shortest decimal keeps the exact value
+            return new BigDecimal(value.toString());
         }
         return value;
+    }
+
+    @Override
+    public boolean isEmptyValueNull() {
+        return true;
     }
 
     @Override
@@ -442,7 +454,7 @@ public class OracleDialect extends Dialect {
     }
 
     @Override
-    public String getTimestampWithTimeZoneLiteral(java.time.OffsetDateTime value) {
+    public String getTimestampWithTimeZoneLiteral(OffsetDateTime value) {
         return "TIMESTAMP '" + formatTimestamp(value.toLocalDateTime()) + " " + value.getOffset() + "'";
     }
 
@@ -459,6 +471,10 @@ public class OracleDialect extends Dialect {
         String column = quoteIdentifier(columnName);
         if (StringUtils.endsWithIgnoreCase(typeName, "XMLTYPE")) {
             return String.format("XMLSERIALIZE(CONTENT %s AS CLOB) AS %s", column, column);
+        }
+        if ("VECTOR".equalsIgnoreCase(typeName)) {
+            // Text of vectors is accepted by every database, Oracle reads it back into vectors
+            return String.format("FROM_VECTOR(%s RETURNING CLOB) AS %s", column, column);
         }
         return column;
     }

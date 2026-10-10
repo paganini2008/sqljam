@@ -15,10 +15,15 @@
  */
 package com.github.sqljam.face;
 
+import java.io.File;
+import java.io.IOException;
+
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.AppSettings;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.service.ConnectionStore;
+import com.github.sqljam.face.service.ExampleDatabase;
+import com.github.sqljam.face.service.JsonStore;
 import com.github.sqljam.face.service.SettingsStore;
 import com.github.sqljam.face.view.AppContext;
 import com.github.sqljam.face.view.Branding;
@@ -68,7 +73,17 @@ public class SqlJamApplication extends Application {
         settingsStore = new SettingsStore();
 
         notifyPreloader(new SplashPreloader.Status(Messages.get("splash.loadingDataSources"), 0.35));
+        File connectionsFile = Config.getInstance().getFile("sqljam.connections.file",
+                new File(JsonStore.DEFAULT_DIRECTORY, "connections.json"));
         profileRegistry = new ProfileRegistry(new ConnectionStore());
+        // A new user starts with an example database of a small online shop
+        if (!connectionsFile.exists()) {
+            notifyPreloader(new SplashPreloader.Status(Messages.get("splash.preparingExample"), 0.38));
+        }
+        ExampleDatabase exampleDatabase = new ExampleDatabase();
+        exampleDatabase.createAtFirstStart(connectionsFile).ifPresent(this::saveExample);
+        // The database file of the example data source may be deleted by the user
+        exampleDatabase.repairAtStart(profileRegistry.getProfiles());
 
         // Loading JDBC drivers takes a while, it is done here instead of at the first connection
         DbType[] dbTypes = DbType.values();
@@ -88,6 +103,16 @@ public class SqlJamApplication extends Application {
         notifyPreloader(new SplashPreloader.Status(Messages.get("splash.preparingUi"), 0.85));
         Branding.getLogo();
         Branding.getIcons();
+    }
+
+    private void saveExample(ConnectionProfile profile) {
+        try {
+            profileRegistry.saveProfile(profile, true);
+        } catch (IOException e) {
+            if (log.isWarnEnabled()) {
+                log.warn("Unable to save the data source of the example database", e);
+            }
+        }
     }
 
     @Override

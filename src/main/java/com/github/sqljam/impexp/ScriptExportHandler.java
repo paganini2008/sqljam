@@ -19,11 +19,14 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.sql.DatabaseMetaData;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -34,10 +37,10 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
-import com.github.sqljam.jdbc.ConnectionFactory;
-import com.github.sqljam.page.EachPage;
 import com.github.sqljam.impexp.DdlScripter.Catalog;
 import com.github.sqljam.impexp.DdlScripter.Schema;
+import com.github.sqljam.jdbc.ConnectionFactory;
+import com.github.sqljam.page.EachPage;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -125,6 +128,15 @@ public class ScriptExportHandler implements ExportHandler {
      */
     private List<String> tablePrologue = new ArrayList<>();
 
+    /**
+     * Foreign keys are always written into constraints.sql, even without rows (Parquet packages load rows later)
+     */
+    private boolean constraintsSeparated;
+
+    public void setConstraintsSeparated(boolean constraintsSeparated) {
+        this.constraintsSeparated = constraintsSeparated;
+    }
+
     public void setLobSeparated(boolean lobSeparated) {
         this.lobSeparated = lobSeparated;
     }
@@ -198,7 +210,7 @@ public class ScriptExportHandler implements ExportHandler {
         manifest.getOptions().put("lobSeparated", lobSeparated);
 
         // Files in the order of importing
-        Set<File> dirs = new java.util.LinkedHashSet<>();
+        Set<File> dirs = new LinkedHashSet<>();
         writtenFiles.forEach(file -> dirs.add(file.getParentFile().getName().equals(DATA_DIR_NAME)
                 ? file.getParentFile().getParentFile() : file.getParentFile()));
         for (File dir : dirs) {
@@ -255,7 +267,7 @@ public class ScriptExportHandler implements ExportHandler {
         this.dialect = serverMetaData.getDialect();
         manifest = new ExportManifest();
         manifest.setExportMode(exportMode);
-        java.sql.DatabaseMetaData databaseMetaData = serverMetaData.getMetaData();
+        DatabaseMetaData databaseMetaData = serverMetaData.getMetaData();
         ExportManifest.Database source = manifest.getSource();
         source.setDbType(configuration != null ? configuration.getDbType() : null);
         source.setProduct(databaseMetaData.getDatabaseProductName() + " "
@@ -311,7 +323,7 @@ public class ScriptExportHandler implements ExportHandler {
         return writer;
     }
 
-    private static final java.util.Set<String> LOB_TYPE_NAMES = new java.util.HashSet<>(Arrays.asList("text",
+    private static final Set<String> LOB_TYPE_NAMES = new HashSet<>(Arrays.asList("text",
             "tinytext", "mediumtext", "longtext", "ntext", "clob", "nclob", "blob", "tinyblob", "mediumblob",
             "longblob", "bytea", "image", "long", "long raw", "character large object", "binary large object",
             "national character large object"));
@@ -338,9 +350,9 @@ public class ScriptExportHandler implements ExportHandler {
             case "nvarchar":
             case "varbinary":
                 // varchar without length (PostgreSQL), varchar(max) of SQL Server
-                return large && (dataType == java.sql.Types.VARCHAR || dataType == java.sql.Types.NVARCHAR
-                        || dataType == java.sql.Types.VARBINARY || dataType == java.sql.Types.LONGVARCHAR
-                        || dataType == java.sql.Types.LONGNVARCHAR || dataType == java.sql.Types.LONGVARBINARY);
+                return large && (dataType == Types.VARCHAR || dataType == Types.NVARCHAR
+                        || dataType == Types.VARBINARY || dataType == Types.LONGVARCHAR
+                        || dataType == Types.LONGNVARCHAR || dataType == Types.LONGVARBINARY);
             default:
                 return false;
         }
@@ -414,7 +426,7 @@ public class ScriptExportHandler implements ExportHandler {
             sqlLines.add(1, String.format("%s Create foreign keys", commentPrefix));
             File catalogDir = getCatalogDir(catalogName);
             File outputFile;
-            if (!dataCatalogNames.contains(StringUtils.defaultString(catalogName))) {
+            if (!constraintsSeparated && !dataCatalogNames.contains(StringUtils.defaultString(catalogName))) {
                 outputFile = new File(catalogDir, SCHEMA_FILE_NAME);
             } else {
                 // Foreign keys are created after rows inserted and LOBs restored
@@ -472,7 +484,8 @@ public class ScriptExportHandler implements ExportHandler {
         List<String> keyColumnNames = tableMetaData.getPrimaryKeyColumnNames();
         Set<String> lobColumnNames = new HashSet<>();
         // Rows are located by primary keys when restoring LOBs
-        if (lobSeparated && !keyColumnNames.isEmpty() && template.keySet().containsAll(keyColumnNames)) {
+        if (lobSeparated && dialect.isLobSeparationSupported() && !keyColumnNames.isEmpty()
+                && template.keySet().containsAll(keyColumnNames)) {
             tableMetaData.getColumnMetaDatas().stream().filter(ScriptExportHandler::isLobColumn)
                     .map(ColumnMetaData::getColumnName).filter(template::containsKey).forEach(lobColumnNames::add);
         }

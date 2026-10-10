@@ -144,3 +144,18 @@
 .log-list .list-cell.log-error {
     -fx-text-fill: -color-danger-fg;
 }
+
+/* Category headers of database types: relational and OLAP databases */
+
+.category-header {
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-text-fill: -color-fg-muted;
+    -fx-padding: 4 0 2 0;
+}
+
+/* GitHub mark of the source repository */
+
+.repository-mark .ikonli-font-icon {
+    -fx-icon-color: -color-fg-muted;
+}

@@ -45,6 +45,16 @@ public class SessionManager {
         }
     }
 
+    /**
+     * Closes the session in the calling thread, e.g. before the database file of the profile is replaced
+     */
+    public void closeSessionNow(String profileId) {
+        DatabaseSession session = sessions.remove(profileId);
+        if (session != null) {
+            session.close();
+        }
+    }
+
     public void closeAll() {
         sessions.values().forEach(DatabaseSession::close);
         sessions.clear();

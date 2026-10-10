@@ -22,10 +22,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
+import com.github.sqljam.impexp.TableMetaData;
 import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 
@@ -91,8 +94,8 @@ public class SQLiteMetaDataOperations extends MetaDataOperations {
         int[] sizes = parseSizes(declaredType);
         if (declaredType.indexOf('(') < 0) {
             // Driver reports declared size as COLUMN_SIZE, unknown size as 2000000000
-            int columnSize = com.github.sqljam.impexp.TableMetaData.getInt(columnInfo, "COLUMN_SIZE");
-            int scale = com.github.sqljam.impexp.TableMetaData.getInt(columnInfo, "DECIMAL_DIGITS");
+            int columnSize = TableMetaData.getInt(columnInfo, "COLUMN_SIZE");
+            int scale = TableMetaData.getInt(columnInfo, "DECIMAL_DIGITS");
             sizes = columnSize > 0 && columnSize < 2000000000 ? new int[]{columnSize, scale} : new int[]{0, 0};
         }
         int dataType;
@@ -159,7 +162,11 @@ public class SQLiteMetaDataOperations extends MetaDataOperations {
                     dataType = Types.BIGINT;
                 } else if (baseType.contains("CHAR") || baseType.contains("CLOB") || baseType.contains("TEXT")) {
                     dataType = columnSize > 0 ? Types.VARCHAR : Types.CLOB;
-                } else if (baseType.isEmpty() || baseType.contains("BLOB")) {
+                } else if (baseType.isEmpty() || "ANY".equals(baseType)) {
+                    // Columns without type (or ANY) keep values of any type, they are text of other databases
+                    dataType = Types.VARCHAR;
+                    columnSize = Integer.MAX_VALUE;
+                } else if (baseType.contains("BLOB")) {
                     dataType = Types.BLOB;
                 } else if (baseType.contains("REAL") || baseType.contains("FLOA") || baseType.contains("DOUB")) {
                     dataType = Types.DOUBLE;
@@ -177,8 +184,8 @@ public class SQLiteMetaDataOperations extends MetaDataOperations {
      * Expression and type (STORED/VIRTUAL) of a generated column parsed from CREATE TABLE statement
      */
     public static String[] parseGeneration(String createSql, String columnName) {
-        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile("(?is)[\\s(,][\"`\\[]?"
-                + java.util.regex.Pattern.quote(columnName) + "[\"`\\]]?\\s[^,]*?\\bAS\\s*\\(").matcher(createSql);
+        Matcher matcher = Pattern.compile("(?is)[\\s(,][\"`\\[]?"
+                + Pattern.quote(columnName) + "[\"`\\]]?\\s[^,]*?\\bAS\\s*\\(").matcher(createSql);
         if (!matcher.find()) {
             return null;
         }

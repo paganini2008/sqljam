@@ -20,8 +20,8 @@ import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
-import java.util.stream.Collectors;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 /**
  * @Description: PartitionTableMetaData is a partition of a partitioned table of PostgreSQL
@@ -114,9 +114,10 @@ public class PartitionTableMetaData implements TiedMetaData {
     public String[] getStatements() throws SQLException {
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
-        String tableName = getTableName();
-        String inheritedTableName = (String) detail.get("INHERITED_TABLE_NAME");
-        String statement = getDialect().getCreatePartitionTableStatement(catalogName, schemaName, tableName,
+        Dialect dialect = getDialect();
+        String tableName = dialect.getTargetTableName(getTableName());
+        String inheritedTableName = dialect.getTargetTableName((String) detail.get("INHERITED_TABLE_NAME"));
+        String statement = dialect.getCreatePartitionTableStatement(catalogName, schemaName, tableName,
                 inheritedTableName);
         return new String[]{statement};
     }

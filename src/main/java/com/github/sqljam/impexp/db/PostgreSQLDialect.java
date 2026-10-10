@@ -187,6 +187,17 @@ public class PostgreSQLDialect extends Dialect {
         }
     }
 
+    /**
+     * Enum and domain types are created in the target schema if they do not exist
+     */
+    @Override
+    public String getCreateUserTypeStatement(String catalog, String schema, Map<String, Object> userType) {
+        String typeName = getUserTypeName(catalog, schema, (String) userType.get("NAME"));
+        String create = String.format("CREATE %s %s AS %s", "DOMAIN".equals(userType.get("KIND")) ? "DOMAIN" : "TYPE",
+                typeName, userType.get("DEFINITION"));
+        return String.format("DO $$ BEGIN %s; EXCEPTION WHEN duplicate_object THEN NULL; END $$", create);
+    }
+
     @Override
     public String getCreateUserStatement(String username, String password) {
         return String.format("CREATE USER %s WITH PASSWORD '%s'", username, password);
@@ -389,7 +400,7 @@ public class PostgreSQLDialect extends Dialect {
      */
     @Override
     public int getNullSqlType(int sqlType) {
-        return java.sql.Types.OTHER;
+        return Types.OTHER;
     }
 
     @Override

@@ -56,6 +56,10 @@ public class SequenceMetaData implements TiedMetaData {
     @Override
     public String[] getStatements() throws SQLException {
         Dialect dialect = getDialect();
+        if (dialect.isTableRenamed()) {
+            // Copies of tables use the sequences of the source tables
+            return null;
+        }
         String catalogName = getCatalogName();
         String schemaName = getSchemaName();
         long startValue = getLong("START_VALUE", 1L);

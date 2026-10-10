@@ -18,17 +18,21 @@ package com.github.sqljam.face.view;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.Optional;
+import java.util.function.Consumer;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.Banner;
+import javafx.geometry.Insets;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
 /**
@@ -94,24 +98,61 @@ public final class Dialogs {
     }
 
     /**
-     * About dialog with the logo and the version
+     * About SqlJam with the version, the home page, the source repository, the author and the license
+     *
+     * @param browser opens the links in the browser, null for links without an action
      */
-    public static Alert createAbout(Window owner) {
+    public static Alert createAbout(Window owner, Consumer<String> browser) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         initOwner(alert, owner);
         Branding.applyIcons(alert);
         alert.setTitle(Messages.get("about.title"));
         alert.setHeaderText(Messages.format("about.header", Banner.getVersion()));
-        alert.setContentText(Messages.get("about.message"));
         ImageView logo = Branding.logoView(96);
         logo.setId("aboutLogo");
         alert.setGraphic(logo);
-        alert.getDialogPane().setPrefWidth(460);
+        alert.getDialogPane().setPrefWidth(500);
+        Label message = new Label(Messages.get("about.message"));
+        message.setWrapText(true);
+        GridPane details = new GridPane();
+        details.setId("aboutDetails");
+        details.setHgap(16);
+        details.setVgap(4);
+        details.addRow(0, aboutLabel("about.version"), new Label(Banner.getVersion()));
+        details.addRow(1, aboutLabel("about.homepage"), aboutLink("aboutHomepage", Branding.HOMEPAGE_URL,
+                Branding.HOMEPAGE_URL, browser));
+        details.addRow(2, aboutLabel("about.repository"), aboutLink("aboutRepository", Branding.REPOSITORY_URL,
+                Branding.REPOSITORY_URL, browser));
+        details.addRow(3, aboutLabel("about.author"), new Label(Branding.AUTHOR));
+        details.addRow(4, aboutLabel("about.email"), aboutLink("aboutEmail", Branding.EMAIL,
+                "mailto:" + Branding.EMAIL, browser));
+        details.addRow(5, aboutLabel("about.license"), new Label(Messages.get("about.licenseName")));
+        alert.getDialogPane().setContent(new VBox(14, message, details));
         return alert;
     }
 
-    public static void showAbout(Window owner) {
-        createAbout(owner).showAndWait();
+    private static Label aboutLabel(String key) {
+        Label label = new Label(Messages.get(key));
+        label.getStyleClass().add("muted");
+        return label;
+    }
+
+    private static Hyperlink aboutLink(String id, String text, String url, Consumer<String> browser) {
+        Hyperlink link = new Hyperlink(text);
+        link.setId(id);
+        link.setPadding(Insets.EMPTY);
+        link.setOnAction(event -> {
+            // Not shown as visited, it is opened again
+            link.setVisited(false);
+            if (browser != null) {
+                browser.accept(url);
+            }
+        });
+        return link;
+    }
+
+    public static void showAbout(Window owner, Consumer<String> browser) {
+        createAbout(owner, browser).showAndWait();
     }
 
     public static boolean confirm(Window owner, String title, String message) {

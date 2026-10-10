@@ -17,6 +17,7 @@ package com.github.sqljam.face.view;
 
 import java.io.File;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
@@ -25,18 +26,22 @@ import com.github.sqljam.impexp.DbType;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextFormatter;
+import javafx.scene.control.Tooltip;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 
@@ -85,7 +90,8 @@ public class ConnectionForm extends VBox {
         urlField.setId("urlField");
         statusLabel.setId("formStatusLabel");
 
-        dbTypeCombo.getItems().addAll(DbType.values());
+        dbTypeCombo.getItems().addAll(DbTypeCells.getDbTypesByCategory());
+        DbTypeCells.setupDbTypeCombo(dbTypeCombo);
         dbTypeCombo.setMaxWidth(Double.MAX_VALUE);
         dbTypeCombo.valueProperty().addListener((obs, oldType, newType) -> onDbTypeChanged(oldType, newType));
         portField.setTextFormatter(new TextFormatter<String>(change -> change.getControlNewText().matches("\\d{0,5}")
@@ -109,8 +115,8 @@ public class ConnectionForm extends VBox {
         progressIndicator.managedProperty().bind(busy);
 
         hostBox = new HBox(8, hostField, portLabel, portField);
-        hostBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
-        portLabel.setMinWidth(javafx.scene.layout.Region.USE_PREF_SIZE);
+        hostBox.setAlignment(Pos.CENTER_LEFT);
+        portLabel.setMinWidth(Region.USE_PREF_SIZE);
         HBox.setHgrow(hostField, Priority.ALWAYS);
         HBox databaseBox = new HBox(8, databaseField, browseButton);
         HBox.setHgrow(databaseField, Priority.ALWAYS);
@@ -148,8 +154,8 @@ public class ConnectionForm extends VBox {
             portField.setText(newType.getDefaultPort() > 0 ? String.valueOf(newType.getDefaultPort()) : "");
         }
         boolean fileBased = newType.isFileBased();
-        // H2 may run as a tcp server, SQLite is always a file
-        boolean hostVisible = newType != DbType.SQLITE;
+        // H2 may run as a tcp server, SQLite and DuckDB are always files
+        boolean hostVisible = !fileBased || newType == DbType.H2;
         hostLabel.setVisible(hostVisible);
         hostLabel.setManaged(hostVisible);
         hostBox.setVisible(hostVisible);
@@ -160,7 +166,7 @@ public class ConnectionForm extends VBox {
         browseButton.setVisible(browsable);
         browseButton.setManaged(browsable);
         browseButton.setGraphic(Icons.of(fileBased ? Icons.FOLDER : "fth-more-horizontal"));
-        browseButton.setTooltip(fileBased ? null : new javafx.scene.control.Tooltip(
+        browseButton.setTooltip(fileBased ? null : new Tooltip(
                 Messages.get("connection.browseDatabases")));
         if (newType == DbType.ORACLE) {
             databaseLabel.setText(Messages.get("connection.serviceName"));
@@ -213,7 +219,7 @@ public class ConnectionForm extends VBox {
                 return;
             }
             String current = databases.contains(databaseField.getText()) ? databaseField.getText() : databases.get(0);
-            javafx.scene.control.ChoiceDialog<String> dialog = new javafx.scene.control.ChoiceDialog<>(current,
+            ChoiceDialog<String> dialog = new ChoiceDialog<>(current,
                     databases);
             dialog.initOwner(getScene() != null ? getScene().getWindow() : null);
             Branding.applyIcons(dialog);
@@ -307,8 +313,8 @@ public class ConnectionForm extends VBox {
         if (StringUtils.isNotBlank(edited.getUrl())) {
             return null;
         }
-        boolean fileMode = dbType == DbType.SQLITE || (dbType == DbType.H2 && StringUtils.isBlank(
-                edited.getHostname()));
+        boolean fileMode = (dbType.isFileBased() && dbType != DbType.H2) || (dbType == DbType.H2
+                && StringUtils.isBlank(edited.getHostname()));
         if (!fileMode && StringUtils.isBlank(edited.getHostname())) {
             return Messages.get("connection.error.host");
         }
@@ -352,7 +358,7 @@ public class ConnectionForm extends VBox {
      *
      * @param onSuccess called with product name and version
      */
-    public void testConnection(java.util.function.Consumer<String> onSuccess) {
+    public void testConnection(Consumer<String> onSuccess) {
         String error = validate();
         if (error != null) {
             showError(error);

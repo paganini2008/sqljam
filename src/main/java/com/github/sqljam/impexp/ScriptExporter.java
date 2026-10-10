@@ -104,6 +104,13 @@ public final class ScriptExporter {
         scriptExportHandler.setLobSeparated(lobSeparated);
     }
 
+    /**
+     * Writes foreign keys into constraints.sql even if rows are not exported (default: into schema.sql)
+     */
+    public void setConstraintsSeparated(boolean constraintsSeparated) {
+        scriptExportHandler.setConstraintsSeparated(constraintsSeparated);
+    }
+
     public List<File> getWrittenFiles() {
         return scriptExportHandler.getWrittenFiles();
     }
