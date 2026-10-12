@@ -17,6 +17,7 @@ package com.github.sqljam.impexp.db;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.sql.SQLException;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.Locale;
@@ -533,5 +534,38 @@ public class MySQLDialect extends Dialect {
      */
     protected boolean isDatetimeCurrentTimestampSupported() {
         return true;
+    }
+
+    /**
+     * INSERT ... ON DUPLICATE KEY UPDATE, the values of the row by the row alias of MySQL 8.0.19 or by VALUES()
+     * which is deprecated since then. A row of keys only keeps the existing row.
+     */
+    @Override
+    public String getUpsertStatement(String catalog, String schema, String tableName, String[] columnNames,
+                                     String[] keyColumnNames, String[] updateColumnNames, Object[] values) {
+        boolean alias = isRowAliasSupported();
+        String insert = String.format("INSERT INTO %s(%s) VALUES (%s)%s", getQualifiedTableName(catalog, schema,
+                tableName), getIdentifiers(columnNames), StringUtils.join(values, ","), alias ? " AS new_row" : "");
+        String[] updated = updateColumnNames.length > 0 ? updateColumnNames : new String[]{keyColumnNames[0]};
+        // A row of keys only sets a key to its own value, the existing row is kept
+        String updates = Arrays.stream(updated).map(name -> getIdentifier(name) + " = " + (alias ? "new_row."
+                + getIdentifier(name) : "VALUES(" + getIdentifier(name) + ")")).collect(Collectors.joining(", "));
+        return String.format("%s ON DUPLICATE KEY UPDATE %s", insert, updates);
+    }
+
+    /**
+     * Row alias of INSERT (MySQL 8.0.19), assumed for an unknown version and from MySQL 8.1
+     */
+    protected boolean isRowAliasSupported() {
+        return getDatabaseMajorVersion() < 0 || isVersionAtLeast(8, 1);
+    }
+
+    /**
+     * Table exists (1050), duplicate key name (1061), duplicate foreign key (1826), multiple primary keys (1068)
+     */
+    @Override
+    public boolean isAlreadyExistsError(SQLException e) {
+        int code = e.getErrorCode();
+        return code == 1050 || code == 1061 || code == 1826 || code == 1068 || super.isAlreadyExistsError(e);
     }
 }

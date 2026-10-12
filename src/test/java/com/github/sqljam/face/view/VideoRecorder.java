@@ -273,7 +273,7 @@ final class VideoRecorder {
 
     private String toAss(String font) {
         int band = height - sceneHeight;
-        int size = Math.round(band * 0.34f);
+        int size = Math.round(band * 0.40f);
         StringBuilder ass = new StringBuilder();
         ass.append("[Script Info]\nScriptType: v4.00+\nPlayResX: ").append(width).append("\nPlayResY: ")
                 .append(height).append("\nWrapStyle: 0\n\n[V4+ Styles]\n")

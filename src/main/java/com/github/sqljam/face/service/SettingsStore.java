@@ -45,6 +45,12 @@ public class SettingsStore {
         settings.setTransferPageSize(config.getInt("sqljam.export.page-size", settings.getTransferPageSize()));
         settings.setLobPageSize(config.getInt("sqljam.export.lob-page-size", settings.getLobPageSize()));
         settings.setMaxDataFileSize(config.getLong("sqljam.export.max-file-size", settings.getMaxDataFileSize()));
+        settings.setParquetMaxFileSize(config.getLong("sqljam.export.parquet-max-file-size",
+                settings.getParquetMaxFileSize()));
+        settings.setCsvDelimiter(StringUtils.defaultIfEmpty(config.getString("sqljam.export.csv-delimiter",
+                settings.getCsvDelimiter()), settings.getCsvDelimiter()));
+        settings.setConfirmCommitReminderMinutes(config.getInt("sqljam.import.confirm-commit.reminder-minutes",
+                settings.getConfirmCommitReminderMinutes()));
         settings.setLastExportDirectory(StringUtils.trimToNull(config.getString("sqljam.export.last-directory",
                 null)));
         settings.setLastImportDirectory(StringUtils.trimToNull(config.getString("sqljam.import.last-directory",
@@ -66,6 +72,8 @@ public class SettingsStore {
         config.set("sqljam.ui.data.page-size", settings.getDataPageSize());
         config.set("sqljam.export.page-size", settings.getTransferPageSize());
         config.set("sqljam.export.max-file-size", settings.getMaxDataFileSize());
+        config.set("sqljam.export.parquet-max-file-size", settings.getParquetMaxFileSize());
+        config.set("sqljam.export.csv-delimiter", settings.getCsvDelimiter());
         config.set("sqljam.export.last-directory", settings.getLastExportDirectory());
         config.set("sqljam.import.last-directory", settings.getLastImportDirectory());
         config.save();

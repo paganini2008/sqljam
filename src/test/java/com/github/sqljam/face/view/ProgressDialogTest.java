@@ -20,8 +20,15 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,15 +37,21 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.impexp.ExportCancelledException;
 import com.github.sqljam.impexp.ExportListener;
+import com.github.sqljam.jdbc.ManualTransaction;
+import javafx.application.Platform;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
+import javafx.util.Duration;
 
 /**
  * @Description: ProgressDialogTest verifies progress, errors, cancellation and finish states
@@ -263,5 +276,354 @@ class ProgressDialogTest {
         FxTestSupport.waitUntil(dialog::isFinished);
         // Failures after cancelling are reported as cancelled
         assertEquals("Cancelled", text(dialog, "progressStatus"));
+    }
+
+    private String newDatabase() throws Exception {
+        String url = "jdbc:h2:mem:pd" + System.nanoTime() + ";DB_CLOSE_DELAY=-1";
+        try (Connection connection = DriverManager.getConnection(url);
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE t (id INT)");
+        }
+        return url;
+    }
+
+    private static long count(String url) throws Exception {
+        try (Connection connection = DriverManager.getConnection(url);
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM t")) {
+            rs.next();
+            return rs.getLong(1);
+        }
+    }
+
+    /**
+     * Runs an import of one row in a manual transaction, an index after the row is deferred (H2 commits DDL)
+     */
+    private static ManualTransaction runInTransaction(ProgressDialog dialog, String url, boolean error,
+                                                      AtomicReference<Boolean> completed) throws Exception {
+        ManualTransaction transaction = new ManualTransaction(DriverManager.getConnection(url), false);
+        FxTestSupport.run(() -> dialog.run(() -> {
+            try (Statement statement = transaction.getConnection().createStatement()) {
+                statement.executeUpdate("INSERT INTO t VALUES (1)");
+                statement.execute("CREATE INDEX idx_t ON t (id)");
+            }
+            if (error) {
+                dialog.getListener().onError("value too long", null);
+            }
+            return 1;
+        }, rows -> "Imported " + rows + " rows", () -> transaction, () -> completed.set(true)));
+        return transaction;
+    }
+
+    private static DialogPane decisionPane() {
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().stream().anyMatch(pane -> "decisionPane"
+                .equals(pane.getId())));
+        return FxTestSupport.getDialogPanes().stream().filter(pane -> "decisionPane".equals(pane.getId()))
+                .findFirst().orElseThrow();
+    }
+
+    private static void press(DialogPane pane, String text) {
+        Button button = FxTestSupport.call(() -> pane.getButtonTypes().stream().map(type -> (Button) pane
+                .lookupButton(type)).filter(item -> text.equals(item.getText())).findFirst().orElseThrow());
+        FxTestSupport.fireLater(button);
+    }
+
+    @Test
+    void commitsAfterQuestion() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        AtomicReference<Boolean> completed = new AtomicReference<>(false);
+        ManualTransaction transaction = runInTransaction(dialog, url, false, completed);
+        DialogPane pane = decisionPane();
+        assertEquals("Commit the Import?", FxTestSupport.call(pane::getHeaderText));
+        assertTrue(FxTestSupport.call(pane::getContentText).contains("\"Test\""));
+        assertTrue(dialog.isPending());
+        assertEquals("Waiting for commit", text(dialog, "progressStatus"));
+        assertFalse(dialog.isFinished());
+        assertEquals("Tables: 1 / 1", text(dialog, "overallLabel"));
+        // Nothing is visible before the commit, the index waits for it
+        assertEquals(0, count(url));
+        assertTrue(logs(dialog).stream().anyMatch(log -> log.startsWith("This database commits DDL at once")));
+        assertTrue(logs(dialog).contains("1 statements (foreign keys, identity values) run after the commit."));
+        assertFalse(completed.get());
+        press(pane, "Commit");
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertEquals("Committed", text(dialog, "progressStatus"));
+        assertEquals(1, count(url));
+        assertTrue(completed.get());
+        assertFalse(dialog.isPending());
+        assertTrue(transaction.isFinished());
+        assertTrue(FxTestSupport.call(() -> root(dialog).lookup("#cancelButton").isVisible()));
+        assertFalse(FxTestSupport.call(() -> root(dialog).lookup("#commitButton").isVisible()));
+        assertEquals(0, dialog.getErrorLogCount());
+    }
+
+    @Test
+    void rollsBackFromQuestion() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        AtomicReference<Boolean> completed = new AtomicReference<>(false);
+        runInTransaction(dialog, url, false, completed);
+        press(decisionPane(), "Roll Back");
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertEquals("Rolled back", text(dialog, "progressStatus"));
+        assertEquals(0, count(url));
+        assertTrue(completed.get());
+        // A roll back by the user is not an error
+        assertEquals(0, dialog.getErrorLogCount());
+    }
+
+    @Test
+    void decidesLaterWithButtons() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        runInTransaction(dialog, url, false, new AtomicReference<>(false));
+        press(decisionPane(), "Decide Later");
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().isEmpty());
+        // The import still waits, the window offers both decisions
+        assertTrue(dialog.isPending());
+        assertTrue(FxTestSupport.call(() -> root(dialog).lookup("#commitButton").isVisible()));
+        assertTrue(FxTestSupport.call(() -> root(dialog).lookup("#rollbackButton").isVisible()));
+        assertFalse(FxTestSupport.call(() -> root(dialog).lookup("#cancelButton").isVisible()));
+        FxTestSupport.fireLater((Button) FxTestSupport.call(() -> root(dialog).lookup("#commitButton")));
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertEquals("Committed", text(dialog, "progressStatus"));
+        assertEquals(1, count(url));
+    }
+
+    @Test
+    void closingPendingWindowRollsBack() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        runInTransaction(dialog, url, false, new AtomicReference<>(false));
+        press(decisionPane(), "Decide Later");
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().isEmpty());
+        // Cancelled: the window stays and still waits
+        Platform.runLater(() -> dialog.getStage().fireEvent(new WindowEvent(dialog.getStage(),
+                WindowEvent.WINDOW_CLOSE_REQUEST)));
+        FxTestSupport.closeDialog(ButtonType.CANCEL);
+        assertTrue(dialog.isPending());
+        assertTrue(FxTestSupport.call(() -> dialog.getStage().isShowing()));
+        // Confirmed: rolled back and closed
+        Platform.runLater(() -> dialog.getStage().fireEvent(new WindowEvent(dialog.getStage(),
+                WindowEvent.WINDOW_CLOSE_REQUEST)));
+        FxTestSupport.closeDialog(ButtonType.OK);
+        FxTestSupport.waitUntil(() -> !dialog.getStage().isShowing());
+        assertEquals("Rolled back", text(dialog, "progressStatus"));
+        assertEquals(0, count(url));
+    }
+
+    @Test
+    void rollsBackImportWithErrors() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        AtomicReference<Boolean> completed = new AtomicReference<>(false);
+        ManualTransaction transaction = runInTransaction(dialog, url, true, completed);
+        FxTestSupport.waitUntil(dialog::isFinished);
+        // No question, nothing of the import is kept
+        assertTrue(FxTestSupport.getDialogPanes().isEmpty());
+        assertEquals("Rolled back because of errors", text(dialog, "progressStatus"));
+        assertEquals(0, count(url));
+        assertTrue(transaction.isFinished());
+        assertTrue(completed.get());
+    }
+
+    @Test
+    void rollsBackFailedImport() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        ManualTransaction transaction = new ManualTransaction(DriverManager.getConnection(url), false);
+        FxTestSupport.run(() -> dialog.run(() -> {
+            try (Statement statement = transaction.getConnection().createStatement()) {
+                statement.executeUpdate("INSERT INTO t VALUES (1)");
+            }
+            throw new IllegalStateException("connection lost");
+        }, null, () -> transaction, null));
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertEquals("Failed", text(dialog, "progressStatus"));
+        FxTestSupport.waitUntil(() -> logs(dialog).contains("Rolled back"));
+        assertEquals(0, count(url));
+        assertTrue(transaction.isFinished());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> logs(ProgressDialog dialog) {
+        return FxTestSupport.call(() -> ((ListView<Object>) root(dialog).lookup("#logList")).getItems().stream()
+                .map(item -> {
+                    try {
+                        Field field = item.getClass().getDeclaredField("message");
+                        field.setAccessible(true);
+                        return (String) field.get(item);
+                    } catch (ReflectiveOperationException e) {
+                        throw new IllegalStateException(e);
+                    }
+                }).collect(Collectors.toList()));
+    }
+
+    @Test
+    void remindsWhileWaitingForCommit() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        dialog.setReminderInterval(Duration.millis(400));
+        runInTransaction(dialog, url, false, new AtomicReference<>(false));
+        press(decisionPane(), "Decide Later");
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().stream().anyMatch(pane -> "reminderPane"
+                .equals(pane.getId())));
+        DialogPane reminder = FxTestSupport.getDialogPanes().stream().filter(pane -> "reminderPane".equals(pane
+                .getId())).findFirst().orElseThrow();
+        assertTrue(FxTestSupport.call(reminder::getContentText).contains("holds locks, undo and log space"));
+        // The reminder does not block the buttons of the window, later reminders are logged only
+        FxTestSupport.waitUntil(() -> logs(dialog).stream().filter(log -> log.startsWith("Waiting for commit for"))
+                .count() >= 2);
+        assertEquals(1, FxTestSupport.getDialogPanes().stream().filter(pane -> "reminderPane".equals(pane.getId()))
+                .count());
+        assertTrue(text(dialog, "progressStatus").startsWith("Waiting for commit ("));
+        FxTestSupport.run(() -> reminder.getScene().getWindow().hide());
+        FxTestSupport.fireLater((Button) FxTestSupport.call(() -> root(dialog).lookup("#commitButton")));
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertEquals("Committed", text(dialog, "progressStatus"));
+        long reminders = logs(dialog).stream().filter(log -> log.startsWith("Waiting for commit for")).count();
+        Thread.sleep(1000);
+        // No reminder after the decision
+        assertEquals(reminders, logs(dialog).stream().filter(log -> log.startsWith("Waiting for commit for"))
+                .count());
+        assertTrue(FxTestSupport.getDialogPanes().isEmpty());
+    }
+
+    @Test
+    void remindsNotWhenTurnedOff() throws Exception {
+        context.getSettings().setConfirmCommitReminderMinutes(0);
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        runInTransaction(dialog, url, false, new AtomicReference<>(false));
+        press(decisionPane(), "Roll Back");
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertTrue(logs(dialog).stream().noneMatch(log -> log.startsWith("Waiting for commit for")));
+    }
+
+    /**
+     * One transaction without confirm: committed when the import succeeds, like the import wizards of other tools
+     */
+    @Test
+    void commitsOneTransactionAutomatically() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        ManualTransaction transaction = new ManualTransaction(DriverManager.getConnection(url), false);
+        AtomicReference<Boolean> completed = new AtomicReference<>(false);
+        FxTestSupport.run(() -> dialog.run(() -> {
+            try (Statement statement = transaction.getConnection().createStatement()) {
+                statement.executeUpdate("INSERT INTO t VALUES (1)");
+            }
+            return 1;
+        }, rows -> "Imported " + rows + " rows", () -> transaction, false, () -> completed.set(true)));
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertTrue(FxTestSupport.getDialogPanes().isEmpty());
+        assertEquals("Completed", text(dialog, "progressStatus"));
+        assertEquals(1, count(url));
+        assertTrue(transaction.isFinished());
+        assertTrue(completed.get());
+    }
+
+    @Test
+    void rollsBackOneTransactionWithErrors() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        ManualTransaction transaction = new ManualTransaction(DriverManager.getConnection(url), false);
+        FxTestSupport.run(() -> dialog.run(() -> {
+            try (Statement statement = transaction.getConnection().createStatement()) {
+                statement.executeUpdate("INSERT INTO t VALUES (1)");
+            }
+            dialog.getListener().onError("value too long", null);
+            return 1;
+        }, null, () -> transaction, false, null));
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertEquals("Rolled back because of errors", text(dialog, "progressStatus"));
+        assertEquals(0, count(url));
+    }
+
+    /**
+     * Rows with errors were skipped: one transaction is committed with the other rows
+     */
+    @Test
+    void commitsSkippedErrorsAutomatically() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        FxTestSupport.run(() -> dialog.setSkipErrors(true));
+        ManualTransaction transaction = new ManualTransaction(DriverManager.getConnection(url), false);
+        FxTestSupport.run(() -> dialog.run(() -> {
+            try (Statement statement = transaction.getConnection().createStatement()) {
+                statement.executeUpdate("INSERT INTO t VALUES (1)");
+            }
+            dialog.getListener().onError("Skipped row of table 'T' (ID=2): value too long", null);
+            return 1;
+        }, null, () -> transaction, false, null));
+        FxTestSupport.waitUntil(dialog::isFinished);
+        assertEquals("Completed with 1 errors", text(dialog, "progressStatus"));
+        assertEquals(1, count(url));
+        assertTrue(logs(dialog).contains("Skipped row of table 'T' (ID=2): value too long"));
+    }
+
+    /**
+     * Confirm before commit with skipped rows: the user is asked, commit keeps the other rows, roll back is not
+     * caused by the errors
+     */
+    @Test
+    void confirmsImportWithSkippedErrors() throws Exception {
+        for (String decision : new String[]{"Commit", "Roll Back"}) {
+            String url = newDatabase();
+            ProgressDialog dialog = create(1);
+            FxTestSupport.run(() -> dialog.setSkipErrors(true));
+            AtomicReference<Boolean> completed = new AtomicReference<>(false);
+            runInTransaction(dialog, url, true, completed);
+            press(decisionPane(), decision);
+            FxTestSupport.waitUntil(dialog::isFinished);
+            if ("Commit".equals(decision)) {
+                assertEquals("Committed with 1 errors skipped", text(dialog, "progressStatus"));
+                assertEquals(1, count(url));
+            } else {
+                assertEquals("Rolled back", text(dialog, "progressStatus"));
+                assertEquals(0, count(url));
+            }
+            assertTrue(completed.get());
+            FxTestSupport.run(() -> dialog.getStage().close());
+        }
+    }
+
+    /**
+     * The window shows the last entries, errors only on demand, the saved log keeps every entry
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void filtersAndSavesLog(@org.junit.jupiter.api.io.TempDir File dir) throws Exception {
+        ProgressDialog dialog = create(1);
+        FxTestSupport.run(() -> dialog.run(() -> {
+            for (int i = 1; i <= 6000; i++) {
+                dialog.getListener().onMessage("Row " + i);
+            }
+            dialog.getListener().onError("Skipped row of table 'T' (ID=7): bad value", null);
+            return 1;
+        }, null, null, false, null));
+        FxTestSupport.waitUntil(dialog::isFinished);
+        ListView<Object> list = (ListView<Object>) root(dialog).lookup("#logList");
+        assertEquals(5000, FxTestSupport.call(() -> list.getItems().size()));
+        CheckBox errorsOnly = (CheckBox) root(dialog).lookup("#errorsOnlyCheck");
+        FxTestSupport.run(() -> errorsOnly.setSelected(true));
+        assertEquals(List.of("Skipped row of table 'T' (ID=7): bad value"), logs(dialog));
+        FxTestSupport.run(() -> errorsOnly.setSelected(false));
+        assertEquals(5000, logs(dialog).size());
+        assertTrue(FxTestSupport.call(() -> root(dialog).lookup("#saveLogButton").isVisible()));
+        File file = new File(dir, "import.log");
+        FxTestSupport.run(() -> {
+            try {
+                dialog.writeLog(file);
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        List<String> lines = Files.readAllLines(file.toPath());
+        assertEquals("Status: Completed with 1 errors, errors and skipped items: 1", lines.get(1));
+        assertTrue(lines.stream().anyMatch(line -> line.endsWith(" INFO  Row 1")));
+        assertTrue(lines.stream().anyMatch(line -> line.endsWith(" ERROR Skipped row of table 'T' (ID=7): bad value")));
+        assertTrue(lines.size() > 6000);
     }
 }

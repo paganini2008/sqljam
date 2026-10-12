@@ -43,6 +43,7 @@ import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.DialogPane;
@@ -50,6 +51,7 @@ import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
 import javafx.scene.control.TableView;
@@ -58,6 +60,7 @@ import javafx.scene.control.TextField;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.stage.Stage;
+import javafx.stage.Window;
 
 /**
  * @Description: MainViewTest verifies the data source tree and table tabs against an embedded database
@@ -282,11 +285,11 @@ class MainViewTest {
     @Test
     void opensParquetImportFromMenuAndTree() {
         MenuItem importParquet = fileMenuItem("importParquetMenuItem");
-        assertEquals("Import Parquet Files...", importParquet.getText());
+        assertEquals("Import Parquet or CSV Files...", importParquet.getText());
         assertEquals("Open Export Package...", fileMenuItem("openPackageMenuItem").getText());
         Platform.runLater(importParquet::fire);
         DialogPane pane = FxTestSupport.waitForDialogPane();
-        assertEquals("Load Parquet files into a table of a database", FxTestSupport.call(pane::getHeaderText));
+        assertEquals("Load Parquet or CSV files into a table of a database", FxTestSupport.call(pane::getHeaderText));
         assertTrue(FxTestSupport.call(() -> pane.lookupButton(ButtonType.OK).isDisabled()));
         FxTestSupport.closeDialog(ButtonType.CANCEL);
         // The context menu of a data source offers both imports
@@ -301,7 +304,7 @@ class MainViewTest {
                     .flatMap(cell -> cell.getContextMenu().getItems().stream()).map(MenuItem::getText)
                     .filter(text -> text != null).collect(Collectors.toList());
         });
-        assertTrue(items.containsAll(List.of("Import Export Package...", "Import Parquet Files...")),
+        assertTrue(items.containsAll(List.of("Import Export Package...", "Import Parquet or CSV Files...")),
                 items.toString());
     }
 
@@ -423,5 +426,80 @@ class MainViewTest {
         MenuItem exitItem = FxTestSupport.call(() -> ((MenuBar) mainView.lookup(".menu-bar")).getMenus().get(0)
                 .getItems().stream().filter(item -> "Exit".equals(item.getText())).findFirst().orElseThrow());
         assertNotNull(exitItem.getGraphic());
+    }
+
+    /**
+     * Copies the schema into the same database by the export dialog of the main window, it starts without a
+     * question about the rows, like the import wizards of other tools
+     *
+     * @param commitEvery whether rows are committed every N rows instead of one transaction
+     */
+    @SuppressWarnings("unchecked")
+    private void startCopy(String schema, boolean commitEvery, boolean confirm) {
+        TreeItem<DbNode> schemaItem = expandToSchema();
+        FxTestSupport.run(() -> tree().getSelectionModel().select(schemaItem));
+        FxTestSupport.fireLater((Button) FxTestSupport.call(() -> mainView.lookup("#action-export")));
+        DialogPane export = FxTestSupport.waitForDialogPane();
+        FxTestSupport.run(() -> ((RadioButton) export.lookup("#databaseRadio")).setSelected(true));
+        ComboBox<ConnectionProfile> target = FxTestSupport.call(() -> (ComboBox<ConnectionProfile>) export
+                .lookup("#targetCombo"));
+        FxTestSupport.run(() -> target.setValue(target.getItems().stream().filter(item -> "Embedded H2".equals(item
+                .getName())).findFirst().orElseThrow()));
+        ComboBox<String> targetSchema = FxTestSupport.call(() -> (ComboBox<String>) export
+                .lookup("#targetSchemaCombo"));
+        FxTestSupport.waitUntil(() -> !targetSchema.getItems().isEmpty());
+        FxTestSupport.run(() -> targetSchema.getEditor().setText(schema));
+        // One transaction by default
+        assertTrue(FxTestSupport.call(() -> ((RadioButton) export.lookup("#oneTransactionRadio")).isSelected()));
+        if (commitEvery) {
+            FxTestSupport.run(() -> ((RadioButton) export.lookup("#commitEveryRadio")).setSelected(true));
+        }
+        FxTestSupport.run(() -> ((CheckBox) export.lookup("#confirmCommitCheck")).setSelected(confirm));
+        FxTestSupport.fireLater((Button) FxTestSupport.call(() -> export.lookupButton(ButtonType.OK)));
+    }
+
+    private static void press(DialogPane pane, String text) {
+        FxTestSupport.fireLater(FxTestSupport.call(() -> pane.getButtonTypes().stream().map(type -> (Button) pane
+                .lookupButton(type)).filter(button -> text.equals(button.getText())).findFirst().orElseThrow()));
+    }
+
+    private static Label progressStatus() {
+        FxTestSupport.waitUntil(() -> Window.getWindows().stream().anyMatch(window -> window.isShowing()
+                && window.getScene() != null && window.getScene().getRoot().lookup("#progressStatus") != null));
+        return FxTestSupport.call(() -> (Label) Window.getWindows().stream().filter(window -> window.isShowing()
+                && window.getScene() != null && window.getScene().getRoot().lookup("#progressStatus") != null)
+                .findFirst().orElseThrow().getScene().getRoot().lookup("#progressStatus"));
+    }
+
+    @Test
+    void commitsCopyEveryRows() {
+        startCopy("PAGES", true, false);
+        Label status = progressStatus();
+        FxTestSupport.waitUntil(() -> "Completed".equals(status.getText()));
+        // No question after the import, the rows are committed already
+        assertTrue(FxTestSupport.getDialogPanes().stream().noneMatch(pane -> "decisionPane".equals(pane.getId())));
+        FxTestSupport.run(() -> status.getScene().getWindow().hide());
+    }
+
+    @Test
+    void commitsCopyInOneTransaction() {
+        startCopy("ONE_TX", false, false);
+        Label status = progressStatus();
+        // Committed when the import succeeds, like the import wizards of other tools
+        FxTestSupport.waitUntil(() -> "Completed".equals(status.getText()));
+        assertTrue(FxTestSupport.getDialogPanes().stream().noneMatch(pane -> "decisionPane".equals(pane.getId())));
+        FxTestSupport.run(() -> status.getScene().getWindow().hide());
+    }
+
+    @Test
+    void confirmsCopyBeforeCommit() {
+        startCopy("CONFIRMED", false, true);
+        Label status = progressStatus();
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().stream().anyMatch(pane -> "decisionPane"
+                .equals(pane.getId())));
+        press(FxTestSupport.getDialogPanes().stream().filter(pane -> "decisionPane".equals(pane.getId()))
+                .findFirst().orElseThrow(), "Commit");
+        FxTestSupport.waitUntil(() -> "Committed".equals(status.getText()));
+        FxTestSupport.run(() -> status.getScene().getWindow().hide());
     }
 }

@@ -5,12 +5,10 @@
 **Move tables across databases. Schema, data and all.**
 
 SqlJam is a desktop import/export tool for relational and OLAP databases: MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, H2, SQLite, DuckDB, ClickHouse and more.
-It copies tables (with indexes, constraints, sequences and partitions) **directly into another database** or into the same schema as copies, or saves them as a **self-describing export package** of SQL or **Parquet** files that can be imported later.
+It copies tables (with indexes, constraints, sequences and partitions) **directly into another database** or into the same schema as copies, or saves them as a **self-describing export package** of SQL, **Parquet** or **CSV** files that can be imported later. Imports into a database run in **one transaction** which an error rolls back as a whole, and rows are **inserted, updated or skipped by key**.
 
 ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
 ![JavaFX](https://img.shields.io/badge/JavaFX-17-1f6feb)
-![Tests](https://img.shields.io/badge/tests-578%20passed-3fb950)
-![Coverage](https://img.shields.io/badge/coverage-91%25%20lines-3fb950)
 ![License](https://img.shields.io/badge/license-Apache%202.0-blue)
 ![Cross-database](https://img.shields.io/badge/cross--database%20matrix-passing-3fb950)
 
@@ -27,17 +25,20 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 | Different SQL dialects break hand-written migrations | One metadata model, **a dialect per target**: types, identifiers, defaults, identity and literals are translated |
 | "Works on my 16, fails on their 9.4" | **Version-aware dialects** (`Oracle11gDialect`, `PostgreSQL9Dialect`, `MySQL56Dialect`, `SQLServer2008Dialect` …) chosen by detected or selected version |
 | Tables arrive without keys, indexes or sequences | Copies **primary keys, unique/regular indexes, foreign keys, comments, sequences, identity values and partitions** |
-| Huge `data.sql` files nobody can open | **Split data files** by size (default 10 MB): `orders.sql`, `orders_2.sql` …, one file per table or a single `data.sql` |
+| Huge `data.sql` files nobody can open | **Split data files** by size: `orders.sql`, `orders_2.sql` … and `orders.csv`, `orders_2.csv` … at 10 MB, `orders.parquet`, `orders_2.parquet` … at 256 MB, imported in the order of the parts |
 | BLOB/CLOB literals explode scripts and hit 4000-byte limits | **LOBs are stored as files** (`lob/<table>/000001_<column>.blob`) and restored by primary key |
 | Scripts lose context ("which DB? which version? complete?") | **`manifest.json`** records source, target, options, files (with SHA-256) and row counts, export and import are paired |
 | Timestamps shift, unsigned values overflow, `bit` becomes garbage | Portable value pipeline: `LocalDateTime`, unsigned widening, bit strings, money, UUID, JSON, XML, arrays |
 | Re-runs fail half way | Idempotent DDL (drop/create, `IF NOT EXISTS`, sequence restart), FKs created after data |
 | Long jobs are a black box | **Percentage progress**, per-table progress, error log and cancel in the UI |
 | Analytics teams want Parquet, not SQL | **Parquet packages** (ZSTD, Snappy, GZIP) through an embedded DuckDB, and **Parquet files of other tools** loaded into any table |
+| Spreadsheets and text tools want CSV | **CSV packages** with your delimiter, quote, NULL text, header, encoding (UTF-8 with BOM for Excel, GBK and more) and date format, read back with the exact column types kept in `manifest.json`, and **CSV files of other tools** with detected delimiter and types |
+| An import went wrong, now what? | **One transaction** by default: an error rolls back the whole import, or **commit every N rows** like other import tools. **Skip rows with errors** goes on and lists every skipped row in the log, which you can filter and save. **Confirm before commit** lets you review a successful import in one transaction, then **Commit** or **Roll Back** |
+| Some rows exist already | **Update or insert by key** updates the rows of the same primary key, or of the columns you choose, and inserts the others. **Skip existing by key** keeps them and inserts the new rows only. Insert is the default |
 | Warehouses live apart from OLTP databases | **DuckDB and ClickHouse data sources**, grouped as OLAP databases next to the relational ones |
 | Only part of a table is needed | **Data viewer query**: columns, WHERE, GROUP BY and ORDER BY, then export the rows of the query. Missing target tables are created with the selected columns |
 | A copy next to the original | **Copy in the same schema** with a table name such as `{table}_copy`. Keys, indexes and constraints get their own names and the source tables are protected |
-| What is inside this package? | **Package viewer**: files with size and modified time, previews of manifest, SQL, LOB and Parquet files |
+| What is inside this package? | **Package viewer**: files with size and modified time, previews of manifest, SQL, LOB, Parquet and CSV files |
 | Custom and modern types | PostgreSQL enums and domains, MySQL, MariaDB and Oracle vectors, DuckDB unions and fixed arrays, ClickHouse variants, maps and tuples |
 
 ---
@@ -55,9 +56,9 @@ flowchart LR
     D --> DS[DdlScripter]
     DS --> I[ImportExporter] --> TD[(Target DB)]
     DS --> E[ScriptExporter] --> P[/Export package<br/>schema.sql · data*.sql · lob/ · manifest.json/]
-    DS --> PE[ParquetExporter<br/>DuckDB workspace] --> PP[/Parquet package<br/>schema.sql · data/*.parquet · manifest.json/]
+    DS --> PE[ParquetExporter · CsvExporter<br/>DuckDB workspace] --> PP[/Parquet or CSV package<br/>schema.sql · data/*.parquet or *.csv · manifest.json/]
     P --> SI[ScriptImporter] --> TD
-    PP --> PI[ParquetImporter] --> TD
+    PP --> PI[ParquetImporter · CsvImporter] --> TD
 ```
 
 | Component | Role |
@@ -66,6 +67,8 @@ flowchart LR
 | `ScriptExporter` / `ImportExporter` | Facades: export to a package / import into a database |
 | `ScriptImporter` | Imports an export package (validates `manifest.json`, runs files in order, restores LOBs) |
 | `ParquetExporter` / `ParquetImporter` | Parquet packages and Parquet files of other tools, written and read by an embedded DuckDB workspace |
+| `CsvExporter` / `CsvImporter` | CSV packages (column types in `manifest.json`) and CSV files of other tools, through the same DuckDB workspace |
+| `ManualTransaction` | Runs an import in one transaction which the user commits or rolls back. DDL which would commit the rows (MySQL, MariaDB, Oracle, H2) waits for the commit |
 | `AbstractFileImporter` | Picks the importer of a package by the data format in its `manifest.json` |
 | `TableQuery` | Columns, WHERE, GROUP BY and ORDER BY of the data viewer, used by exports per table |
 | `Dialect` + `impexp.db.*` | Per-database SQL generation. Old versions are subclasses |
@@ -133,7 +136,7 @@ SqlJam starts with a splash screen while it loads the configuration, the data so
 
 1. Create a **data source** on the login page and click **Connect**. The first start brings an **Example Shop (H2)** data source with a few e-commerce tables to try everything right away. **Example** on the login page or **Help → Restore Example Database** brings it back at any time.
 2. Right-click a database or schema → **Export…**
-3. Pick tables, choose **SQL scripts** or **Parquet** (folder) or **Database** (another data source, or a new one from the **+** button next to it), press **Start**.
+3. Pick tables, choose **SQL scripts**, **Parquet** or **CSV** (folder) or **Database** (another data source, or a new one from the **+** button next to it), press **Start**. An import into a database runs in one transaction or commits every N rows (N is typed next to it), check **Skip rows with errors** to go on after bad rows and **Confirm before commit** to review it first, and choose **Update or insert by key** or **Skip existing by key** for rows which exist already.
 4. Open a table, narrow its rows on the **Data** tab with columns, WHERE, GROUP BY and ORDER BY, then **Export…** just those rows.
 5. Right-click a connected data source → **Disconnect** when you are done, its table tabs close with it. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and the author, and the GitHub icon at the bottom right opens the repository.
 
@@ -162,7 +165,7 @@ export/
 └── manifest.json         # source, target, options, files (sha256), row counts
 ```
 
-A Parquet package has the same layout with `data/<table>.parquet` instead of SQL data and LOB files. LOB values stay inside the Parquet columns and `manifest.json` records `"dataFormat": "PARQUET"`, so an import picks the right importer by itself.
+A Parquet package has the same layout with `data/<table>.parquet` instead of SQL data and LOB files, a CSV package with `data/<table>.csv` and a header row. LOB values stay inside the Parquet or CSV columns, `manifest.json` records `"dataFormat": "PARQUET"` or `"CSV"` (with the type of every CSV column), so an import picks the right importer by itself and reads the values back exactly.
 
 ---
 
@@ -192,6 +195,12 @@ ParquetExporter parquet = new ParquetExporter(new File("export-parquet"));
 parquet.setTargetDbType(DbType.POSTGRESQL);    // schema.sql and constraints.sql for PostgreSQL
 parquet.setCompression("ZSTD");
 parquet.exportDdlAndData();
+
+// The same tables as a CSV package: data/orders.csv, data/orders_2.csv ...
+CsvExporter csv = new CsvExporter(new File("export-csv"));
+csv.setDelimiter(";");
+csv.setMaxFileSize(10 * 1024 * 1024);
+csv.exportDdlAndData();
 ```
 
 **Output**: `export/schema.sql`, `export/data/orders.sql`, `export/data/orders_2.sql`, `export/lob/…`, `export/manifest.json`:
@@ -258,11 +267,18 @@ try (Connection connection = DriverManager.getConnection(
 }
 ```
 
-**Output**: `ScriptImporter` refuses packages whose status is not `COMPLETED`, whose target type differs, or whose files fail the SHA-256 check. `AbstractFileImporter.forDirectory(dir, connection, dbType)` returns the importer of the package (SQL or Parquet), and Parquet files of other tools are loaded by `ParquetImporter`:
+**Output**: `ScriptImporter` refuses packages whose status is not `COMPLETED`, whose target type differs, or whose files fail the SHA-256 check. `AbstractFileImporter.forDirectory(dir, connection, dbType)` returns the importer of the package (SQL, Parquet or CSV), and files of other tools are loaded by `ParquetImporter` or `CsvImporter`. A `ManualTransaction` keeps the import open until you commit or roll back:
 
 ```java
 ParquetImporter importer = new ParquetImporter(connection, DbType.POSTGRESQL);
 long rows = importer.importFiles(List.of(new File("sales-2024.parquet")), "sales", ParquetImporter.Mode.CREATE);
+
+try (ManualTransaction transaction = new ManualTransaction(connection, DbType.POSTGRESQL.isTransactionalDdl())) {
+    AbstractFileImporter packageImporter = AbstractFileImporter.forDirectory(dir, transaction.getConnection(),
+            DbType.POSTGRESQL);
+    packageImporter.importDirectory(dir);
+    transaction.commit();                       // or transaction.rollback()
+}
 ```
 
 ### 4. Type translation (cross-database)
@@ -290,6 +306,9 @@ long rows = importer.importFiles(List.of(new File("sales-2024.parquet")), "sales
 | Use **one file per table** for large exports | Re-run or inspect a single table easily |
 | Import packages with SqlJam | Manifest validation, ordered files, LOB restore and FKs last |
 | Use **Parquet** for analytics and lakes | Compact columnar files any engine reads, the schema still travels in `schema.sql` |
+| Use **CSV** for spreadsheets and text tools | Opens anywhere, and SqlJam still restores the exact types from `manifest.json` |
+| Keep **one transaction** for imports | An error rolls back everything, **Confirm before commit** shows the log and the row counts before the commit |
+| Load again with **Update or insert by key** | Kept tables are updated by their primary keys, nothing is dropped |
 | Copy with a **target table name** | `{table}_copy` keeps the originals, a copy in the same schema without a new name is refused |
 
 ---
@@ -318,7 +337,10 @@ All settings live in `sqljam.properties`, placed next to the runnable jar in `bi
 | `sqljam.export.page-size` | `5000` | Rows read per page when exporting, tuned by benchmark |
 | `sqljam.export.lob-page-size` | `100` | Rows per page for tables with LOB columns, keeps memory low |
 | `sqljam.import.batch-size` | `1000` | INSERT statements per batch when importing a package (Oracle uses PL/SQL blocks) |
-| `sqljam.export.max-file-size` | `10485760` | Max bytes of a data file (0 = unlimited) |
+| `sqljam.export.max-file-size` | `10485760` | Max bytes of a SQL or CSV data file before it is split (0 = unlimited) |
+| `sqljam.export.parquet-max-file-size` | `268435456` | Max bytes of a Parquet file before the table is split, Parquet reads best in large files |
+| `sqljam.export.csv-delimiter` | `,` | Delimiter of CSV files: `,` `;` `\|` or `\t` |
+| `sqljam.import.confirm-commit.reminder-minutes` | `10` | An import waiting for commit reminds you after these minutes, its transaction holds locks and log space (0 = off) |
 | `sqljam.export.data-file-strategy` | `SINGLE_FILE` | `SINGLE_FILE` or `FILE_PER_TABLE` |
 | `sqljam.export.lob-separated` | `true` | Write LOBs as files |
 | `sqljam.pool.maximum-size` | `10` | HikariCP max pool size |
@@ -344,9 +366,12 @@ Export options (UI / `ExportConfiguration`):
 | `tableRecreated` | `true` | Drop and recreate target tables |
 | `idReused` | `false` (UI: `true`) | Copy identity values and reset sequences |
 | `indexIncluded` / `foreignKeyIncluded` / `commentIncluded` / `sequenceIncluded` | `true` | Objects to copy |
-| `failFast` | `true` | Stop on the first data error |
+| `failFast` | `true` | Stop on the first data error, `false` skips the rows with errors and reports each of them |
 | `identifierCase` | `AUTO` | `AUTO`, `KEEP`, `LOWER`, `UPPER` |
-| `dataFormat` / `compression` | `SQL` / `ZSTD` | `SQL` or `PARQUET` packages, Parquet compression `ZSTD`, `SNAPPY`, `GZIP`, `UNCOMPRESSED` |
+| `dataFormat` / `compression` | `SQL` / `ZSTD` | `SQL`, `PARQUET` or `CSV` packages, Parquet compression `ZSTD`, `SNAPPY`, `GZIP`, `UNCOMPRESSED` |
+| `csvDelimiter` | `,` | Delimiter of CSV packages |
+| `writeMode` / `keyColumnNames` | `INSERT` | `UPSERT` updates the rows of the same key (the primary key or chosen columns) and inserts the others, `SKIP_EXISTING` keeps them and inserts the others |
+| `CsvOptions` | comma, `"`, UTF-8 | Delimiter, quote, NULL text, header, encoding and date format of CSV files |
 | `tableNamePattern` | | Target table name, `{table}` is the source name, e.g. `{table}_copy` |
 | `tableQueries` | | Columns, WHERE and ORDER BY per table, e.g. rows narrowed in the data viewer |
 
@@ -380,9 +405,9 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | Topic | Link |
 |---|---|
 | Project site | [paganini2008.github.io/sqljam](https://paganini2008.github.io/sqljam/) |
-| Blog (English / 中文 / Medium) | [docs/blogger](docs/blogger) |
+| Blog | [docs/blogger/sqljam-en.md](docs/blogger/sqljam-en.md) |
 | Change logs | [change_logs](change_logs) |
-| Core API | `com.github.sqljam.impexp` (`Exporter`, `ScriptExporter`, `ImportExporter`, `ScriptImporter`, `ParquetExporter`, `ParquetImporter`) |
+| Core API | `com.github.sqljam.impexp` (`Exporter`, `ScriptExporter`, `ImportExporter`, `ScriptImporter`, `ParquetExporter`, `ParquetImporter`, `CsvExporter`, `CsvImporter`, `ManualTransaction`) |
 
 **FAQ**
 
@@ -391,6 +416,11 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | Can I export only some rows or columns? | Yes. Narrow the rows on the **Data** tab (columns, WHERE, ORDER BY) and press **Export…**, or set `tableQueries`. A missing target table is created with the selected columns |
 | Can I copy a table inside the same database? | Yes. Choose the same data source and schema as the target and a table name such as `{table}_copy` |
 | How are LOBs stored in Parquet? | Inside the Parquet columns (strings and binaries), no extra LOB files |
+| How exact is CSV? | Exact. NULL is an empty field, an empty string is `""`, binaries are escaped, and every column is read back with its type from `manifest.json` |
+| How are rows matched when they are updated or skipped? | By the primary key, or by the columns chosen in **Key Columns**. Choose the columns of a unique index of the target table: MySQL and MariaDB match rows by their unique indexes, PostgreSQL, SQLite and DuckDB require such an index. A table without primary key and chosen columns is inserted |
+| Do names have to match in case? | No. An existing target table and its columns are matched without case, e.g. `OrderId` of the source writes the column `orderid` of PostgreSQL or `ORDERID` of Oracle |
+| Which rows were skipped? | Each skipped row is in the log of the import with its key and its error. **Errors only** shows them, **Save Log** writes the whole log to a file |
+| What does a roll back undo? | Everything on PostgreSQL, SQL Server, SQLite and DuckDB, tables included. MySQL, MariaDB, Oracle and H2 commit DDL at once, there the created tables stay empty and keys and identity values are set after the commit |
 | Can I export only the structure? | Yes. Rows are optional. Pick content **Structure** (`ExportMode.DDL`) for a package or a direct import. Tables, keys, indexes, comments, sequences and partitions are created without rows |
 | Can I generate scripts for an older server? | Yes, choose the target version (e.g. Oracle `11.2`, SQL Server `2008`) and a compatible dialect is used |
 | Can I keep the password out of disk? | Uncheck *Remember password* on the login page, it stays in memory for the session |
@@ -403,7 +433,7 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | Step | |
 |---|---|
 | Issues | [github.com/paganini2008/sqljam/issues](https://github.com/paganini2008/sqljam/issues) |
-| Pull requests | Fork → branch → `mvn verify` (≥ 90% coverage gate) → PR |
+| Pull requests | Fork → branch → `mvn verify` → PR |
 | Code style | Match existing code: `getXxxStatement` naming, Apache license header, class header javadoc, 4-space indent, no Spring |
 | New database or version | Add `XxxDialect` / `XxxMetaDataOperations` in `impexp.db`, register in `DbType`, add a fixture in `src/test/resources/<db>/` |
 

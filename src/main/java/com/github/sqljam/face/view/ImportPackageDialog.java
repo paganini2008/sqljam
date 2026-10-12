@@ -22,17 +22,20 @@ import java.util.Objects;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.impexp.CsvExporter;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.ExportManifest;
 import com.github.sqljam.impexp.ParquetExporter;
+import com.github.sqljam.impexp.SqlScriptRunner;
+import com.github.sqljam.impexp.WriteMode;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
@@ -65,13 +68,14 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
     private final Label targetValue = new Label();
     private final Label filesValue = new Label();
     private final Label formatValue = new Label();
+    private final Label writeModeValue = new Label();
     private final Button viewButton = new Button(Messages.get("package.view"), Icons.of(Icons.TABLE));
     private final TableView<ExportManifest.TableEntry> tableView = new TableView<>();
     private final VBox summaryPane;
     private final ComboBox<ConnectionProfile> targetCombo = new ComboBox<>();
     private final ComboBox<String> catalogCombo = new ComboBox<>();
     private final ComboBox<String> schemaCombo = new ComboBox<>();
-    private final CheckBox stopOnErrorCheck = new CheckBox(Messages.get("import.stopOnError"));
+    private final TransactionOption transactionOption;
     private final Label warningLabel = new Label();
     private final Button startButton;
     private ExportManifest manifest;
@@ -89,15 +93,31 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         private final String schema;
         private final boolean stopOnError;
         private final ExportManifest manifest;
+        /**
+         * The import runs in one transaction which the user commits or rolls back
+         */
+        private final boolean oneTransaction;
+        /**
+         * A successful import in one transaction waits for the user to commit or roll back
+         */
+        private final boolean confirmCommit;
+        /**
+         * Rows (statements of scripts) per commit when the import does not run in one transaction, 0 for the
+         * default batch and page sizes
+         */
+        private final int commitRows;
 
         ImportRequest(File directory, ConnectionProfile target, String catalog, String schema, boolean stopOnError,
-                      ExportManifest manifest) {
+                      ExportManifest manifest, boolean oneTransaction, boolean confirmCommit, int commitRows) {
             this.directory = directory;
             this.target = target;
             this.catalog = catalog;
             this.schema = schema;
             this.stopOnError = stopOnError;
             this.manifest = manifest;
+            this.oneTransaction = oneTransaction;
+            this.confirmCommit = confirmCommit;
+            this.commitRows = commitRows;
         }
     }
 
@@ -116,12 +136,12 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         targetValue.setId("targetValue");
         filesValue.setId("filesValue");
         formatValue.setId("formatValue");
+        writeModeValue.setId("writeModeValue");
         viewButton.setId("viewPackageButton");
         tableView.setId("packageTables");
         targetCombo.setId("targetCombo");
         catalogCombo.setId("catalogCombo");
         schemaCombo.setId("schemaCombo");
-        stopOnErrorCheck.setId("stopOnErrorCheck");
         warningLabel.setId("warningLabel");
         directoryField.setOnAction(event -> loadManifest());
         directoryField.focusedProperty().addListener((obs, wasFocused, focused) -> {
@@ -148,6 +168,7 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         summaryGrid.addRow(3, new Label(Messages.get("import.manifest.target")), targetValue);
         summaryGrid.addRow(4, new Label(Messages.get("import.manifest.files")), filesValue);
         summaryGrid.addRow(5, new Label(Messages.get("export.format")), formatValue);
+        summaryGrid.addRow(6, new Label(Messages.get("export.writeMode")), writeModeValue);
         setupTableView();
         Label summaryTitle = new Label(Messages.get("import.section.package"));
         summaryTitle.getStyleClass().add("section-title");
@@ -160,7 +181,6 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         schemaCombo.setMaxWidth(Double.MAX_VALUE);
         schemaCombo.setEditable(true);
         schemaCombo.setPromptText(Messages.get("import.schema.prompt"));
-        stopOnErrorCheck.setSelected(true);
         targetCombo.valueProperty().addListener((obs, oldProfile, profile) -> {
             loadCatalogs(profile);
             validateTarget();
@@ -180,7 +200,10 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
                 }));
         targetGrid.addRow(1, new Label(Messages.get("export.database.catalog")), catalogCombo);
         targetGrid.addRow(2, new Label(Messages.get("export.database.schema")), schemaCombo);
-        targetGrid.add(stopOnErrorCheck, 1, 3);
+        // Scripts are committed batch by batch, data files page by page
+        transactionOption = new TransactionOption(context, targetCombo.valueProperty(), Config.getInstance().getInt(
+                "sqljam.import.batch-size", SqlScriptRunner.DEFAULT_BATCH_SIZE));
+        targetGrid.addRow(3, new Label(Messages.get("import.transaction")), transactionOption.getNode());
         Label targetTitle = new Label(Messages.get("import.section.target"));
         targetTitle.getStyleClass().add("section-title");
         VBox targetPane = new VBox(8, targetTitle, targetGrid);
@@ -316,15 +339,16 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
     }
 
     /**
-     * Directory with Parquet files (directly or in data/) but without manifest.json
+     * Directory with Parquet or CSV files (directly or in data/) but without manifest.json
      */
     static boolean isParquetDirectory(File directory) {
-        return hasParquetFiles(directory) || hasParquetFiles(new File(directory, "data"));
+        return hasDataFiles(directory) || hasDataFiles(new File(directory, "data"));
     }
 
-    private static boolean hasParquetFiles(File directory) {
+    private static boolean hasDataFiles(File directory) {
         File[] files = directory.listFiles((parent, name) -> name.toLowerCase(Locale.ENGLISH)
-                .endsWith(ParquetExporter.PARQUET_EXTENSION));
+                .endsWith(ParquetExporter.PARQUET_EXTENSION) || name.toLowerCase(Locale.ENGLISH)
+                .endsWith(CsvExporter.CSV_EXTENSION));
         return files != null && files.length > 0;
     }
 
@@ -339,6 +363,7 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
             targetValue.setText("-");
             filesValue.setText("-");
             formatValue.setText(valid ? Messages.get("export.format.sql") : "-");
+            writeModeValue.setText(valid ? Messages.get("export.writeMode.insert") : "-");
             filterTargets();
             return;
         }
@@ -352,8 +377,12 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         long totalSize = manifest.getFiles().stream().mapToLong(ExportManifest.FileEntry::getSize).sum();
         filesValue.setText(Messages.format("import.manifest.filesValue", manifest.getFiles().size(),
                 FileUtils.byteCountToDisplaySize(totalSize)));
+        // Rows of the same key are updated or skipped by packages of upserts or skips
+        WriteMode writeMode = WriteMode.of(manifest.getOptions().get("writeMode"));
+        writeModeValue.setText(Messages.get(writeMode == WriteMode.UPSERT ? "export.writeMode.upsert"
+                : writeMode == WriteMode.SKIP_EXISTING ? "export.writeMode.skip" : "export.writeMode.insert"));
         formatValue.setText(Messages.get(manifest.getDataFormat() == DataFormat.PARQUET ? "export.format.parquet"
-                : "export.format.sql"));
+                : manifest.getDataFormat() == DataFormat.CSV ? "export.format.csv" : "export.format.sql"));
         tableView.getItems().setAll(manifest.getTables());
         filterTargets();
     }
@@ -484,6 +513,8 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         context.saveSettings();
         return new ImportRequest(directory, targetCombo.getValue(), catalogCombo.isDisabled() ? null
                 : catalogCombo.getValue(), schemaCombo.isDisabled() ? null
-                : StringUtils.trimToNull(schemaCombo.getEditor().getText()), stopOnErrorCheck.isSelected(), manifest);
+                : StringUtils.trimToNull(schemaCombo.getEditor().getText()), !transactionOption.isSkipErrors(), manifest,
+                transactionOption.isOneTransaction(), transactionOption.isConfirmCommit(),
+                transactionOption.isOneTransaction() ? 0 : transactionOption.getCommitRows());
     }
 }

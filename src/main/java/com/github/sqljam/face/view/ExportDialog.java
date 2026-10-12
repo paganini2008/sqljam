@@ -18,6 +18,7 @@ package com.github.sqljam.face.view;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -29,6 +30,9 @@ import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.DataFileStrategy;
+import com.github.sqljam.impexp.CsvExporter;
+import com.github.sqljam.impexp.CsvOptions;
+import com.github.sqljam.impexp.DuckDBWorkspace;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
@@ -37,6 +41,7 @@ import com.github.sqljam.impexp.Exporter;
 import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.ParquetExporter;
 import com.github.sqljam.impexp.TableQuery;
+import com.github.sqljam.impexp.WriteMode;
 import javafx.beans.InvalidationListener;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -60,8 +65,10 @@ import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.CheckBoxListCell;
 import javafx.scene.layout.ColumnConstraints;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -130,7 +137,23 @@ public class ExportDialog extends Dialog<TransferRequest> {
     private final ToggleGroup formatGroup = new ToggleGroup();
     private final RadioButton sqlFormatRadio = new RadioButton(Messages.get("export.format.sql"));
     private final RadioButton parquetFormatRadio = new RadioButton(Messages.get("export.format.parquet"));
+    private final RadioButton csvFormatRadio = new RadioButton(Messages.get("export.format.csv"));
     private final ComboBox<String> compressionCombo = new ComboBox<>();
+    private CsvOptionsPane csvOptionsPane;
+    private TransactionOption transactionOption;
+    private final RadioButton insertRadio = new RadioButton(Messages.get("export.writeMode.insert"));
+    private final RadioButton upsertRadio = new RadioButton(Messages.get("export.writeMode.upsert"));
+    private final RadioButton skipExistingRadio = new RadioButton(Messages.get("export.writeMode.skip"));
+    private final Button keyColumnsButton = new Button(Messages.get("export.writeMode.keys"));
+    /**
+     * Chosen key columns of upserts by table, the primary key of the other tables
+     */
+    private Map<String, List<String>> keyColumnNames = new HashMap<>();
+    /**
+     * Max file size of the shown format in MB: sql scripts and CSV files share one, Parquet has its own
+     */
+    private long textMaxFileSize;
+    private long parquetMaxFileSize;
     private final Label layoutHint = new Label();
     private final ComboBox<ConnectionProfile> targetCombo = new ComboBox<>();
     private final ComboBox<String> targetCatalogCombo = new ComboBox<>();
@@ -194,6 +217,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
         sqlFormatRadio.setId("sqlFormatRadio");
         parquetFormatRadio.setId("parquetFormatRadio");
         compressionCombo.setId("compressionCombo");
+        csvFormatRadio.setId("csvFormatRadio");
         layoutHint.setId("layoutHint");
         targetCombo.setId("targetCombo");
         targetCatalogCombo.setId("targetCatalogCombo");
@@ -235,6 +259,9 @@ public class ExportDialog extends Dialog<TransferRequest> {
         });
         setResultConverter(buttonType -> buttonType == ButtonType.OK ? buildRequest() : null);
         registerValidation();
+        targetGroup.selectedToggleProperty().addListener((obs, oldToggle, toggle) -> updateWriteModes());
+        targetCombo.valueProperty().addListener((obs, oldProfile, profile) -> updateWriteModes());
+        scriptDbTypeCombo.valueProperty().addListener((obs, oldType, type) -> updateWriteModes());
         preselect(node);
         if (tableQuery != null) {
             queryLabel.setText(Messages.format("export.query", queryTableName, tableQuery));
@@ -403,7 +430,29 @@ public class ExportDialog extends Dialog<TransferRequest> {
         checks.addRow(2, failFastCheck);
         GridPane grid = grid();
         grid.addRow(0, new Label(Messages.get("export.option.pageSize")), pageSizeSpinner);
+        insertRadio.setId("insertRadio");
+        upsertRadio.setId("upsertRadio");
+        skipExistingRadio.setId("skipExistingRadio");
+        keyColumnsButton.setId("keyColumnsButton");
+        ToggleGroup writeModeGroup = new ToggleGroup();
+        insertRadio.setToggleGroup(writeModeGroup);
+        upsertRadio.setToggleGroup(writeModeGroup);
+        skipExistingRadio.setToggleGroup(writeModeGroup);
+        insertRadio.setSelected(true);
+        keyColumnsButton.disableProperty().bind(insertRadio.selectedProperty());
+        keyColumnsButton.setOnAction(event -> chooseKeyColumns());
+        insertRadio.selectedProperty().addListener((obs, oldValue, insert) -> {
+            // Rows of kept tables are matched by key, tables are not dropped
+            if (!insert) {
+                recreateCheck.setSelected(false);
+            }
+            recreateCheck.setDisable(!insert);
+        });
+        // Wraps in narrow windows
+        FlowPane writeModeBox = new FlowPane(16, 6, insertRadio, upsertRadio, skipExistingRadio, keyColumnsButton);
+        writeModeBox.setAlignment(Pos.CENTER_LEFT);
         grid.addRow(1, new Label(Messages.get("export.option.identifierCase")), identifierCaseCombo);
+        grid.addRow(2, new Label(Messages.get("export.writeMode")), writeModeBox);
         return new VBox(12, checks, grid);
     }
 
@@ -434,20 +483,44 @@ public class ExportDialog extends Dialog<TransferRequest> {
         singleFileRadio.setSelected(true);
         maxFileSizeSpinner.setEditable(true);
         long maxFileSize = context.getSettings().getMaxDataFileSize();
-        maxFileSizeSpinner.getValueFactory().setValue(maxFileSize > 0 ? (int) Math.max(1, maxFileSize / MB) : 10);
+        textMaxFileSize = maxFileSize > 0 ? Math.max(1, maxFileSize / MB) : 0;
+        long parquetSize = context.getSettings().getParquetMaxFileSize();
+        parquetMaxFileSize = parquetSize > 0 ? Math.max(1, parquetSize / MB) : 0;
+        maxFileSizeSpinner.getValueFactory().setValue((int) textMaxFileSize);
         lobSeparatedCheck.setSelected(true);
         sqlFormatRadio.setToggleGroup(formatGroup);
         parquetFormatRadio.setToggleGroup(formatGroup);
+        csvFormatRadio.setToggleGroup(formatGroup);
         sqlFormatRadio.setSelected(true);
         compressionCombo.getItems().setAll(ParquetExporter.COMPRESSIONS);
         compressionCombo.setValue(ParquetExporter.DEFAULT_COMPRESSION);
-        // Options of sql scripts do not apply to Parquet files
+        // Options of CSV files, the delimiter of the last export
+        CsvOptions csvOptions = new CsvOptions();
+        csvOptions.setDelimiter(context.getSettings().getCsvDelimiter());
+        csvOptionsPane = new CsvOptionsPane(csvOptions, false);
+        // Options of sql scripts do not apply to data files, each data file format has its own options
         compressionCombo.disableProperty().bind(parquetFormatRadio.selectedProperty().not());
-        singleFileRadio.disableProperty().bind(parquetFormatRadio.selectedProperty());
-        perTableRadio.disableProperty().bind(parquetFormatRadio.selectedProperty());
-        maxFileSizeSpinner.disableProperty().bind(parquetFormatRadio.selectedProperty());
-        lobSeparatedCheck.disableProperty().bind(parquetFormatRadio.selectedProperty());
-        formatGroup.selectedToggleProperty().addListener((obs, oldToggle, toggle) -> updateLayoutHint());
+        csvOptionsPane.getNode().disableProperty().bind(csvFormatRadio.selectedProperty().not());
+        singleFileRadio.disableProperty().bind(sqlFormatRadio.selectedProperty().not());
+        perTableRadio.disableProperty().bind(sqlFormatRadio.selectedProperty().not());
+        lobSeparatedCheck.disableProperty().bind(sqlFormatRadio.selectedProperty().not());
+        formatGroup.selectedToggleProperty().addListener((obs, oldToggle, toggle) -> {
+            // Parquet files are split at their own size, sql scripts and CSV files share one
+            boolean wasParquet = oldToggle == parquetFormatRadio;
+            boolean parquet = toggle == parquetFormatRadio;
+            if (wasParquet != parquet) {
+                commitSpinner(maxFileSizeSpinner);
+                long current = maxFileSizeSpinner.getValue();
+                if (wasParquet) {
+                    parquetMaxFileSize = current;
+                } else {
+                    textMaxFileSize = current;
+                }
+                maxFileSizeSpinner.getValueFactory().setValue((int) (parquet ? parquetMaxFileSize
+                        : textMaxFileSize));
+            }
+            updateLayoutHint();
+        });
         layoutHint.getStyleClass().addAll("muted", "mono");
         layoutHint.setWrapText(true);
         strategyGroup.selectedToggleProperty().addListener((obs, oldToggle, toggle) -> updateLayoutHint());
@@ -461,8 +534,9 @@ public class ExportDialog extends Dialog<TransferRequest> {
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.version")), scriptVersionCombo);
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.schema")), scriptSchemaField);
         scriptGrid.addRow(row++, new Label(Messages.get("export.format")), new HBox(16, sqlFormatRadio,
-                parquetFormatRadio));
+                parquetFormatRadio, csvFormatRadio));
         scriptGrid.addRow(row++, new Label(Messages.get("export.format.compression")), compressionCombo);
+        scriptGrid.addRow(row++, new Label(Messages.get("csv.options")), csvOptionsPane.getNode());
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.strategy")), new HBox(16, singleFileRadio,
                 perTableRadio));
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.maxFileSize")), new HBox(8,
@@ -502,6 +576,20 @@ public class ExportDialog extends Dialog<TransferRequest> {
         tableNameHint.setWrapText(true);
         databaseGrid.addRow(4, new Label(Messages.get("export.database.tableName")), tableNamePatternField);
         databaseGrid.add(tableNameHint, 1, 5);
+        transactionOption = new TransactionOption(context, targetCombo.valueProperty(), pageSizeSpinner.getValue());
+        // Errors of an import into a database are skipped or not by the transaction option
+        failFastCheck.visibleProperty().bind(scriptRadio.selectedProperty());
+        failFastCheck.managedProperty().bind(scriptRadio.selectedProperty());
+        // Rows are committed page by page: the rows per commit and the page size are the same value
+        pageSizeSpinner.getValueFactory().valueProperty().bindBidirectional(transactionOption.commitRowsProperty());
+        // The rows per commit follow the page size while it is typed, the values follow when it is committed
+        pageSizeSpinner.getEditor().textProperty().addListener((obs, oldText, text) -> {
+            String rows = StringUtils.trim(text);
+            if (StringUtils.isNumeric(rows) && !rows.isEmpty() && rows.length() < 9) {
+                transactionOption.showCommitRows(Integer.parseInt(rows));
+            }
+        });
+        databaseGrid.addRow(6, new Label(Messages.get("import.transaction")), transactionOption.getNode());
         VBox databasePane = new VBox(databaseGrid);
         databasePane.getStyleClass().add("target-pane");
 
@@ -512,13 +600,23 @@ public class ExportDialog extends Dialog<TransferRequest> {
         return new VBox(10, new HBox(16, scriptRadio, databaseRadio), scriptPane, databasePane);
     }
 
+    /**
+     * Name of a CSV delimiter, a tab has no visible character
+     */
+    static String delimiterName(String delimiter) {
+        return CsvOptionsPane.delimiterName(delimiter);
+    }
+
     private void updateLayoutHint() {
-        if (parquetFormatRadio.isSelected()) {
-            layoutHint.setText("schema.sql\ndata/<table>.parquet\nconstraints.sql\nmanifest.json");
+        boolean split = maxFileSizeSpinner.getValue() != null && maxFileSizeSpinner.getValue() > 0;
+        if (!sqlFormatRadio.isSelected()) {
+            String extension = parquetFormatRadio.isSelected() ? ParquetExporter.PARQUET_EXTENSION
+                    : CsvExporter.CSV_EXTENSION;
+            layoutHint.setText("schema.sql\ndata/<table>" + extension + (split ? ", <table>_2" + extension + " ..."
+                    : "") + "\nconstraints.sql\nmanifest.json");
             return;
         }
         boolean perTable = perTableRadio.isSelected();
-        boolean split = maxFileSizeSpinner.getValue() != null && maxFileSizeSpinner.getValue() > 0;
         StringBuilder hint = new StringBuilder();
         hint.append("schema.sql\n");
         if (perTable) {
@@ -563,6 +661,41 @@ public class ExportDialog extends Dialog<TransferRequest> {
         sourceCombo.setValue(null);
         sourceCombo.getSelectionModel().select(profile);
         loadCatalogs(profile, node.getCatalog(), node.getSchema(), table);
+    }
+
+    /**
+     * Chooses key columns of the selected tables (all tables of the schema if none is selected)
+     */
+    private void chooseKeyColumns() {
+        ConnectionProfile source = sourceCombo.getValue();
+        if (source == null) {
+            return;
+        }
+        List<String> tables = tableChoices.stream().filter(choice -> choice.selected.get())
+                .map(choice -> choice.table.getName()).collect(Collectors.toList());
+        if (tables.isEmpty()) {
+            tables = tableChoices.stream().map(choice -> choice.table.getName()).collect(Collectors.toList());
+        }
+        new KeyColumnsDialog(getDialogPane().getScene().getWindow(), getSession(source), catalogCombo.isDisabled()
+                ? null : catalogCombo.getValue(), schemaCombo.isDisabled() ? null : schemaCombo.getValue(), tables,
+                keyColumnNames).showAndWait().ifPresent(keys -> keyColumnNames = new HashMap<>(keys));
+    }
+
+    /**
+     * Rows are not matched by key for targets which can not do it, e.g. ClickHouse
+     */
+    private void updateWriteModes() {
+        DbType target = databaseRadio.isSelected() ? (targetCombo.getValue() != null ? targetCombo.getValue()
+                .getDbType() : null) : scriptDbTypeCombo.getValue();
+        boolean supported = target == null || target.createDialect().isUpsertSupported();
+        if (!supported) {
+            insertRadio.setSelected(true);
+        }
+        for (RadioButton radio : new RadioButton[]{upsertRadio, skipExistingRadio}) {
+            radio.setDisable(!supported);
+            radio.setTooltip(supported ? null : new Tooltip(Messages.format("export.writeMode.unsupported",
+                    target.getDisplayName())));
+        }
     }
 
     private DatabaseSession getSession(ConnectionProfile profile) {
@@ -868,10 +1001,19 @@ public class ExportDialog extends Dialog<TransferRequest> {
                     : DataFileStrategy.SINGLE_FILE);
             request.setMaxFileSize(maxFileSizeSpinner.getValue() * MB);
             request.setLobSeparated(lobSeparatedCheck.isSelected());
-            request.setDataFormat(parquetFormatRadio.isSelected() ? DataFormat.PARQUET : DataFormat.SQL);
+            request.setDataFormat(parquetFormatRadio.isSelected() ? DataFormat.PARQUET : csvFormatRadio.isSelected()
+                    ? DataFormat.CSV : DataFormat.SQL);
             request.setCompression(compressionCombo.getValue());
+            request.setCsvOptions(csvOptionsPane.getOptions());
             context.getSettings().setLastExportDirectory(directory.getAbsolutePath());
-            context.getSettings().setMaxDataFileSize(maxFileSizeSpinner.getValue() * MB);
+            if (parquetFormatRadio.isSelected()) {
+                context.getSettings().setParquetMaxFileSize(maxFileSizeSpinner.getValue() * MB);
+            } else {
+                context.getSettings().setMaxDataFileSize(maxFileSizeSpinner.getValue() * MB);
+            }
+            if (csvFormatRadio.isSelected()) {
+                context.getSettings().setCsvDelimiter(request.getCsvDelimiter());
+            }
         } else {
             request.setTarget(TransferRequest.Target.DATABASE);
             request.setTargetProfile(targetCombo.getValue());
@@ -880,7 +1022,18 @@ public class ExportDialog extends Dialog<TransferRequest> {
                     targetSchemaCombo.getEditor().getText()));
             request.setTargetSchemaCreated(createSchemaCheck.isSelected());
             request.setTableNamePattern(StringUtils.trimToNull(tableNamePatternField.getText()));
+            request.setOneTransaction(transactionOption.isOneTransaction());
+            request.setConfirmCommit(transactionOption.isConfirmCommit());
+            request.setFailFast(!transactionOption.isSkipErrors());
+            if (!transactionOption.isOneTransaction()) {
+                // Rows per commit typed in the option, within the page sizes
+                request.setPageSize(Math.max(getMin(pageSizeSpinner), Math.min(getMax(pageSizeSpinner),
+                        transactionOption.getCommitRows())));
+            }
         }
+        request.setWriteMode(upsertRadio.isSelected() ? WriteMode.UPSERT : skipExistingRadio.isSelected()
+                ? WriteMode.SKIP_EXISTING : WriteMode.INSERT);
+        request.setKeyColumnNames(insertRadio.isSelected() ? new HashMap<>() : new HashMap<>(keyColumnNames));
         // The query of the data viewer narrows its table
         if (tableQuery != null && selected.contains(queryTableName)) {
             request.getTableQueries().put(queryTableName, tableQuery);

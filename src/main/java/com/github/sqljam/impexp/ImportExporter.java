@@ -54,8 +54,73 @@ public class ImportExporter {
         importingExportHandler.setConnectionFactory(connectionFactory);
     }
 
+    /**
+     * Rows of a table are reported without the rows which were skipped because of errors
+     */
     public void setExportListener(ExportListener exportListener) {
-        exporter.setExportListener(exportListener);
+        exporter.setExportListener(exportListener == null ? null : new WrittenRowsListener(exportListener,
+                importingExportHandler));
+    }
+
+    /**
+     * Reports the written rows of a table at its end: the read rows without the skipped rows
+     */
+    private static class WrittenRowsListener implements ExportListener {
+
+        private final ExportListener delegate;
+        private final ImportExportHandler handler;
+
+        WrittenRowsListener(ExportListener delegate, ImportExportHandler handler) {
+            this.delegate = delegate;
+            this.handler = handler;
+        }
+
+        @Override
+        public void onStart(ExportMode exportMode) {
+            delegate.onStart(exportMode);
+        }
+
+        @Override
+        public void onTableStart(String catalogName, String schemaName, String tableName, long totalRows) {
+            delegate.onTableStart(catalogName, schemaName, tableName, totalRows);
+        }
+
+        @Override
+        public void onTableProgress(String catalogName, String schemaName, String tableName, long processedRows,
+                                    long totalRows) {
+            delegate.onTableProgress(catalogName, schemaName, tableName, processedRows, totalRows);
+        }
+
+        @Override
+        public void onTableEnd(String catalogName, String schemaName, String tableName, long processedRows) {
+            delegate.onTableEnd(catalogName, schemaName, tableName, Math.max(0, processedRows
+                    - handler.takeSkippedRows(tableName)));
+        }
+
+        @Override
+        public void onProgress(long processed, long total) {
+            delegate.onProgress(processed, total);
+        }
+
+        @Override
+        public void onMessage(String message) {
+            delegate.onMessage(message);
+        }
+
+        @Override
+        public void onError(String message, Throwable e) {
+            delegate.onError(message, e);
+        }
+
+        @Override
+        public void onEnd(boolean successful) {
+            delegate.onEnd(successful);
+        }
+
+        @Override
+        public boolean isCancelled() {
+            return delegate.isCancelled();
+        }
     }
 
     /**
@@ -130,6 +195,19 @@ public class ImportExporter {
             dialect = dialect.forVersion(targetMajorVersion, Math.max(targetMinorVersion, 0));
         }
         exportConfiguration.setDialect(dialect);
+        importConfiguration.setTableRecreated(exportConfiguration.isTableRecreated());
+        if (exportConfiguration.getWriteMode().isKeyed()) {
+            importConfiguration.setWriteMode(exportConfiguration.getWriteMode());
+        }
+        exportConfiguration.getKeyColumnNames().forEach(importConfiguration.getKeyColumnNames()::putIfAbsent);
+        // An import which goes on after errors skips the rows with errors
+        if (!exportConfiguration.isFailFast()) {
+            importConfiguration.setSkipErrors(true);
+        }
+        if (importConfiguration.getWriteMode().isKeyed() && !dialect.isUpsertSupported()) {
+            throw new ImpExpException(importConfiguration.getDbType().getDisplayName()
+                    + " can not match rows by their key, please insert the rows");
+        }
         // Creating user, database and schema is not the business of importing
         exportConfiguration.setShowCreateUserSql(false);
         exportConfiguration.setShowCreateCatalogSql(false);

@@ -7,7 +7,7 @@
 **SqlJam**: *Move tables across databases. Schema, data and all.*
 
 A Java 17 + JavaFX desktop tool that copies tables between relational and OLAP databases (**MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, H2, SQLite, DuckDB, ClickHouse** and more) in any direction:
-**import directly** into a target database or into the same schema as copies, or save a self-describing **export package** of SQL or **Parquet** files and import it later.
+**import directly** into a target database or into the same schema as copies, or save a self-describing **export package** of SQL, **Parquet** or **CSV** files and import it later. Imports into a database run in **one transaction** which an error rolls back, and rows are **inserted, updated or skipped by key**.
 
 ![SqlJam main window](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
 
@@ -22,10 +22,13 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 | Dialect differences | Types, identifiers, defaults, identity and literals translated by the dialect of each target |
 | Old versions | Version subclasses: `Oracle11gDialect`, `PostgreSQL9Dialect`, `MySQL56Dialect`, `SQLServer2008Dialect` … |
 | Missing keys & indexes | Primary keys, unique/regular indexes, foreign keys, comments, sequences, partitions |
-| Huge scripts | Data files split at 10 MB: `orders.sql`, `orders_2.sql` … |
+| Huge scripts | Data files split by size: SQL and CSV at 10 MB (`orders.sql`, `orders_2.sql` …), Parquet at 256 MB (`orders.parquet`, `orders_2.parquet` …), imported part by part in order |
 | LOBs | Stored as files, restored by primary key |
 | Scripts without context | `manifest.json`: source, target, options, SHA-256 per file, row counts |
 | Analytics needs Parquet | Parquet packages through an embedded DuckDB, Parquet files of other tools loaded into any table |
+| Spreadsheets need CSV | CSV packages with your delimiter, quote, NULL text, header, encoding (UTF-8 with BOM, GBK and more) and date format, exact types kept in `manifest.json`, CSV files of other tools loaded too |
+| An import went wrong | **One transaction** by default, rolled back on any error, or **commit every N rows**. **Skip rows with errors** goes on and logs each skipped row. **Confirm before commit** reviews a successful import first |
+| Rows exist already | **Update or insert by key** or **skip existing by key**: the primary key or the columns of a unique index match the rows, insert is the default |
 | Warehouses apart from OLTP | DuckDB and ClickHouse data sources, grouped as OLAP databases |
 | Only part of a table | Data viewer query (columns, WHERE, GROUP BY, ORDER BY) and export of the rows of the query |
 | A copy next to the original | Copies in the same schema with `{table}_copy`, keys and indexes renamed, source tables protected |
@@ -107,14 +110,17 @@ flowchart LR
     D --> I[Import directly] --> TD[(Target DB)]
     D --> E[Export package<br/>schema.sql · data*.sql · lob/ · manifest.json]
     E --> SI[ScriptImporter] --> TD
-    D --> P[Parquet package<br/>DuckDB workspace · data/*.parquet]
-    P --> PI[ParquetImporter] --> TD
+    D --> P[Parquet or CSV package<br/>DuckDB workspace · data/*.parquet or *.csv]
+    P --> PI[ParquetImporter · CsvImporter] --> TD
 ```
 
 - **Read metadata once**: `XxxMetaDataOperations` completes comments, identity, generated columns, partitions and sequences per database.
 - **Generate for the target**: `DbType.createDialect(major, minor)` picks the version subclass.
 - **Stream rows**: count rows (percentage progress) → page by primary key → normalize values → batch insert or SQL literals.
-- **Parquet**: rows pass an embedded DuckDB workspace, `COPY ... TO 'x.parquet'` writes them and `read_parquet` loads them back.
+- **Parquet and CSV**: rows pass an embedded DuckDB workspace, `COPY ... TO` writes them, `read_parquet` or `read_csv` with the column types of `manifest.json` loads them back.
+- **Transactions**: an import runs in one transaction, committed when it succeeds or after your confirmation. MySQL, MariaDB, Oracle and H2 commit around DDL, so keys and identity values are set after the commit.
+- **Upserts and skips**: `ON CONFLICT`, `ON DUPLICATE KEY UPDATE` or `MERGE` of each database, kept tables, indexes and keys are skipped.
+- **Skipped errors**: a failed page is written row by row under savepoints, each bad row is logged with its key and the others are kept.
 
 ## 6. Code Examples
 
@@ -150,6 +156,10 @@ ParquetExporter parquet = new ParquetExporter(new File("export-parquet"));
 parquet.setTargetDbType(DbType.POSTGRESQL);
 parquet.setCompression("ZSTD");
 parquet.exportDdlAndData();   // schema.sql, data/orders.parquet, constraints.sql, manifest.json
+
+CsvExporter csv = new CsvExporter(new File("export-csv"));
+csv.setDelimiter(";");
+csv.exportDdlAndData();       // data/orders.csv, data/orders_2.csv ...
 ```
 
 ### Example 2: Oracle → SQL Server directly (schema created)
@@ -196,7 +206,10 @@ All settings live in `bin/sqljam.properties` next to the runnable jar. Settings 
 
 | Property | Default | Description |
 |---|---|---|
-| `sqljam.export.max-file-size` | `10485760` | Max bytes of a data file |
+| `sqljam.export.max-file-size` | `10485760` | Max bytes of a SQL or CSV data file |
+| `sqljam.export.parquet-max-file-size` | `268435456` | Max bytes of a Parquet file, Parquet reads best in large files |
+| `sqljam.export.csv-delimiter` | `,` | Delimiter of CSV files |
+| `sqljam.import.confirm-commit.reminder-minutes` | `10` | Reminder for an import still waiting for commit |
 | `sqljam.export.data-file-strategy` | `SINGLE_FILE` | Single file or one file per table |
 | `sqljam.export.lob-separated` | `true` | Write LOBs as files |
 | `sqljam.export.page-size` | `5000` | Rows per page, tuned by benchmark |
@@ -221,7 +234,7 @@ All settings live in `bin/sqljam.properties` next to the runnable jar. Settings 
 
 Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Server in Docker. Default settings.
 
-**Quality**: 578 tests (full cross-database import matrix with every column type of every database, export package and Parquet round trips, copies in the same schema, old-version SQL executed on real servers, UI and boundary tests), 91% line coverage.
+**Quality**: a full cross-database import matrix with every column type of every database, SQL, Parquet and CSV package round trips, commit and roll back verified on every database, copies in the same schema, old-version SQL executed on real servers, UI and boundary tests.
 
 ## 9. Design Trade-offs
 
@@ -230,7 +243,8 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 - **Tables copied one by one**: predictable load on production servers.
 - **Plain SQL in packages**: readable, editable and portable. Direct import uses batched inserts for speed.
 - **Version-specific SQL**: older servers get the syntax they understand instead of a lowest common denominator.
-- **Parquet through DuckDB**: one embedded engine writes and reads Parquet, no Hadoop libraries.
+- **Parquet and CSV through DuckDB**: one embedded engine writes and reads both, no Hadoop libraries.
+- **One transaction by default**: an import is all or nothing, confirm before commit when you want to look first.
 - **Grouped rows are for viewing**: exports carry real table rows, a GROUP BY result is a view of them.
 - **Copies need their own names**: a copy in the same schema takes a table name such as `{table}_copy`, so the originals are never replaced.
 
@@ -240,9 +254,9 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 2. Dialects are chosen by **type + version**. Old versions are subclasses.
 3. Tables, indexes, constraints, sequences, partitions and comments move together.
 4. Export package = SQL + LOB files + `manifest.json`. Export and import are paired.
-5. Data files split at 10 MB by default. LOBs stored separately.
+5. Data files split by size (SQL and CSV 10 MB, Parquet 256 MB) and imported in order. LOBs stored separately.
 6. Timestamps, unsigned numbers, bits, money, UUID and JSON survive the trip.
 7. Pooled connections and batch inserts: 40k to 95k rows/s for direct imports.
 8. A mainstream dark UI with 7 themes, percentage progress and cancel.
-9. Parquet packages and Parquet files of other tools, plus DuckDB and ClickHouse as OLAP data sources.
+9. Parquet and CSV packages and files of other tools, DuckDB and ClickHouse as OLAP data sources, imports in one transaction and rows updated by key.
 10. Query the rows of a table, export just those rows, or copy tables inside the same schema.

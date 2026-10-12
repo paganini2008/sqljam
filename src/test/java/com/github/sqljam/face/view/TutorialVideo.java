@@ -50,6 +50,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.Labeled;
 import javafx.scene.control.ListCell;
@@ -69,8 +70,9 @@ import javafx.stage.Window;
 
 /**
  * @Description: TutorialVideo records the tutorial video of SqlJam with the example database: connect, query rows,
- *               export into files, import the package into PostgreSQL, and export directly into SQL Server (created
- *               in the export dialog) and Oracle. Subtitles are in English, the background music is generated.
+ *               export into CSV files, import the package into PostgreSQL, and export directly into SQL Server
+ *               (created in the export dialog) and Oracle. Imports run in one transaction, the package import is
+ *               confirmed before its commit. Subtitles are in English, the background music is generated.
  *               It is recorded once per major version, it is not a test of the build (the name does not
  *               end with Test), run it by
  *               mvn test -Dtest=TutorialVideo -Dvideo.file=docs/assets/sqljam-tutorial.mp4
@@ -166,7 +168,7 @@ class TutorialVideo {
         FileUtils.deleteQuietly(packageDir);
         File output = new File(System.getProperty("video.file", "target/video/sqljam-tutorial.mp4"));
         recorder = FxTestSupport.call(() -> new VideoRecorder(stage, System.getProperty("ffmpeg", "ffmpeg"), 1.25,
-                24, 88));
+                24, 100));
         recorder.start(new File(work, "raw.mp4"));
 
         intro();
@@ -341,28 +343,30 @@ class TutorialVideo {
     }
 
     private void exportFiles() throws Exception {
-        recorder.caption("Export to files: all tables of the schema, written for PostgreSQL");
+        recorder.caption("Export to CSV files: all tables of the schema, written for PostgreSQL");
         openExport();
         scrollDialog(1);
         type((TextField) topNode("directoryField"), packageDir.getAbsolutePath());
         choose(topNode("scriptDbTypeCombo"), DbType.POSTGRESQL);
+        RadioButton csv = (RadioButton) topNode("csvFormatRadio");
+        press(csv, () -> csv.setSelected(true));
         pause(1000);
         press(topNode("startButton"));
-        recorder.caption("The package holds the schema, data, constraints and a manifest");
+        recorder.caption("The package holds the schema, CSV data files, constraints and a manifest");
         Window progress = waitForProgress();
         pause(1500);
         press(node(progress.getScene().getRoot(), "viewPackageButton"));
         Node viewer = waitFor(() -> topNode("packageViewer"));
         fitDialog(onFx(() -> viewer.getScene().getWindow()));
         recorder.caption("The package viewer shows every file of the package");
-        pause(4000);
+        pause(3200);
         FxTestSupport.run(() -> viewer.getScene().getWindow().hide());
         pause(500);
         closeProgress(progress);
     }
 
     private void importPackage() throws Exception {
-        recorder.caption("Import the package into the shop schema of PostgreSQL");
+        recorder.caption("Import the CSV package into the shop schema of PostgreSQL");
         select(connection(ExampleDatabase.PROFILE_NAME));
         press(node(mainView, "action-importScripts"));
         TextField directory = waitFor(() -> (TextField) topNode("directoryField"));
@@ -389,15 +393,19 @@ class TutorialVideo {
         });
         choose(schema, SCHEMA);
         pause(800);
+        // One transaction rolls back on error, confirm before commit lets the user review the import first
+        CheckBox confirm = (CheckBox) topNode("confirmCommitCheck");
+        recorder.caption("One transaction: an error rolls back everything, confirm to review first");
+        press(confirm, () -> confirm.setSelected(true));
+        pause(1200);
         press(topNode("startButton"));
-        Window progress = waitForProgress();
-        pause(1800);
+        Window progress = commitImport("Review the import, then commit or roll back", 2600);
         closeProgress(progress);
         recorder.caption("The tables are in PostgreSQL now");
         TreeItem<DbNode> postgresql = expand(connection("PostgreSQL demo"));
         TreeItem<DbNode> shop = expand(child(expand(child(postgresql, "demo")), SCHEMA));
         assertEquals(TABLES.size(), FxTestSupport.call(() -> shop.getChildren().size()).intValue());
-        pause(3000);
+        pause(2400);
         collapse(postgresql);
     }
 
@@ -437,12 +445,13 @@ class TutorialVideo {
         assertTrue(FxTestSupport.call(() -> ((CheckBox) topNode("createSchemaCheck")).isSelected()));
         pause(1000);
         press(topNode("startButton"));
+        // Committed when the import succeeds
         Window progress = waitForProgress();
-        pause(1800);
+        pause(1500);
         closeProgress(progress);
         TreeItem<DbNode> sqlServer = expand(waitFor(() -> connection("SQL Server demo")));
         expand(child(expand(child(sqlServer, "demo")), SCHEMA));
-        pause(3000);
+        pause(2400);
         collapse(sqlServer);
     }
 
@@ -466,7 +475,7 @@ class TutorialVideo {
         press(topNode("startButton"));
         Window progress = waitForProgress();
         recorder.caption("Types are translated, keys, indexes, comments and identities come along");
-        pause(2500);
+        pause(2200);
         closeProgress(progress);
         pause(800);
     }
@@ -484,6 +493,32 @@ class TutorialVideo {
         String status = FxTestSupport.call(() -> ((Labeled) window.getScene().getRoot().lookup("#progressStatus"))
                 .getText());
         assertEquals("Completed", status);
+        return window;
+    }
+
+    /**
+     * Waits until the import into a database is complete and asks to commit, then commits it
+     *
+     * @param caption subtitle while the question is shown, null to keep the subtitle
+     */
+    private Window commitImport(String caption, long think) throws InterruptedException {
+        Window window = waitFor(() -> Window.getWindows().stream().filter(Window::isShowing).filter(item -> item
+                .getScene() != null && item.getScene().getRoot().lookup("#progressStatus") != null).findFirst()
+                .orElse(null));
+        fitDialog(window);
+        DialogPane question = waitFor(() -> (DialogPane) topNode("decisionPane"));
+        fitDialog(onFx(() -> question.getScene().getWindow()));
+        if (caption != null) {
+            recorder.caption(caption);
+        }
+        pause(think);
+        press(onFx(() -> question.getButtonTypes().stream().map(type -> (Button) question.lookupButton(type))
+                .filter(button -> "Commit".equals(button.getText())).findFirst().orElseThrow()));
+        waitFor(() -> "Close".equals(((Labeled) window.getScene().getRoot().lookup("#cancelButton")).getText())
+                ? true : null);
+        assertEquals("Committed", FxTestSupport.call(() -> ((Labeled) window.getScene().getRoot()
+                .lookup("#progressStatus")).getText()));
+        pause(1000);
         return window;
     }
 

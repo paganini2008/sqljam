@@ -21,6 +21,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.github.sqljam.impexp.CsvOptions;
 import com.github.sqljam.impexp.DataFileStrategy;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
@@ -30,6 +31,7 @@ import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.ParquetExporter;
 import com.github.sqljam.impexp.ScriptExportHandler;
 import com.github.sqljam.impexp.TableQuery;
+import com.github.sqljam.impexp.WriteMode;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -94,12 +96,40 @@ public class TransferRequest {
      * Compression of Parquet files
      */
     private String compression = ParquetExporter.DEFAULT_COMPRESSION;
+    /**
+     * Delimiter, quote, text of NULL, header, encoding and date format of CSV files
+     */
+    private CsvOptions csvOptions = new CsvOptions();
+
+    public String getCsvDelimiter() {
+        return csvOptions.getDelimiter();
+    }
+
+    public void setCsvDelimiter(String csvDelimiter) {
+        csvOptions.setDelimiter(csvDelimiter);
+    }
 
     // Database target
     private ConnectionProfile targetProfile;
     private String targetCatalog;
     private String targetSchema;
     private boolean targetSchemaCreated = true;
+    /**
+     * The import into the target database runs in one transaction which the user commits or rolls back
+     */
+    private boolean oneTransaction = true;
+    /**
+     * A successful import in one transaction waits for the user to commit or roll back
+     */
+    private boolean confirmCommit;
+    /**
+     * Rows are inserted, or upserted by key into kept tables
+     */
+    private WriteMode writeMode = WriteMode.INSERT;
+    /**
+     * Chosen key columns of upserts by table, the primary key of other tables
+     */
+    private Map<String, List<String>> keyColumnNames = new HashMap<>();
     /**
      * Name pattern of target tables, {table} is the source table name, e.g. {table}_copy copies tables in the same
      * schema. Target tables have the same names if it is blank.

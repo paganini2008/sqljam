@@ -17,14 +17,24 @@ package com.github.sqljam.face.view;
 
 import java.io.File;
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
+import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
+import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.face.service.TransferService;
 import com.github.sqljam.impexp.AbstractFileImporter;
-import com.github.sqljam.impexp.ParquetImporter;
+import com.github.sqljam.impexp.DataFileImporter;
+import com.github.sqljam.impexp.DataFormat;
+import com.github.sqljam.impexp.ExportManifest;
+import com.github.sqljam.impexp.SqlScriptRunner;
 import com.github.sqljam.impexp.TableQuery;
+import com.github.sqljam.jdbc.ManualTransaction;
 import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.geometry.Insets;
@@ -330,25 +340,35 @@ public class MainView extends BorderPane {
         Optional<TransferRequest> request = dialog.showAndWait();
         // Data sources created as the target in the dialog
         connectionTree.addNewConnections();
-        request.ifPresent(transferRequest -> {
-            int totalTables = transferRequest.getTables().isEmpty() ? dialog.getListedTableCount()
-                    : transferRequest.getTables().size();
-            String title = transferRequest.getTarget() == TransferRequest.Target.SCRIPT
-                    ? Messages.get("progress.exportTitle") : Messages.format("progress.importTitle",
-                    transferRequest.getTargetProfile().getName());
-            ProgressDialog progress = new ProgressDialog(getWindow(), context, title, totalTables);
-            if (transferRequest.getTarget() == TransferRequest.Target.SCRIPT) {
-                progress.setOutputDirectory(transferRequest.getOutputDirectory());
+        request.ifPresent(transferRequest -> startTransfer(transferRequest, dialog.getListedTableCount()));
+    }
+
+    private void startTransfer(TransferRequest transferRequest, int listedTableCount) {
+        int totalTables = transferRequest.getTables().isEmpty() ? listedTableCount
+                : transferRequest.getTables().size();
+        String title = transferRequest.getTarget() == TransferRequest.Target.SCRIPT
+                ? Messages.get("progress.exportTitle") : Messages.format("progress.importTitle",
+                transferRequest.getTargetProfile().getName());
+        ProgressDialog progress = new ProgressDialog(getWindow(), context, title, totalTables);
+        if (transferRequest.getTarget() == TransferRequest.Target.SCRIPT) {
+            progress.setOutputDirectory(transferRequest.getOutputDirectory());
+        }
+        TransferService transferService = context.getTransferService();
+        progress.setSkipErrors(!transferRequest.isFailFast());
+        // One transaction is committed when the import is complete, or by the user when it is confirmed
+        AtomicReference<ManualTransaction> transaction = new AtomicReference<>();
+        progress.run(() -> {
+            if (transferRequest.getTarget() == TransferRequest.Target.DATABASE
+                    && transferRequest.isOneTransaction()) {
+                transaction.set(transferService.beginTransaction(transferRequest.getTargetProfile(),
+                        transferRequest.getTargetCatalog(), null));
             }
-            TransferService transferService = context.getTransferService();
-            progress.run(() -> {
-                transferService.transfer(transferRequest, progress.getListener());
-                return null;
-            }, null, () -> {
-                if (transferRequest.getTarget() == TransferRequest.Target.DATABASE) {
-                    context.getSessionManager().closeSession(transferRequest.getTargetProfile().getId());
-                }
-            });
+            transferService.transfer(transferRequest, transaction.get(), progress.getListener());
+            return null;
+        }, null, transaction::get, transferRequest.isConfirmCommit(), () -> {
+            if (transferRequest.getTarget() == TransferRequest.Target.DATABASE) {
+                context.getSessionManager().closeSession(transferRequest.getTargetProfile().getId());
+            }
         });
     }
 
@@ -357,34 +377,54 @@ public class MainView extends BorderPane {
         Optional<ImportPackageDialog.ImportRequest> request = new ImportPackageDialog(getWindow(), context, node)
                 .showAndWait();
         connectionTree.addNewConnections();
-        request.ifPresent(importRequest -> {
-            int totalTables = importRequest.getManifest() != null ? importRequest.getManifest().getTables().size()
-                    : 0;
-            ProgressDialog progress = new ProgressDialog(getWindow(), context, Messages.format(
-                    "progress.importTitle", importRequest.getTarget().getName()), totalTables);
-            progress.run(() -> context.getTransferService().importScripts(importRequest.getTarget(),
-                    importRequest.getCatalog(), importRequest.getSchema(), importRequest.getDirectory(),
-                    importRequest.isStopOnError(), progress.getListener()), (AbstractFileImporter importer) ->
-                    Messages.format("import.summary", importer.getExecutedCount(), importer.getLobCount(),
-                            importer.getFailedCount()), () -> context.getSessionManager()
-                    .closeSession(importRequest.getTarget().getId()));
-        });
+        request.ifPresent(this::startImport);
+    }
+
+    private void startImport(ImportPackageDialog.ImportRequest importRequest) {
+        int totalTables = importRequest.getManifest() != null ? importRequest.getManifest().getTables().size()
+                : 0;
+        ProgressDialog progress = new ProgressDialog(getWindow(), context, Messages.format(
+                "progress.importTitle", importRequest.getTarget().getName()), totalTables);
+        progress.setSkipErrors(!importRequest.isStopOnError());
+        AtomicReference<ManualTransaction> transaction = new AtomicReference<>();
+        progress.run(() -> {
+            if (importRequest.isOneTransaction()) {
+                transaction.set(context.getTransferService().beginTransaction(importRequest.getTarget(),
+                        importRequest.getCatalog(), importRequest.getSchema()));
+            }
+            return context.getTransferService().importScripts(importRequest.getTarget(), importRequest
+                    .getCatalog(), importRequest.getSchema(), importRequest.getDirectory(), importRequest
+                    .isStopOnError(), importRequest.getCommitRows(), transaction.get(), progress.getListener());
+        }, (AbstractFileImporter importer) -> Messages.format("import.summary", importer.getExecutedCount(),
+                importer.getLobCount(), importer.getFailedCount()), transaction::get, importRequest.isConfirmCommit(),
+                () -> context.getSessionManager().closeSession(importRequest.getTarget().getId()));
     }
 
     private void showImportParquetDialog(DbNode node) {
         Optional<ImportParquetDialog.ParquetRequest> request = new ImportParquetDialog(getWindow(), context, node)
                 .showAndWait();
         connectionTree.addNewConnections();
-        request.ifPresent(parquetRequest -> {
-            ProgressDialog progress = new ProgressDialog(getWindow(), context, Messages.format(
-                    "progress.importTitle", parquetRequest.getTarget().getName()), 1);
-            progress.run(() -> context.getTransferService().importParquet(parquetRequest.getTarget(),
-                    parquetRequest.getCatalog(), parquetRequest.getSchema(), parquetRequest.getFiles(),
-                    parquetRequest.getTableName(), parquetRequest.getMode(), progress.getListener()),
-                    (ParquetImporter importer) -> Messages.format("parquet.summary", importer.getImportedRows(),
-                            parquetRequest.getTableName()), () -> context.getSessionManager()
-                            .closeSession(parquetRequest.getTarget().getId()));
-        });
+        request.ifPresent(this::startFileImport);
+    }
+
+    private void startFileImport(ImportParquetDialog.ParquetRequest parquetRequest) {
+        ProgressDialog progress = new ProgressDialog(getWindow(), context, Messages.format(
+                "progress.importTitle", parquetRequest.getTarget().getName()), 1);
+        progress.setSkipErrors(parquetRequest.isSkipErrors());
+        AtomicReference<ManualTransaction> transaction = new AtomicReference<>();
+        progress.run(() -> {
+            if (parquetRequest.isOneTransaction()) {
+                transaction.set(context.getTransferService().beginTransaction(parquetRequest.getTarget(),
+                        parquetRequest.getCatalog(), parquetRequest.getSchema()));
+            }
+            return context.getTransferService().importFiles(parquetRequest.getTarget(), parquetRequest
+                    .getCatalog(), parquetRequest.getSchema(), parquetRequest.getFiles(), parquetRequest
+                    .getTableName(), parquetRequest.getMode(), parquetRequest.getKeyColumns(), parquetRequest
+                    .getCsvOptions(), parquetRequest.isSkipErrors(), parquetRequest.getCommitRows(), transaction.get(),
+                    progress.getListener());
+        }, (DataFileImporter importer) -> Messages.format("parquet.summary", importer.getImportedRows(),
+                parquetRequest.getTableName()), transaction::get, parquetRequest.isConfirmCommit(),
+                () -> context.getSessionManager().closeSession(parquetRequest.getTarget().getId()));
     }
 
     /**

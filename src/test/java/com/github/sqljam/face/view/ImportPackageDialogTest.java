@@ -19,6 +19,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.github.sqljam.impexp.CsvImporter;
+import com.github.sqljam.jdbc.ManualTransaction;
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.StandardOpenOption;
@@ -26,6 +28,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterEach;
@@ -48,9 +51,13 @@ import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
+import javafx.scene.control.RadioButton;
 import javafx.scene.control.TableView;
+import javafx.scene.control.Spinner;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
@@ -270,6 +277,9 @@ class ImportPackageDialogTest {
         assertEquals("Completed", status(progress));
         assertEquals("Overall 100%", FxTestSupport.call(() -> ((Label) progress.getStage().getScene().getRoot()
                 .lookup("#percentLabel")).getText()));
+        // Every table of the package is completed
+        assertEquals("Tables: 3 / 3", FxTestSupport.call(() -> ((Label) progress.getStage().getScene().getRoot()
+                .lookup("#overallLabel")).getText()));
         try (Connection connection = DriverManager.getConnection(target.getJdbcUrl(), "sa", "");
              ResultSet rs = connection.createStatement().executeQuery("SELECT COUNT(*) FROM T_PAGED")) {
             rs.next();
@@ -304,6 +314,109 @@ class ImportPackageDialogTest {
         assertEquals("COMPLETED", text("statusValue"));
         assertEquals("Parquet", text("formatValue"));
         assertFalse(startDisabled());
+        FxTestSupport.run(dialog::close);
+        open(exportPackage("csv", DataFormat.CSV));
+        assertEquals("CSV", text("formatValue"));
+        assertFalse(startDisabled());
+    }
+
+    @Test
+    void importsInOneTransactionByDefault() throws Exception {
+        open(exportPackage("csv", DataFormat.CSV));
+        RadioButton one = node("oneTransactionRadio");
+        RadioButton every = node("commitEveryRadio");
+        CheckBox confirm = node("confirmCommitCheck");
+        CheckBox skipErrors = node("skipErrorsCheck");
+        assertTrue(FxTestSupport.call(one::isSelected));
+        assertFalse(FxTestSupport.call(confirm::isSelected));
+        // The first error stops the import by default
+        assertFalse(FxTestSupport.call(skipErrors::isSelected));
+        assertTrue(FxTestSupport.call(dialog::buildRequest).isStopOnError());
+        // Scripts are committed batch by batch, the rows per commit are typed in the dialog
+        Spinner<Integer> commitRows = node("commitRowsSpinner");
+        assertEquals(1000, FxTestSupport.call(commitRows::getValue));
+        assertTrue(FxTestSupport.call(commitRows::isDisabled));
+        assertEquals("Insert", text("writeModeValue"));
+        ImportPackageDialog.ImportRequest request = FxTestSupport.call(dialog::buildRequest);
+        assertTrue(request.isOneTransaction());
+        assertFalse(request.isConfirmCommit());
+        FxTestSupport.run(() -> confirm.setSelected(true));
+        assertTrue(FxTestSupport.call(dialog::buildRequest).isConfirmCommit());
+        // One transaction has no rows per commit
+        assertEquals(0, request.getCommitRows());
+        FxTestSupport.run(() -> every.setSelected(true));
+        FxTestSupport.run(() -> skipErrors.setSelected(true));
+        assertFalse(FxTestSupport.call(commitRows::isDisabled));
+        FxTestSupport.run(() -> commitRows.getEditor().setText("200"));
+        request = FxTestSupport.call(dialog::buildRequest);
+        assertFalse(request.isStopOnError());
+        assertEquals(200, request.getCommitRows());
+        assertFalse(request.isOneTransaction());
+        assertFalse(request.isConfirmCommit());
+    }
+
+    @Test
+    void showsWriteModeOfPackage() throws Exception {
+        File packageDir = exportPackage("csv", DataFormat.CSV);
+        ExportManifest manifest = ExportManifest.read(packageDir);
+        manifest.getOptions().put("writeMode", "UPSERT");
+        manifest.write(packageDir);
+        open(packageDir);
+        assertEquals("Update or insert by key", text("writeModeValue"));
+        manifest.getOptions().put("writeMode", "SKIP_EXISTING");
+        manifest.write(packageDir);
+        FxTestSupport.closeAllDialogs();
+        open(packageDir);
+        assertEquals("Skip existing by key", text("writeModeValue"));
+    }
+
+    /**
+     * The package is imported in a transaction like the main window does: rolled back, then committed
+     */
+    private ProgressDialog importInTransaction(File packageDir, String decision) {
+        ProgressDialog progress = FxTestSupport.call(() -> new ProgressDialog(stage, context, "Import", 3));
+        AtomicReference<ManualTransaction> transaction = new AtomicReference<>();
+        FxTestSupport.run(() -> progress.run(() -> {
+            transaction.set(context.getTransferService().beginTransaction(target, null, null));
+            return context.getTransferService().importScripts(target, null, null, packageDir, true, 0,
+                    transaction.get(), progress.getListener());
+        }, (AbstractFileImporter importer) -> importer.getClass().getSimpleName(), transaction::get, null));
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().stream().anyMatch(pane -> "decisionPane"
+                .equals(pane.getId())));
+        DialogPane pane = FxTestSupport.getDialogPanes().stream().filter(item -> "decisionPane".equals(item.getId()))
+                .findFirst().orElseThrow();
+        FxTestSupport.fireLater(FxTestSupport.call(() -> pane.getButtonTypes().stream().map(type -> (Button) pane
+                .lookupButton(type)).filter(button -> decision.equals(button.getText())).findFirst().orElseThrow()));
+        FxTestSupport.waitUntil(progress::isFinished);
+        return progress;
+    }
+
+    private long countPaged() throws Exception {
+        try (Connection connection = DriverManager.getConnection(target.getJdbcUrl(), "sa", "");
+             ResultSet rs = connection.createStatement().executeQuery("SELECT COUNT(*) FROM T_PAGED")) {
+            rs.next();
+            return rs.getLong(1);
+        }
+    }
+
+    @Test
+    void importsCsvPackageInTransaction() throws Exception {
+        File packageDir = exportPackage("csv", DataFormat.CSV);
+        assertTrue(AbstractFileImporter.forDirectory(packageDir, null, DbType.H2) instanceof CsvImporter);
+        ProgressDialog rolledBack = importInTransaction(packageDir, "Roll Back");
+        assertEquals("Rolled back", status(rolledBack));
+        // H2 commits DDL at once: the table stays, its rows are rolled back
+        assertEquals(0, countPaged());
+        ProgressDialog committed = importInTransaction(packageDir, "Commit");
+        assertEquals("Committed", status(committed));
+        try (Connection connection = DriverManager.getConnection(target.getJdbcUrl(), "sa", "");
+             ResultSet rs = connection.createStatement().executeQuery(
+                     "SELECT COUNT(*), COUNT(DATA), MAX(LENGTH(NOTE)) FROM T_PAGED")) {
+            rs.next();
+            assertEquals(UiDatabase.PAGED_ROWS, rs.getInt(1));
+            assertEquals(1, rs.getInt(2));
+            assertEquals(UiDatabase.LONG_TEXT_LENGTH, rs.getInt(3));
+        }
     }
 
     @Test
@@ -312,7 +425,8 @@ class ImportPackageDialogTest {
         assertTrue(new File(parquetDir, ExportManifest.FILE_NAME).delete());
         open(parquetDir);
         assertTrue(startDisabled());
-        assertEquals("The directory contains Parquet files without manifest.json, please use Import Parquet Files",
+        assertEquals("The directory contains Parquet or CSV files without manifest.json, please use Import Parquet or CSV"
+                + " Files",
                 text("warningLabel"));
         assertTrue(ImportPackageDialog.isParquetDirectory(parquetDir));
         assertFalse(ImportPackageDialog.isParquetDirectory(dir));

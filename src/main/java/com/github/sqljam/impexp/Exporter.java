@@ -19,6 +19,7 @@ import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.lang3.ArrayUtils;
@@ -114,6 +115,15 @@ public class Exporter {
          * Queries narrowing the rows and columns of tables by table name, e.g. rows filtered in the data viewer
          */
         private Map<String, TableQuery> tableQueries = new HashMap<>();
+        /**
+         * Rows are inserted into the target, or upserted: the rows of the same key are updated
+         */
+        private WriteMode writeMode = WriteMode.INSERT;
+        /**
+         * Key columns of upserts by table name, the primary key of the table by default. A table without key is
+         * inserted.
+         */
+        private Map<String, List<String>> keyColumnNames = new HashMap<>();
 
         /**
          * Query of a table, null if all rows and columns are exported. Grouped rows are not rows of the table.

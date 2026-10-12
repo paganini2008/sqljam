@@ -7,7 +7,7 @@
 **SqlJam**：*Move tables across databases. Schema, data and all.*
 
 一个 Java 17 + JavaFX 的桌面导入导出工具，支持关系型与 OLAP 数据库（**MySQL、MariaDB、PostgreSQL、Oracle、SQL Server、H2、SQLite、DuckDB、ClickHouse** 等）任意互导：
-可以**直接导入目标库**，也可以在同一个 schema 里复制表，或者导出为带描述文件的 **SQL / Parquet 导出包**，之后再成对导入。
+可以**直接导入目标库**，也可以在同一个 schema 里复制表，或者导出为带描述文件的 **SQL / Parquet / CSV 导出包**，之后再成对导入。导入目标库默认在**一个事务**里完成，出错整体回滚，数据可以**按主键更新、插入或跳过**。
 
 ![SqlJam 主界面](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
 
@@ -22,10 +22,13 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 | 方言差异 | 按目标方言统一翻译类型 / 标识符 / 默认值 / 自增 / 字面量 |
 | 老版本 | `Oracle11gDialect`、`PostgreSQL9Dialect`、`MySQL56Dialect`、`SQLServer2008Dialect` 等版本子类 |
 | 丢键丢索引 | 主键、唯一/普通索引、外键、注释、序列、分区一起迁移 |
-| 脚本太大 | 数据文件按 10 MB 切分：`orders.sql`、`orders_2.sql`… |
+| 脚本太大 | 数据文件按大小切分：SQL 与 CSV 按 10 MB 切成 `orders.sql`、`orders_2.sql`…，Parquet 按 256 MB 切成 `orders.parquet`、`orders_2.parquet`…，导入时按序号依次导入 |
 | LOB 难处理 | LOB 单独存文件，按主键回填 |
 | 脚本没有上下文 | `manifest.json`：源、目标、选项、文件 SHA-256、行数 |
 | 分析要 Parquet | 内置 DuckDB 生成 Parquet 导出包，也能把其他工具产出的 Parquet 文件加载进任意表 |
+| 表格工具要 CSV | CSV 导出包可选分隔符、引号、NULL 表示、表头、编码（Excel 用的 UTF-8 BOM、GBK 等）和日期格式，`manifest.json` 记录每列类型，导回时精确还原，也能加载其他工具的 CSV 文件 |
+| 导错了怎么办 | 默认**一个事务**：出错整体回滚，也可以**每 N 行提交一次**。勾选**跳过出错的行**则继续导入，每条跳过的记录都写进日志，可筛选、可保存。勾选**提交前确认**，导入成功后先看结果再 **Commit** 或 **Roll Back** |
+| 目标已有部分数据 | **按主键更新或插入**：主键（或自选的唯一索引列）相同的行更新，其余插入。**按主键跳过已存在的行**：已有的行保持不变，只插入新行。默认是插入 |
 | 数仓和业务库割裂 | DuckDB、ClickHouse 作为 OLAP 数据源，和关系型数据库分组展示 |
 | 只要表的一部分 | 数据页查询（列、WHERE、GROUP BY、ORDER BY），只导出查询结果的行 |
 | 原地复制一份表 | 同一 schema 内按 `{table}_copy` 复制，键、索引、约束自动改名，原表受保护 |
@@ -107,14 +110,17 @@ flowchart LR
     D --> I[直接导入] --> TD[(目标库)]
     D --> E[导出包<br/>schema.sql · data*.sql · lob/ · manifest.json]
     E --> SI[ScriptImporter] --> TD
-    D --> P[Parquet 导出包<br/>DuckDB 中转 · data/*.parquet]
-    P --> PI[ParquetImporter] --> TD
+    D --> P[Parquet / CSV 导出包<br/>DuckDB 中转 · data/*.parquet 或 *.csv]
+    P --> PI[ParquetImporter · CsvImporter] --> TD
 ```
 
 - **读一次元数据**：`XxxMetaDataOperations` 按库补全注释、自增、生成列、分区、序列。
 - **按目标生成 SQL**：`DbType.createDialect(major, minor)` 选出版本子类。
 - **数据流**：先统计行数（百分比进度）→ 按主键分页读取 → 值归一化 → 批量写入或生成字面量。
-- **Parquet**：数据经过内置的 DuckDB 中转，`COPY ... TO 'x.parquet'` 写出，`read_parquet` 读回。
+- **Parquet 与 CSV**：数据经过内置的 DuckDB 中转，`COPY ... TO` 写出，`read_parquet` 或按 `manifest.json` 中列类型的 `read_csv` 读回。
+- **事务**：导入在一个事务里完成，成功自动提交或经你确认后提交。MySQL、MariaDB、Oracle、H2 执行 DDL 会隐式提交，外键和自增值等语句延后到提交之后执行。
+- **按主键更新或跳过**：使用各库的 `ON CONFLICT`、`ON DUPLICATE KEY UPDATE` 或 `MERGE`，已存在的表、索引、键自动跳过。
+- **跳过出错的行**：出错的一页在 savepoint 保护下逐行重写，每条坏行连同主键和错误写进日志，其余行照常保留。
 
 ## 6. Code Examples
 
@@ -150,6 +156,10 @@ ParquetExporter parquet = new ParquetExporter(new File("export-parquet"));
 parquet.setTargetDbType(DbType.POSTGRESQL);
 parquet.setCompression("ZSTD");
 parquet.exportDdlAndData();   // schema.sql、data/orders.parquet、constraints.sql、manifest.json
+
+CsvExporter csv = new CsvExporter(new File("export-csv"));
+csv.setDelimiter(";");
+csv.exportDdlAndData();       // data/orders.csv、data/orders_2.csv ...
 ```
 
 ### Example 2：Oracle 直接导入 SQL Server（自动建 schema）
@@ -196,7 +206,10 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 
 | Property | Default | Description |
 |---|---|---|
-| `sqljam.export.max-file-size` | `10485760` | 单个数据文件上限（字节） |
+| `sqljam.export.max-file-size` | `10485760` | SQL、CSV 单个数据文件上限（字节） |
+| `sqljam.export.parquet-max-file-size` | `268435456` | Parquet 单个文件上限（字节），Parquet 文件大一些读得更快 |
+| `sqljam.export.csv-delimiter` | `,` | CSV 分隔符 |
+| `sqljam.import.confirm-commit.reminder-minutes` | `10` | 等待提交超过这么多分钟时提醒 |
 | `sqljam.export.data-file-strategy` | `SINGLE_FILE` | 单文件 / 每表一个文件 |
 | `sqljam.export.lob-separated` | `true` | LOB 单独存文件 |
 | `sqljam.export.page-size` | `5000` | 每页读取行数（实测最优） |
@@ -221,7 +234,7 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 
 环境：Apple M2 Max / 32 GB / JDK 17。MySQL、PostgreSQL 本机，Oracle、SQL Server 在 Docker。默认配置。
 
-**质量**：578 个测试（含覆盖每种数据库全部字段类型的跨库互导矩阵、导出包与 Parquet 回放、同 schema 复制、旧版本语法在真实库上执行、界面功能与边界测试），行覆盖率 91%。
+**质量**：覆盖每种数据库全部字段类型的跨库互导矩阵，SQL、Parquet、CSV 导出包回放，事务提交与回滚、按主键更新或插入在每种数据库上验证，同 schema 复制，旧版本语法在真实库上执行，界面功能与边界测试。
 
 ## 9. 设计取舍（Design Trade-offs）
 
@@ -230,7 +243,8 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 - **逐表复制**：对生产库的压力可预期。
 - **导出包是纯 SQL**：可读、可改、可移植。直接导入走批量写入，追求速度。
 - **按版本生成 SQL**：老版本数据库拿到的是它能理解的语法，而不是最低公分母。
-- **Parquet 交给 DuckDB**：一个内置引擎负责读写 Parquet，不引入 Hadoop 依赖。
+- **Parquet 与 CSV 交给 DuckDB**：一个内置引擎负责读写，不引入 Hadoop 依赖。
+- **默认一个事务**：导入要么全成要么全不成，想先看结果就勾选提交前确认。
 - **分组结果用于浏览**：导出的始终是表的真实行，GROUP BY 的结果是这些行的视图。
 - **复制要有新表名**：同一 schema 内复制需要 `{table}_copy` 这样的表名，原表永远不会被覆盖。
 
@@ -240,9 +254,9 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 2. 方言按**类型 + 版本**选择，老版本差异用子类表达。
 3. 表、索引、约束、序列、分区、注释一起迁移。
 4. 导出包 = SQL + LOB 文件 + `manifest.json`，导出导入成对。
-5. 数据文件默认 10 MB 切分，LOB 单独存放。
+5. 数据文件按大小切分（SQL、CSV 10 MB，Parquet 256 MB），按序导入，LOB 单独存放。
 6. 时间、无符号、bit、money、UUID、JSON 等值跨库不失真。
 7. 连接池 + 批量写入，直接导入 4 万 ~ 9.5 万行/秒。
 8. 暗色主流界面，7 种主题，百分比进度与取消。
-9. Parquet 导出包与外部 Parquet 文件加载，DuckDB、ClickHouse 作为 OLAP 数据源。
+9. Parquet、CSV 导出包与外部文件加载，DuckDB、ClickHouse 作为 OLAP 数据源，导入默认一个事务、出错整体回滚，支持按主键更新或插入。
 10. 表数据可查询，只导出查询结果，也能在同一 schema 内复制表。

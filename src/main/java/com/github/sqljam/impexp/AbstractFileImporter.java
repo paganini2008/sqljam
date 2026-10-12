@@ -36,6 +36,10 @@ public abstract class AbstractFileImporter {
     protected final Connection connection;
     protected final DbType dbType;
     protected boolean stopOnError = true;
+    /**
+     * Whether objects of scripts may exist: packages of tables which are not dropped
+     */
+    protected boolean existingSkipped;
     protected int batchSize = SqlScriptRunner.DEFAULT_BATCH_SIZE;
     protected ExportListener exportListener = ExportListener.NONE;
     protected File workspaceDirectory;
@@ -54,13 +58,17 @@ public abstract class AbstractFileImporter {
 
     /**
      * Importer of an export directory by the data format of its manifest: Parquet packages are imported by
-     * {@link ParquetImporter}, sql scripts (with or without manifest) by {@link ScriptImporter}
+     * {@link ParquetImporter}, CSV packages by {@link CsvImporter}, sql scripts (with or without manifest) by
+     * {@link ScriptImporter}
      */
     public static AbstractFileImporter forDirectory(File dir, Connection connection, DbType dbType)
             throws IOException {
         ExportManifest manifest = ExportManifest.read(dir);
         if (manifest != null && manifest.getDataFormat() == DataFormat.PARQUET) {
             return new ParquetImporter(connection, dbType);
+        }
+        if (manifest != null && manifest.getDataFormat() == DataFormat.CSV) {
+            return new CsvImporter(connection, dbType);
         }
         return new ScriptImporter(connection, dbType);
     }
@@ -118,6 +126,8 @@ public abstract class AbstractFileImporter {
         try {
             validateManifest(dir, manifest);
             startProgress(getManifestBytes(dir, manifest));
+            // Tables which are not dropped exist, their tables, indexes and constraints are skipped
+            existingSkipped = Boolean.FALSE.equals(manifest.getOptions().get("tableRecreated"));
             importManifest(dir, manifest);
             successful = true;
         } finally {
@@ -210,6 +220,9 @@ public abstract class AbstractFileImporter {
         exportListener.onMessage("Executing script: " + file.getName());
         SqlScriptRunner runner = new SqlScriptRunner(connection);
         runner.setStopOnError(stopOnError);
+        if (existingSkipped) {
+            runner.setSkippedError(dbType.createDialect()::isAlreadyExistsError);
+        }
         runner.setBatchSize(batchSize);
         long fileBytes = file.length();
         runner.setExportListener(new ForwardingListener(exportListener) {

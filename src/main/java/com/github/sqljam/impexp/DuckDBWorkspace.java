@@ -18,6 +18,7 @@ package com.github.sqljam.impexp;
 import java.io.Closeable;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -36,9 +37,10 @@ import com.github.sqljam.jdbc.JdbcUtils;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * @Description: DuckDBWorkspace is a temporary DuckDB database used to write and read Parquet files. Rows of other
- *               databases are copied into the workspace and written by COPY TO, Parquet files are loaded into the
- *               workspace by read_parquet and copied into other databases. The database file is deleted on close.
+ * @Description: DuckDBWorkspace is a temporary DuckDB database used to write and read Parquet and CSV files. Rows
+ *               of other databases are copied into the workspace and written by COPY TO, files are loaded into the
+ *               workspace by read_parquet or read_csv and copied into other databases. The database file is deleted
+ *               on close.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -47,6 +49,7 @@ import lombok.extern.slf4j.Slf4j;
 public class DuckDBWorkspace implements Closeable {
 
     public static final String DEFAULT_SCHEMA = "main";
+    public static final String DEFAULT_DELIMITER = ",";
 
     private final File directory;
     private final File file;
@@ -104,6 +107,17 @@ public class DuckDBWorkspace implements Closeable {
      */
     public void writeParquet(String schema, String table, File parquetFile, String compression,
                              Map<String, String> metadata) throws SQLException, IOException {
+        writeParquet(schema, table, parquetFile, compression, metadata, 0, 0);
+    }
+
+    /**
+     * Writes a range of rows in the order of insertion into a Parquet file, e.g. a part of a large table
+     *
+     * @param offset first row of the range
+     * @param limit  rows of the range, 0 or less for all rows
+     */
+    public void writeParquet(String schema, String table, File parquetFile, String compression,
+                             Map<String, String> metadata, long offset, long limit) throws SQLException, IOException {
         FileUtils.forceMkdirParent(parquetFile);
         String columnSql = "SELECT column_name, data_type FROM duckdb_columns() WHERE database_name = current_database()"
                 + " AND schema_name = ? AND table_name = ? ORDER BY column_index";
@@ -124,8 +138,10 @@ public class DuckDBWorkspace implements Closeable {
                     .map(e -> e.getKey() + ": " + literal(e.getValue())).collect(Collectors.joining(", ")))
                     .append("}");
         }
-        String sql = String.format("COPY (SELECT %s FROM %s) TO %s (%s)", String.join(", ", columns),
-                qualify(schema, table), literal(parquetFile.getAbsolutePath()), options);
+        String range = limit > 0 ? String.format(" ORDER BY rowid LIMIT %d OFFSET %d", limit, Math.max(offset, 0))
+                : "";
+        String sql = String.format("COPY (SELECT %s FROM %s%s) TO %s (%s)", String.join(", ", columns),
+                qualify(schema, table), range, literal(parquetFile.getAbsolutePath()), options);
         execute(sql);
     }
 
@@ -135,11 +151,16 @@ public class DuckDBWorkspace implements Closeable {
      */
     public void loadParquet(String schema, String table, List<File> parquetFiles, List<String> identityColumns)
             throws SQLException {
-        String files = parquetFiles.stream().map(f -> literal(f.getAbsolutePath()))
-                .collect(Collectors.joining(", ", "[", "]"));
         execute(String.format("CREATE SCHEMA IF NOT EXISTS %s", quote(schema)));
         execute(String.format("CREATE OR REPLACE TABLE %s AS SELECT * FROM read_parquet(%s)", qualify(schema, table),
-                files));
+                fileList(parquetFiles)));
+        addIdentities(schema, table, identityColumns);
+    }
+
+    /**
+     * Identity columns get a sequence and a nextval default, so that they are recognized as identity columns
+     */
+    private void addIdentities(String schema, String table, List<String> identityColumns) throws SQLException {
         if (identityColumns != null) {
             for (String column : identityColumns) {
                 String sequence = qualify(schema, table + "_" + column + "_seq");
@@ -148,6 +169,104 @@ public class DuckDBWorkspace implements Closeable {
                         qualify(schema, table), quote(column), sequence.replace("'", "''")));
             }
         }
+    }
+
+    /**
+     * Writes rows of the table into a CSV file in UTF-8 with the delimiter, quote, text of NULL, header and date
+     * format of the options. An empty string is quoted to keep it apart from NULL, binary values are written as
+     * escaped text (\x00). Other encodings are converted after writing.
+     */
+    public void writeCsv(String schema, String table, File csvFile, CsvOptions options) throws SQLException,
+            IOException {
+        FileUtils.forceMkdirParent(csvFile);
+        StringBuilder sql = new StringBuilder("COPY ").append(qualify(schema, table)).append(" TO ")
+                .append(literal(csvFile.getAbsolutePath())).append(" (FORMAT csv, HEADER ").append(options.isHeader())
+                .append(", DELIMITER ").append(literal(StringUtils.defaultIfEmpty(options.getDelimiter(),
+                        DEFAULT_DELIMITER))).append(", QUOTE ").append(literal(options.getQuote()))
+                .append(", ESCAPE ").append(literal(options.getQuote())).append(", NULLSTR ")
+                .append(literal(options.getNullString()));
+        if (StringUtils.isNotEmpty(options.getDateFormat())) {
+            sql.append(", DATEFORMAT ").append(literal(options.getDateFormat())).append(", TIMESTAMPFORMAT ")
+                    .append(literal(options.getTimestampFormat()));
+        }
+        execute(sql.append(")").toString());
+    }
+
+    /**
+     * Loads CSV files into a table of the workspace. With the columns of the package the values are read with
+     * their types (exactly as exported), without them the types are detected from the files.
+     *
+     * @param columns columns and types of the files, null to detect them
+     * @param options options of the files, files of other encodings are converted to UTF-8 first
+     */
+    public void loadCsv(String schema, String table, List<File> csvFiles, List<ExportManifest.ColumnEntry> columns,
+                        List<String> identityColumns, CsvOptions options) throws SQLException, IOException {
+        execute(String.format("CREATE SCHEMA IF NOT EXISTS %s", quote(schema)));
+        execute(String.format("CREATE OR REPLACE TABLE %s AS SELECT * FROM %s", qualify(schema, table),
+                csvReader(toUtf8(csvFiles, options), columns, options)));
+        addIdentities(schema, table, identityColumns);
+    }
+
+    /**
+     * Files in UTF-8: files of other encodings are converted into the workspace, the BOM of UTF-8 is removed
+     */
+    private List<File> toUtf8(List<File> csvFiles, CsvOptions options) throws IOException {
+        if (options == null || options.isUtf8()) {
+            return csvFiles;
+        }
+        List<File> converted = new ArrayList<>();
+        for (File file : csvFiles) {
+            File target = new File(directory, "utf8-" + (converted.size() + 1) + "-" + file.getName());
+            CsvSplitter.transcode(file, options.getCharset(), target, StandardCharsets.UTF_8, false);
+            converted.add(target);
+        }
+        return converted;
+    }
+
+    /**
+     * read_csv of the files: a quoted empty field is an empty string and the text of NULL is NULL. Options of
+     * files of other tools which are not given are detected.
+     */
+    private static String csvReader(List<File> csvFiles, List<ExportManifest.ColumnEntry> columns,
+                                    CsvOptions options) {
+        StringBuilder reader = new StringBuilder("read_csv(").append(fileList(csvFiles))
+                .append(", allow_quoted_nulls = false");
+        if (options != null) {
+            reader.append(", header = ").append(options.isHeader()).append(", quote = ").append(literal(options
+                    .getQuote())).append(", escape = ").append(literal(options.getQuote())).append(", nullstr = ")
+                    .append(literal(options.getNullString()));
+            if (StringUtils.isNotEmpty(options.getDelimiter())) {
+                reader.append(", delim = ").append(literal(options.getDelimiter()));
+            }
+            if (StringUtils.isNotEmpty(options.getDateFormat())) {
+                reader.append(", dateformat = ").append(literal(options.getDateFormat())).append(", timestampformat = ")
+                        .append(literal(options.getTimestampFormat()));
+            }
+        } else {
+            reader.append(", header = true");
+        }
+        if (columns != null && !columns.isEmpty()) {
+            reader.append(", auto_detect = false, columns = {").append(columns.stream().map(column -> literal(column
+                    .getName()) + ": " + literal(column.getType())).collect(Collectors.joining(", "))).append("}");
+        }
+        return reader.append(")").toString();
+    }
+
+    /**
+     * Reader of the files by their extension: read_csv for .csv, .tsv and .txt files, read_parquet for others
+     */
+    private String reader(List<File> files, CsvOptions options) throws IOException {
+        return files.stream().allMatch(DuckDBWorkspace::isCsv) ? csvReader(toUtf8(files, options), null, options)
+                : String.format("read_parquet(%s)", fileList(files));
+    }
+
+    public static boolean isCsv(File file) {
+        String name = file.getName().toLowerCase(Locale.ENGLISH);
+        return name.endsWith(".csv") || name.endsWith(".tsv") || name.endsWith(".txt");
+    }
+
+    private static String fileList(List<File> files) {
+        return files.stream().map(f -> literal(f.getAbsolutePath())).collect(Collectors.joining(", ", "[", "]"));
     }
 
     /**
@@ -174,14 +293,20 @@ public class DuckDBWorkspace implements Closeable {
     }
 
     /**
-     * Columns of Parquet files: name and DuckDB type
+     * Columns of Parquet or CSV files: name and DuckDB type, types of CSV files are detected
      */
-    public List<String[]> describeParquet(List<File> parquetFiles) throws SQLException {
-        String files = parquetFiles.stream().map(f -> literal(f.getAbsolutePath()))
-                .collect(Collectors.joining(", ", "[", "]"));
+    public List<String[]> describeFiles(List<File> dataFiles) throws SQLException, IOException {
+        return describeFiles(dataFiles, null);
+    }
+
+    /**
+     * Columns of Parquet or CSV files, CSV files are read with the options (null to detect them)
+     */
+    public List<String[]> describeFiles(List<File> dataFiles, CsvOptions options) throws SQLException, IOException {
         List<String[]> columns = new ArrayList<>();
         try (Statement statement = getConnection().createStatement();
-             ResultSet rs = statement.executeQuery(String.format("DESCRIBE SELECT * FROM read_parquet(%s)", files))) {
+             ResultSet rs = statement.executeQuery(String.format("DESCRIBE SELECT * FROM %s", reader(dataFiles,
+                     options)))) {
             while (rs.next()) {
                 columns.add(new String[]{rs.getString("column_name"), rs.getString("column_type")});
             }
@@ -190,19 +315,22 @@ public class DuckDBWorkspace implements Closeable {
     }
 
     /**
-     * First rows of Parquet files, values as text
+     * First rows of Parquet or CSV files, values as text
      */
-    public List<List<String>> readParquetRows(List<File> parquetFiles, int limit) throws SQLException {
-        String files = parquetFiles.stream().map(f -> literal(f.getAbsolutePath()))
-                .collect(Collectors.joining(", ", "[", "]"));
-        List<String> columns = describeParquet(parquetFiles).stream()
+    public List<List<String>> readRows(List<File> dataFiles, int limit) throws SQLException, IOException {
+        return readRows(dataFiles, limit, null);
+    }
+
+    public List<List<String>> readRows(List<File> dataFiles, int limit, CsvOptions options) throws SQLException,
+            IOException {
+        List<String> columns = describeFiles(dataFiles, options).stream()
                 .map(column -> String.format("CAST(%s AS VARCHAR)", quote(column[0])))
                 .collect(Collectors.toList());
         List<List<String>> rows = new ArrayList<>();
         if (columns.isEmpty()) {
             return rows;
         }
-        String sql = String.format("SELECT %s FROM read_parquet(%s) LIMIT %d", String.join(", ", columns), files,
+        String sql = String.format("SELECT %s FROM %s LIMIT %d", String.join(", ", columns), reader(dataFiles, options),
                 Math.max(limit, 0));
         try (Statement statement = getConnection().createStatement(); ResultSet rs = statement.executeQuery(sql)) {
             int count = rs.getMetaData().getColumnCount();
@@ -217,11 +345,13 @@ public class DuckDBWorkspace implements Closeable {
         return rows;
     }
 
-    public long countParquetRows(List<File> parquetFiles) throws SQLException {
-        String files = parquetFiles.stream().map(f -> literal(f.getAbsolutePath()))
-                .collect(Collectors.joining(", ", "[", "]"));
+    public long countFileRows(List<File> dataFiles) throws SQLException, IOException {
+        return countFileRows(dataFiles, null);
+    }
+
+    public long countFileRows(List<File> dataFiles, CsvOptions options) throws SQLException, IOException {
         Map<String, Object> row = JdbcUtils.fetchOne(getConnection(),
-                String.format("SELECT count(*) AS n FROM read_parquet(%s)", files), new Object[0]);
+                String.format("SELECT count(*) AS n FROM %s", reader(dataFiles, options)), new Object[0]);
         Object count = row != null ? row.get("n") : null;
         return count instanceof Number ? ((Number) count).longValue() : 0;
     }

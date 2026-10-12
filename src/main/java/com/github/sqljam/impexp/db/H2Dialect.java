@@ -17,6 +17,8 @@ package com.github.sqljam.impexp.db;
 
 import java.nio.charset.StandardCharsets;
 import java.sql.Types;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 
@@ -298,5 +300,25 @@ public class H2Dialect extends Dialect {
             return String.format("CAST(%1$s AS VARCHAR) AS %1$s", quoteIdentifier(columnName));
         }
         return super.getSelectColumnExpression(columnName, typeName);
+    }
+
+    /**
+     * MERGE INTO ... KEY ... VALUES: the row of the same keys is updated, otherwise inserted. Without columns to
+     * update, MERGE ... USING ... WHEN NOT MATCHED inserts a missing row and keeps the existing one.
+     */
+    @Override
+    public String getUpsertStatement(String catalog, String schema, String tableName, String[] columnNames,
+                                     String[] keyColumnNames, String[] updateColumnNames, Object[] values) {
+        if (updateColumnNames.length == 0) {
+            return String.format("MERGE INTO %s AS tgt USING (VALUES (%s)) AS src (%s) ON %s WHEN NOT MATCHED THEN"
+                            + " INSERT (%s) VALUES (%s)", getQualifiedTableName(catalog, schema, tableName),
+                    StringUtils.join(values, ","), getIdentifiers(columnNames), Arrays.stream(keyColumnNames)
+                            .map(name -> "tgt." + getIdentifier(name) + " = src." + getIdentifier(name))
+                            .collect(Collectors.joining(" AND ")), getIdentifiers(columnNames),
+                    Arrays.stream(columnNames).map(name -> "src." + getIdentifier(name))
+                            .collect(Collectors.joining(", ")));
+        }
+        return String.format("MERGE INTO %s(%s) KEY (%s) VALUES (%s)", getQualifiedTableName(catalog, schema,
+                tableName), getIdentifiers(columnNames), getIdentifiers(keyColumnNames), StringUtils.join(values, ","));
     }
 }

@@ -54,6 +54,7 @@ public final class Icons {
     public static final String GITHUB = "fth-github";
     public static final String DISCONNECT = "fth-power";
     public static final String EXIT = "fth-log-out";
+    public static final String SAVE = "fth-save";
 
     private Icons() {
     }

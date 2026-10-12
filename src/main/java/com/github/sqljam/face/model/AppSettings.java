@@ -38,6 +38,22 @@ public class AppSettings {
     private int transferPageSize = Exporter.DEFAULT_PAGE_SIZE;
     private int lobPageSize = Exporter.DEFAULT_LOB_PAGE_SIZE;
     private long maxDataFileSize = 10L * 1024 * 1024;
+    /**
+     * Parquet files are compressed and read best in large files, they are split at a larger size than text files
+     */
+    private long parquetMaxFileSize = 256L * 1024 * 1024;
+    /**
+     * Delimiter of exported CSV files
+     */
+    private String csvDelimiter = ",";
+    /**
+     * Imports into a database run in one transaction which an error rolls back, the default
+     */
+    private boolean oneTransaction = true;
+    /**
+     * Minutes after which an import waiting for commit reminds the user, 0 for no reminder
+     */
+    private int confirmCommitReminderMinutes = 10;
     private double windowWidth = 1280;
     private double windowHeight = 800;
 }

@@ -16,11 +16,13 @@
 package com.github.sqljam.impexp.db;
 
 import java.math.BigDecimal;
+import java.sql.SQLException;
 import java.sql.Types;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.DbType;
@@ -477,5 +479,38 @@ public class OracleDialect extends Dialect {
             return String.format("FROM_VECTOR(%s RETURNING CLOB) AS %s", column, column);
         }
         return column;
+    }
+
+    /**
+     * MERGE with the row selected from dual, the keys join the existing row
+     */
+    @Override
+    public String getUpsertStatement(String catalog, String schema, String tableName, String[] columnNames,
+                                     String[] keyColumnNames, String[] updateColumnNames, Object[] values) {
+        StringBuilder sql = new StringBuilder("MERGE INTO ").append(getQualifiedTableName(catalog, schema, tableName))
+                .append(" tgt USING (SELECT ");
+        for (int i = 0; i < columnNames.length; i++) {
+            sql.append(i > 0 ? ", " : "").append(values[i]).append(" ").append(getIdentifier(columnNames[i]));
+        }
+        sql.append(" FROM dual) src ON (").append(Arrays.stream(keyColumnNames).map(name -> "tgt." + getIdentifier(name)
+                + " = src." + getIdentifier(name)).collect(Collectors.joining(" AND "))).append(")");
+        if (updateColumnNames.length > 0) {
+            sql.append(" WHEN MATCHED THEN UPDATE SET ").append(Arrays.stream(updateColumnNames).map(name -> "tgt."
+                    + getIdentifier(name) + " = src." + getIdentifier(name)).collect(Collectors.joining(", ")));
+        }
+        return sql.append(" WHEN NOT MATCHED THEN INSERT (").append(getIdentifiers(columnNames)).append(") VALUES (")
+                .append(Arrays.stream(columnNames).map(name -> "src." + getIdentifier(name))
+                        .collect(Collectors.joining(", "))).append(")").toString();
+    }
+
+    /**
+     * Name used (ORA-00955), keys and constraints which exist (02260, 02261, 02264, 02275), column list indexed
+     * (01408)
+     */
+    @Override
+    public boolean isAlreadyExistsError(SQLException e) {
+        int code = e.getErrorCode();
+        return code == 955 || code == 2260 || code == 2261 || code == 2264 || code == 2275 || code == 1408
+                || super.isAlreadyExistsError(e);
     }
 }
