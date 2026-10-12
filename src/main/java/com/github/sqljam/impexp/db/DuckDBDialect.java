@@ -15,11 +15,20 @@
  */
 package com.github.sqljam.impexp.db;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.OffsetTime;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 import java.util.UUID;
 
 import org.apache.commons.lang3.StringUtils;
@@ -524,5 +533,67 @@ public class DuckDBDialect extends Dialect {
             return dateTime.getNano() % 1000 != 0 ? formatTimestamp(dateTime) : Timestamp.valueOf(dateTime);
         }
         return result;
+    }
+
+    /**
+     * An update of an indexed column is a delete and an insert in DuckDB, which fails for keys and for rows
+     * referenced by foreign keys. Upserts keep the values of such columns.
+     */
+    @Override
+    public boolean isIndexedColumnUpdatable() {
+        return false;
+    }
+
+    /**
+     * Columns of indexes, keys and unique constraints from the catalog functions of DuckDB, names are matched
+     * without case like identifiers of DuckDB
+     */
+    @Override
+    public Set<String> getIndexedColumns(Connection connection, String catalog, String schema, String tableName)
+            throws SQLException {
+        Set<String> columns = new HashSet<>();
+        String constraints = "SELECT unnest(constraint_column_names) FROM duckdb_constraints() WHERE lower(schema_name) = lower(?)"
+                + " AND lower(table_name) = lower(?) AND constraint_type IN ('PRIMARY KEY', 'UNIQUE', 'FOREIGN KEY')";
+        String indexes = "SELECT expressions FROM duckdb_indexes() WHERE lower(schema_name) = lower(?)"
+                + " AND lower(table_name) = lower(?)";
+        for (String sql : new String[]{constraints, indexes}) {
+            try (PreparedStatement ps = connection.prepareStatement(sql)) {
+                ps.setString(1, StringUtils.defaultIfBlank(schema, "main"));
+                ps.setString(2, tableName);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        // Expressions of indexes are a list of column names, e.g. [dept_id, name]
+                        for (String name : StringUtils.defaultString(rs.getString(1)).replaceAll("[\\[\\]\"']", "")
+                                .split(",")) {
+                            if (!name.isBlank()) {
+                                columns.add(name.trim().toLowerCase(Locale.ENGLISH));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return columns;
+    }
+
+    /**
+     * Columns of the primary key from the catalog functions of DuckDB
+     */
+    @Override
+    public List<String> getPrimaryKeyColumns(Connection connection, String catalog, String schema, String tableName)
+            throws SQLException {
+        String sql = "SELECT unnest(constraint_column_names) FROM duckdb_constraints() WHERE lower(schema_name) = lower(?)"
+                + " AND lower(table_name) = lower(?) AND constraint_type = 'PRIMARY KEY'";
+        List<String> columns = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, StringUtils.defaultIfBlank(schema, "main"));
+            ps.setString(2, tableName);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    columns.add(rs.getString(1));
+                }
+            }
+        }
+        return columns;
     }
 }

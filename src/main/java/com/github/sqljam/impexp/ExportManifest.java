@@ -32,7 +32,10 @@ import java.util.Set;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import lombok.AllArgsConstructor;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 /**
@@ -72,7 +75,12 @@ public class ExportManifest {
         /**
          * Rows of a table in a Parquet file
          */
-        PARQUET
+        PARQUET,
+
+        /**
+         * Rows of a table in a CSV file with a header row
+         */
+        CSV
     }
 
     private String format = FORMAT;
@@ -132,12 +140,38 @@ public class ExportManifest {
         private String schema;
         private String name;
         private long rows;
+        /**
+         * Data files in the order of importing, e.g. orders.csv, orders_2.csv
+         */
+        @JsonDeserialize(as = LinkedHashSet.class)
         private Set<String> dataFiles = new LinkedHashSet<>();
         private long lobFiles;
         /**
          * Identity columns of the table (Parquet packages), their values are kept and sequences are reset
          */
         private List<String> identityColumns = new ArrayList<>();
+        /**
+         * Columns of the data files and their types (CSV packages), CSV files have no types, the rows are read
+         * back with these types, so that values are imported exactly
+         */
+        private List<ColumnEntry> columns = new ArrayList<>();
+        /**
+         * Key columns of upserts, empty for the primary key of the table or for inserts
+         */
+        private List<String> keyColumns = new ArrayList<>();
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class ColumnEntry {
+
+        private String name;
+        /**
+         * Type of the column in the DuckDB workspace, e.g. DECIMAL(38,10)
+         */
+        private String type;
     }
 
     private static ObjectMapper createObjectMapper() {

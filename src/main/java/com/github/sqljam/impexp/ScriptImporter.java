@@ -124,8 +124,10 @@ public class ScriptImporter extends AbstractFileImporter {
 
     @Override
     protected void importManifest(File dir, ExportManifest manifest) throws IOException, SQLException {
-        if (manifest.getDataFormat() == DataFormat.PARQUET) {
-            throw new ImpExpException("Packages of Parquet files are imported by ParquetImporter");
+        if (manifest.getDataFormat() != null && manifest.getDataFormat() != DataFormat.SQL) {
+            throw new ImpExpException(String.format("Packages of %s files are imported by %s",
+                    manifest.getDataFormat(), manifest.getDataFormat() == DataFormat.CSV ? "CsvImporter"
+                            : "ParquetImporter"));
         }
         for (ExportManifest.FileEntry fileEntry : manifest.getFiles()) {
             File file = new File(dir, fileEntry.getPath());

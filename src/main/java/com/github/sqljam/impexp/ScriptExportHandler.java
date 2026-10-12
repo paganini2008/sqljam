@@ -198,6 +198,7 @@ public class ScriptExportHandler implements ExportHandler {
         if (configuration != null) {
             Map<String, Object> options = manifest.getOptions();
             options.put("tableRecreated", configuration.isTableRecreated());
+            options.put("writeMode", configuration.getWriteMode().name());
             options.put("idReused", configuration.isIdReused());
             options.put("indexIncluded", configuration.isIndexIncluded());
             options.put("foreignKeyIncluded", configuration.isForeignKeyIncluded());
@@ -492,6 +493,24 @@ public class ScriptExportHandler implements ExportHandler {
         String[] columnNames;
         String[] columnStringValues;
         String insertSql;
+        // Upserts update the rows of the same key, a table without key is inserted
+        boolean upsert = configuration != null && configuration.getWriteMode().isKeyed();
+        String[] upsertKeys = upsert ? getUpsertKeys(tableName, tableMetaData, template.keySet()) : new String[0];
+        // Values of indexed columns are kept by databases which can not update them (DuckDB)
+        Set<String> uniqueColumns = new HashSet<>();
+        if (upsert && !dialect.isIndexedColumnUpdatable()) {
+            tableMetaData.getIndexMetaDatas().forEach(index -> uniqueColumns.add(index.getColumnName()
+                    .toLowerCase(Locale.ENGLISH)));
+            // Columns of foreign keys are checked like indexed columns
+            tableMetaData.getForeignKeyMetaDatas().forEach(key -> key.getDetails().forEach(detail -> uniqueColumns.add(
+                    String.valueOf(detail.get("FKCOLUMN_NAME")).toLowerCase(Locale.ENGLISH))));
+        }
+        // Existing rows are kept when they are skipped
+        String[] upsertUpdates = !upsert || configuration.getWriteMode() == WriteMode.SKIP_EXISTING ? new String[0]
+                : Arrays.stream(template.keySet().toArray(new String[0]))
+                .filter(name -> Arrays.stream(upsertKeys).noneMatch(name::equalsIgnoreCase)
+                        && identityColumnNames.stream().noneMatch(name::equalsIgnoreCase)
+                        && !uniqueColumns.contains(name.toLowerCase(Locale.ENGLISH))).toArray(String[]::new);
         for (Map<String, Object> row : rowList) {
             long rowNumber = rowNumbers.merge(tableMetaData, 1L, Long::sum);
             columnNames = row.keySet().toArray(new String[0]);
@@ -520,7 +539,9 @@ public class ScriptExportHandler implements ExportHandler {
                 getLobManifestWriter(catalogName).writeRow(dialect.getTargetSchemaName(schemaName),
                         dialect.foldIdentifier(tableName), key, lobValues, rowNumber);
             }
-            insertSql = dialect.getInsertTableStatement(catalogName, schemaName, tableName, columnNames,
+            insertSql = upsertKeys.length > 0 ? dialect.getUpsertStatement(catalogName, schemaName, tableName,
+                    columnNames, upsertKeys, upsertUpdates, columnStringValues)
+                    : dialect.getInsertTableStatement(catalogName, schemaName, tableName, columnNames,
                     columnStringValues);
             sqlLines.add(insertSql);
         }
@@ -547,6 +568,32 @@ public class ScriptExportHandler implements ExportHandler {
             tablePrologue = new ArrayList<>();
         }
         this.lastTableName = tableName;
+    }
+
+    /**
+     * Key columns of upserts: the chosen columns or the primary key, recorded in the manifest
+     *
+     * @return the keys as named in the columns, empty if the table has no key and is inserted
+     */
+    private String[] getUpsertKeys(String tableName, TableMetaData tableMetaData, Set<String> columns) {
+        List<String> keys = configuration.getKeyColumnNames().entrySet().stream()
+                .filter(entry -> entry.getKey().equalsIgnoreCase(tableName)).map(Map.Entry::getValue).findFirst()
+                .orElse(null);
+        if (CollectionUtils.isEmpty(keys)) {
+            keys = tableMetaData.getPrimaryKeyColumnNames();
+        }
+        List<String> resolved = new ArrayList<>();
+        for (String key : keys) {
+            columns.stream().filter(key::equalsIgnoreCase).findFirst().ifPresent(resolved::add);
+        }
+        if (resolved.size() != keys.size()) {
+            resolved.clear();
+        }
+        ExportManifest.TableEntry entry = getTableEntry(tableMetaData);
+        if (!resolved.equals(entry.getKeyColumns())) {
+            entry.setKeyColumns(new ArrayList<>(resolved));
+        }
+        return resolved.toArray(new String[0]);
     }
 
     private DataFile getDataFile(String catalogName, String tableName) {

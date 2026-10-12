@@ -27,6 +27,8 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
@@ -39,6 +41,7 @@ import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
+import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.DataFileStrategy;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
@@ -47,12 +50,16 @@ import com.github.sqljam.impexp.ExportMode;
 import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.ImpExpException;
 import com.github.sqljam.impexp.TableQuery;
+import com.github.sqljam.impexp.WriteMode;
+import javafx.beans.property.ObjectProperty;
+import javafx.beans.property.SimpleObjectProperty;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
@@ -421,13 +428,13 @@ class ExportDialogTest {
             ((ComboBox<String>) node("compressionCombo")).setValue("SNAPPY");
         });
         assertFalse(FxTestSupport.call(() -> node("compressionCombo").isDisabled()));
-        // Options of sql data files are disabled
-        for (String id : new String[]{"singleFileRadio", "perTableRadio", "maxFileSizeSpinner",
-                "lobSeparatedCheck"}) {
+        // Options of sql data files are disabled, large tables are split into Parquet parts
+        for (String id : new String[]{"singleFileRadio", "perTableRadio", "lobSeparatedCheck", "csvDelimiterCombo"}) {
             assertTrue(FxTestSupport.call(() -> node(id).isDisabled()), id);
         }
+        assertFalse(FxTestSupport.call(() -> node("maxFileSizeSpinner").isDisabled()));
         String hint = FxTestSupport.call(() -> ((Label) node("layoutHint")).getText());
-        assertEquals("schema.sql\ndata/<table>.parquet\nconstraints.sql\nmanifest.json", hint);
+        assertEquals("schema.sql\ndata/<table>.parquet, <table>_2.parquet ...\nconstraints.sql\nmanifest.json", hint);
         assertEquals(List.of("ZSTD", "SNAPPY", "GZIP", "UNCOMPRESSED"),
                 FxTestSupport.call(() -> List.copyOf(((ComboBox<String>) node("compressionCombo")).getItems())));
         assertFalse(startDisabled(), error());
@@ -438,6 +445,224 @@ class ExportDialogTest {
         FxTestSupport.run(() -> ((RadioButton) node("sqlFormatRadio")).setSelected(true));
         assertFalse(FxTestSupport.call(() -> node("perTableRadio").isDisabled()));
         assertEquals(DataFormat.SQL, build().getDataFormat());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void mapsCsvFormat() {
+        open(schemaNode());
+        setText("directoryField", dir.getAbsolutePath());
+        assertTrue(FxTestSupport.call(() -> node("csvDelimiterCombo").isDisabled()));
+        FxTestSupport.run(() -> ((RadioButton) node("csvFormatRadio")).setSelected(true));
+        ComboBox<String> delimiter = node("csvDelimiterCombo");
+        assertFalse(FxTestSupport.call(delimiter::isDisabled));
+        for (String id : new String[]{"singleFileRadio", "perTableRadio", "lobSeparatedCheck", "compressionCombo"}) {
+            assertTrue(FxTestSupport.call(() -> node(id).isDisabled()), id);
+        }
+        assertFalse(FxTestSupport.call(() -> node("maxFileSizeSpinner").isDisabled()));
+        assertEquals("schema.sql\ndata/<table>.csv, <table>_2.csv ...\nconstraints.sql\nmanifest.json",
+                FxTestSupport.call(() -> ((Label) node("layoutHint")).getText()));
+        // Delimiters by name, a tab has no visible character
+        assertEquals(",", FxTestSupport.call(delimiter::getValue));
+        assertEquals(List.of("Comma ( , )", "Semicolon ( ; )", "Tab", "Pipe ( | )"), FxTestSupport.call(() ->
+                delimiter.getItems().stream().map(item -> delimiter.getConverter().toString(item))
+                        .collect(Collectors.toList())));
+        assertEquals("", ExportDialog.delimiterName(null));
+        assertEquals("#", ExportDialog.delimiterName("#"));
+        FxTestSupport.run(() -> delimiter.setValue("\t"));
+        assertFalse(startDisabled(), error());
+        TransferRequest request = build();
+        assertEquals(DataFormat.CSV, request.getDataFormat());
+        assertEquals("\t", request.getCsvDelimiter());
+        assertEquals(10L * 1024 * 1024, request.getMaxFileSize());
+        // The delimiter is the default of the next export
+        assertEquals("\t", context.getSettings().getCsvDelimiter());
+        ExportDialog next = open(schemaNode());
+        assertEquals("\t", FxTestSupport.call(() -> ((ComboBox<String>) node("csvDelimiterCombo")).getValue()));
+        FxTestSupport.run(next::close);
+    }
+
+    /**
+     * Parquet files are split at their own size, sql scripts and CSV files share one
+     */
+    @Test
+    void keepsMaxFileSizeOfEachFormat() {
+        open(schemaNode());
+        setText("directoryField", dir.getAbsolutePath());
+        Spinner<Integer> size = node("maxFileSizeSpinner");
+        assertEquals(10, FxTestSupport.call(size::getValue).intValue());
+        setSpinnerText("maxFileSizeSpinner", "20");
+        FxTestSupport.run(() -> ((RadioButton) node("parquetFormatRadio")).setSelected(true));
+        assertEquals(256, FxTestSupport.call(size::getValue).intValue());
+        setSpinnerText("maxFileSizeSpinner", "512");
+        FxTestSupport.run(() -> ((RadioButton) node("csvFormatRadio")).setSelected(true));
+        assertEquals(20, FxTestSupport.call(size::getValue).intValue());
+        FxTestSupport.run(() -> ((RadioButton) node("sqlFormatRadio")).setSelected(true));
+        assertEquals(20, FxTestSupport.call(size::getValue).intValue());
+        FxTestSupport.run(() -> ((RadioButton) node("parquetFormatRadio")).setSelected(true));
+        assertEquals(512, FxTestSupport.call(size::getValue).intValue());
+        assertEquals(512L * 1024 * 1024, build().getMaxFileSize());
+        assertEquals(512L * 1024 * 1024, context.getSettings().getParquetMaxFileSize());
+        // Text files keep their size
+        assertEquals(10L * 1024 * 1024, context.getSettings().getMaxDataFileSize());
+    }
+
+    @SuppressWarnings("unchecked")
+    private void chooseTarget() {
+        FxTestSupport.run(() -> ((RadioButton) node("databaseRadio")).setSelected(true));
+        ComboBox<ConnectionProfile> targetCombo = (ComboBox<ConnectionProfile>) node("targetCombo");
+        FxTestSupport.run(() -> targetCombo.setValue(targetCombo.getItems().get(0)));
+        ComboBox<String> targetSchema = (ComboBox<String>) node("targetSchemaCombo");
+        FxTestSupport.waitUntil(() -> !targetSchema.getItems().isEmpty());
+        FxTestSupport.run(() -> targetSchema.getEditor().setText("COPY"));
+    }
+
+    @Test
+    void importsInOneTransactionByDefault() {
+        open(schemaNode());
+        chooseTarget();
+        RadioButton one = node("oneTransactionRadio");
+        RadioButton every = node("commitEveryRadio");
+        CheckBox confirm = node("confirmCommitCheck");
+        CheckBox skipErrors = node("skipErrorsCheck");
+        CheckBox failFast = node("failFastCheck");
+        assertTrue(FxTestSupport.call(one::isSelected));
+        assertFalse(FxTestSupport.call(confirm::isSelected));
+        assertFalse(FxTestSupport.call(confirm::isDisabled));
+        // The first error rolls back everything, stop on first error of file exports is hidden
+        assertFalse(FxTestSupport.call(skipErrors::isSelected));
+        assertFalse(FxTestSupport.call(failFast::isVisible));
+        // Commits every N rows follow the page size, rows are committed page by page
+        Spinner<Integer> commitRows = node("commitRowsSpinner");
+        assertEquals(5000, FxTestSupport.call(commitRows::getValue));
+        setSpinnerText("pageSizeSpinner", "1000");
+        assertEquals("1000", FxTestSupport.call(() -> commitRows.getEditor().getText()));
+        // Text which is not a number keeps the last rows
+        setSpinnerText("pageSizeSpinner", "abc");
+        assertEquals("1000", FxTestSupport.call(() -> commitRows.getEditor().getText()));
+        setSpinnerText("pageSizeSpinner", "1000");
+        TransferRequest request = build();
+        assertTrue(request.isOneTransaction());
+        assertFalse(request.isConfirmCommit());
+        assertTrue(request.isFailFast());
+        FxTestSupport.run(() -> confirm.setSelected(true));
+        assertTrue(build().isConfirmCommit());
+        // Rows with errors may be skipped in one transaction
+        FxTestSupport.run(() -> skipErrors.setSelected(true));
+        assertFalse(build().isFailFast());
+        // Commits every N rows have no confirm, rows with errors may still be skipped
+        FxTestSupport.run(() -> every.setSelected(true));
+        assertTrue(FxTestSupport.call(() -> confirm.isDisabled() && !confirm.isSelected()));
+        assertFalse(FxTestSupport.call(skipErrors::isDisabled));
+        // Rows per commit typed in the option are the page size
+        FxTestSupport.run(() -> commitRows.getValueFactory().setValue(2000));
+        assertEquals(2000, FxTestSupport.call(() -> ((Spinner<?>) node("pageSizeSpinner")).getValue()));
+        FxTestSupport.run(() -> commitRows.getEditor().setText("300"));
+        request = build();
+        assertEquals(300, request.getPageSize());
+        assertFalse(request.isOneTransaction());
+        assertFalse(request.isConfirmCommit());
+        assertFalse(request.isFailFast());
+        // Back to a script target: stop on first error is shown again
+        FxTestSupport.run(() -> ((RadioButton) node("scriptRadio")).setSelected(true));
+        assertTrue(FxTestSupport.call(failFast::isVisible));
+        assertTrue(build().isFailFast());
+    }
+
+    @Test
+    void offersNoTransactionWithoutTransactions() {
+        ObjectProperty<ConnectionProfile> target = new SimpleObjectProperty<>();
+        TransactionOption option = FxTestSupport.call(() -> new TransactionOption(context, target, 5000));
+        assertTrue(option.isOneTransaction());
+        assertFalse(option.isSkipErrors());
+        ConnectionProfile clickHouse = new ConnectionProfile();
+        clickHouse.setDbType(DbType.CLICKHOUSE);
+        FxTestSupport.run(() -> target.set(clickHouse));
+        assertFalse(option.isOneTransaction());
+        assertFalse(option.isConfirmCommit());
+        Label unsupported = (Label) FxTestSupport.call(() -> option.getNode().lookup("#transactionUnsupportedLabel"));
+        assertTrue(unsupported.isVisible());
+        assertEquals("ClickHouse has no transactions, rows are committed as they are written", unsupported.getText());
+        // The choice comes back with a database with transactions
+        ConnectionProfile postgresql = new ConnectionProfile();
+        postgresql.setDbType(DbType.POSTGRESQL);
+        FxTestSupport.run(() -> target.set(postgresql));
+        assertTrue(option.isOneTransaction());
+        assertFalse(unsupported.isVisible());
+        // Commits every N rows by the settings
+        context.getSettings().setOneTransaction(false);
+        TransactionOption every = FxTestSupport.call(() -> new TransactionOption(context, target, 100));
+        assertFalse(every.isOneTransaction());
+    }
+
+    @Test
+    void upsertsKeptTablesByKey() {
+        open(schemaNode());
+        chooseTarget();
+        RadioButton insert = node("insertRadio");
+        RadioButton upsert = node("upsertRadio");
+        CheckBox recreate = node("recreateCheck");
+        Button keys = node("keyColumnsButton");
+        // Insert is the default
+        assertTrue(FxTestSupport.call(insert::isSelected));
+        assertTrue(FxTestSupport.call(keys::isDisabled));
+        assertEquals(WriteMode.INSERT, build().getWriteMode());
+        // Upserts keep the tables
+        FxTestSupport.run(() -> upsert.setSelected(true));
+        assertTrue(FxTestSupport.call(() -> !recreate.isSelected() && recreate.isDisabled()));
+        assertFalse(FxTestSupport.call(keys::isDisabled));
+        // Key columns of the selected tables, an empty field is the primary key
+        FxTestSupport.fireLater(keys);
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().size() == 2);
+        DialogPane pane = FxTestSupport.getDialogPanes().stream().filter(item -> item.lookup("#keyColumnsGrid")
+                != null).findFirst().orElseThrow();
+        // Chosen columns should be a unique index of the target table
+        assertTrue(FxTestSupport.call(() -> ((Label) pane.lookup("#keyColumnsUniqueHint")).getText()).startsWith(
+                "Choose the columns of a unique index or the primary key of the target table"));
+        TextField one = FxTestSupport.call(() -> (TextField) pane.lookup("#keyColumns-T_ONE"));
+        FxTestSupport.waitUntil(() -> one.getPromptText().startsWith("Primary key"));
+        assertEquals("Primary key: ID", FxTestSupport.call(one::getPromptText));
+        Button ok = FxTestSupport.call(() -> (Button) pane.lookupButton(ButtonType.OK));
+        FxTestSupport.run(() -> one.setText("MISSING"));
+        assertEquals("MISSING is not a column of T_ONE", FxTestSupport.call(() -> ((Label) pane
+                .lookup("#keyColumnsError")).getText()));
+        assertTrue(FxTestSupport.call(ok::isDisabled));
+        FxTestSupport.run(() -> one.setText(" name , id "));
+        assertFalse(FxTestSupport.call(ok::isDisabled));
+        FxTestSupport.fireLater(ok);
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().size() == 1);
+        TransferRequest request = build();
+        assertEquals(WriteMode.UPSERT, request.getWriteMode());
+        assertFalse(request.isTableRecreated());
+        assertEquals(Map.of("T_ONE", List.of("name", "id")), request.getKeyColumnNames());
+        // Back to inserts: tables may be recreated again, keys are not used
+        FxTestSupport.run(() -> insert.setSelected(true));
+        assertFalse(FxTestSupport.call(recreate::isDisabled));
+        assertEquals(Map.of(), build().getKeyColumnNames());
+        // Existing rows are skipped by the same keys
+        FxTestSupport.run(() -> ((RadioButton) node("skipExistingRadio")).setSelected(true));
+        assertTrue(FxTestSupport.call(() -> !recreate.isSelected() && recreate.isDisabled()));
+        assertFalse(FxTestSupport.call(keys::isDisabled));
+        request = build();
+        assertEquals(WriteMode.SKIP_EXISTING, request.getWriteMode());
+        assertEquals(Map.of("T_ONE", List.of("name", "id")), request.getKeyColumnNames());
+    }
+
+    @Test
+    void offersNoUpsertForClickHouse() {
+        open(schemaNode());
+        @SuppressWarnings("unchecked")
+        ComboBox<DbType> dbType = (ComboBox<DbType>) node("scriptDbTypeCombo");
+        RadioButton upsert = node("upsertRadio");
+        RadioButton skip = node("skipExistingRadio");
+        FxTestSupport.run(() -> skip.setSelected(true));
+        FxTestSupport.run(() -> dbType.setValue(DbType.CLICKHOUSE));
+        assertTrue(FxTestSupport.call(() -> upsert.isDisabled() && !upsert.isSelected()));
+        assertTrue(FxTestSupport.call(() -> skip.isDisabled() && !skip.isSelected()));
+        assertEquals("ClickHouse can not match rows by key", FxTestSupport.call(() -> upsert.getTooltip().getText()));
+        FxTestSupport.run(() -> dbType.setValue(DbType.POSTGRESQL));
+        assertFalse(FxTestSupport.call(upsert::isDisabled));
+        assertFalse(FxTestSupport.call(skip::isDisabled));
     }
 
     @Test
@@ -559,5 +784,34 @@ class ExportDialogTest {
         });
         assertFalse(FxTestSupport.call(() -> node("queryLabel").isVisible()));
         assertTrue(build().getTableQueries().isEmpty());
+    }
+
+    /**
+     * Key columns of several tables, a table without primary key is inserted unless columns are chosen
+     */
+    @Test
+    void choosesKeyColumnsOfTables() throws Exception {
+        try (Connection connection = DriverManager.getConnection(profile.getJdbcUrl(), "sa", "");
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE IF NOT EXISTS T_NO_KEY (CODE VARCHAR(10), NAME VARCHAR(20))");
+        }
+        DatabaseSession session = context.getSessionManager().getSession(profile);
+        KeyColumnsDialog keys = FxTestSupport.call(() -> new KeyColumnsDialog(stage, session, UiDatabase.CATALOG,
+                UiDatabase.SCHEMA, List.of("T_ONE", "T_NO_KEY"), Map.of("T_ONE", List.of("NAME"))));
+        FxTestSupport.run(keys::show);
+        TextField one = FxTestSupport.call(() -> (TextField) keys.getDialogPane().lookup("#keyColumns-T_ONE"));
+        TextField noKey = FxTestSupport.call(() -> (TextField) keys.getDialogPane().lookup("#keyColumns-T_NO_KEY"));
+        FxTestSupport.waitUntil(() -> noKey.getPromptText().startsWith("No"));
+        assertEquals("No primary key, rows are inserted", FxTestSupport.call(noKey::getPromptText));
+        // The chosen columns of before
+        assertEquals("NAME", FxTestSupport.call(one::getText));
+        FxTestSupport.run(() -> noKey.setText("code"));
+        assertEquals(Map.of("T_ONE", List.of("NAME"), "T_NO_KEY", List.of("code")), FxTestSupport.call(
+                keys::getKeyColumns));
+        // An empty field is the primary key
+        FxTestSupport.run(() -> one.setText("  "));
+        assertEquals(Map.of("T_NO_KEY", List.of("code")), FxTestSupport.call(keys::getKeyColumns));
+        assertEquals(List.of(), KeyColumnsDialog.parse(null));
+        FxTestSupport.run(keys::close);
     }
 }

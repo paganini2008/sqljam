@@ -323,6 +323,29 @@ public enum DbType {
         return false;
     }
 
+    /**
+     * Whether the database has transactions, an import can be committed manually or rolled back then
+     */
+    public boolean isTransactionSupported() {
+        return this != CLICKHOUSE;
+    }
+
+    /**
+     * Whether DDL statements are part of a transaction and are rolled back with it. MySQL, MariaDB, Oracle and H2
+     * commit the transaction before and after a DDL statement.
+     */
+    public boolean isTransactionalDdl() {
+        switch (this) {
+            case POSTGRESQL:
+            case SQLSERVER:
+            case SQLITE:
+            case DUCKDB:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public String getValidationQuery() {
         return "SELECT 1";
     }

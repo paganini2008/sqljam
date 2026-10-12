@@ -57,4 +57,12 @@ public class PostgreSQL9Dialect extends PostgreSQL10Dialect {
         return new String[]{String.format("DROP SEQUENCE IF EXISTS %s CASCADE",
                 getQualifiedSequenceName(catalog, schema, sequenceName))};
     }
+
+    /**
+     * ON CONFLICT is supported from PostgreSQL 9.5
+     */
+    @Override
+    public boolean isUpsertSupported() {
+        return getDatabaseMajorVersion() < 0 || isVersionAtLeast(9, 5);
+    }
 }

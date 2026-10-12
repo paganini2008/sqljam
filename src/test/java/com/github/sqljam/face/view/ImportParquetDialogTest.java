@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -29,6 +30,7 @@ import java.sql.Statement;
 import java.util.List;
 import java.util.stream.Collectors;
 
+import javafx.scene.control.CheckBox;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,6 +39,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.impexp.DataFileImporter;
 import com.github.sqljam.impexp.ParquetImporter;
 import javafx.scene.Node;
 import javafx.scene.Scene;
@@ -45,6 +48,7 @@ import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
+import javafx.scene.control.Spinner;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.StackPane;
@@ -108,6 +112,17 @@ class ImportParquetDialogTest {
     }
 
     @SuppressWarnings("unchecked")
+    private File writeCsv(String name, int from, int to) throws Exception {
+        File file = new File(dir, name);
+        try (Connection connection = DriverManager.getConnection("jdbc:duckdb:");
+             Statement statement = connection.createStatement()) {
+            statement.execute(String.format("COPY (SELECT range::INTEGER AS id, 'name ' || range AS name,"
+                    + " DATE '2024-01-01' + range::INTEGER AS created FROM range(%d, %d)) TO '%s' (FORMAT csv, HEADER,"
+                    + " DELIMITER ';')", from, to, file.getAbsolutePath().replace("'", "''")));
+        }
+        return file;
+    }
+
     private <T extends Node> T node(String id) {
         return (T) dialog.getDialogPane().lookup("#" + id);
     }
@@ -146,7 +161,8 @@ class ImportParquetDialogTest {
     void requiresFilesAndTable() throws Exception {
         open(null);
         assertTrue(startDisabled());
-        assertEquals("Files of one table are loaded together, columns and the first rows are previewed",
+        assertEquals("Files of one table are loaded together in this order, columns and the first rows are previewed."
+                + " Delimiters and column types of CSV files are detected",
                 text("parquetPreviewLabel"));
         // The only data source is the target
         assertEquals("Target H2", FxTestSupport.call(() -> {
@@ -192,7 +208,7 @@ class ImportParquetDialogTest {
         File broken = new File(dir, "broken.parquet");
         Files.writeString(broken.toPath(), "not parquet");
         addFiles(broken);
-        FxTestSupport.waitUntil(() -> text("warningLabel").startsWith("Unable to read Parquet files"));
+        FxTestSupport.waitUntil(() -> text("warningLabel").startsWith("Unable to read the files"));
         assertTrue(startDisabled());
     }
 
@@ -203,6 +219,49 @@ class ImportParquetDialogTest {
         assertEquals("sales_2024_q1", ImportParquetDialog.getTableName(new File("sales-2024 q1.parquet")));
         assertEquals("t_2024", ImportParquetDialog.getTableName(new File("2024.parquet")));
         assertEquals("订单", ImportParquetDialog.getTableName(new File("订单.parquet")));
+    }
+
+    @Test
+    void loadsCsvPartsInOrder() throws Exception {
+        open(DbNode.connection(target));
+        File second = writeCsv("orders_2.csv", ROWS, ROWS + 30);
+        File first = writeCsv("orders.csv", 0, ROWS);
+        // Added in any order, imported in the order of the parts
+        addFiles(second, first);
+        waitForPreview();
+        assertEquals(List.of(first, second), FxTestSupport.call(() -> List.copyOf(((ListView<File>) node(
+                "parquetFiles")).getItems())));
+        // The table is named after the first part
+        assertEquals("orders", FxTestSupport.call(() -> ((TextField) node("tableField")).getText()));
+        // Delimiter and types of CSV files are detected
+        assertEquals("3 columns, " + (ROWS + 30) + " rows, the first " + ImportParquetDialog.PREVIEW_ROWS
+                + " are shown", text("parquetPreviewLabel"));
+        assertEquals("name 0", FxTestSupport.call(() -> preview().getItems().get(0).get(1)));
+        ImportParquetDialog.ParquetRequest request = FxTestSupport.call(dialog::buildRequest);
+        assertTrue(request.isOneTransaction());
+        assertTrue(FxTestSupport.call(() -> ((RadioButton) node("oneTransactionRadio")).isSelected()));
+        // Options of CSV files are shown for CSV files, the semicolon is detected
+        assertTrue(FxTestSupport.call(() -> node("csvOptionsBox").isVisible()));
+        assertEquals("", request.getCsvOptions().getDelimiter());
+        ProgressDialog loaded = load(request.getFiles(), ParquetImporter.Mode.CREATE);
+        assertEquals("Completed", FxTestSupport.call(() -> ((Label) loaded.getStage().getScene().getRoot()
+                .lookup("#progressStatus")).getText()));
+        try (Connection connection = DriverManager.getConnection(target.getJdbcUrl(), "sa", "");
+             ResultSet rs = connection.createStatement().executeQuery("SELECT MIN(ID), MAX(ID), COUNT(*) FROM ORDERS")) {
+            rs.next();
+            assertEquals(0, rs.getInt(1));
+            assertEquals(ROWS + 29, rs.getInt(2));
+            assertEquals(ROWS + 30, rs.getInt(3));
+        }
+    }
+
+    @Test
+    void rejectsMixedFormats() throws Exception {
+        open(null);
+        addFiles(writeParquet("orders.parquet", 0, 10), writeCsv("orders.csv", 10, 20));
+        assertEquals("Files of one table must be all Parquet or all CSV", text("warningLabel"));
+        assertTrue(startDisabled());
+        assertTrue(FxTestSupport.call(() -> preview().getColumns().isEmpty()));
     }
 
     @Test
@@ -225,7 +284,7 @@ class ImportParquetDialogTest {
     private ProgressDialog load(List<File> files, ParquetImporter.Mode mode) {
         ProgressDialog progress = FxTestSupport.call(() -> new ProgressDialog(stage, context, "Import", 1));
         FxTestSupport.run(() -> progress.run(() -> context.getTransferService().importParquet(target, null, null,
-                files, "ORDERS", mode, progress.getListener()), (ParquetImporter importer) -> String.valueOf(
+                files, "ORDERS", mode, progress.getListener()), (DataFileImporter importer) -> String.valueOf(
                 importer.getImportedRows()), null));
         FxTestSupport.waitUntil(progress::isFinished);
         return progress;
@@ -262,5 +321,75 @@ class ImportParquetDialogTest {
         assertEquals("Completed", status(replaced));
         assertEquals(ROWS, countRows());
         FxTestSupport.run(() -> replaced.getStage().close());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void upsertsRowsByKey() throws Exception {
+        open(DbNode.connection(target));
+        addFiles(writeParquet("orders.parquet", 0, 10));
+        TextField keys = node("keyColumnsField");
+        assertTrue(FxTestSupport.call(keys::isDisabled));
+        FxTestSupport.run(() -> ((RadioButton) node("upsertRadio")).setSelected(true));
+        assertFalse(FxTestSupport.call(keys::isDisabled));
+        assertEquals("Key columns, the primary key of the table if empty", FxTestSupport.call(keys::getPromptText));
+        assertTrue(FxTestSupport.call(() -> keys.getTooltip().getText()).startsWith("Columns of a unique index or"
+                + " the primary key of the target table"));
+        ImportParquetDialog.ParquetRequest request = FxTestSupport.call(dialog::buildRequest);
+        assertEquals(ParquetImporter.Mode.UPSERT, request.getMode());
+        assertEquals(List.of(), request.getKeyColumns());
+        // Parquet files have no CSV options
+        assertNull(request.getCsvOptions());
+        FxTestSupport.run(() -> keys.setText(" id ,name"));
+        assertEquals(List.of("id", "name"), FxTestSupport.call(dialog::buildRequest).getKeyColumns());
+        // Existing rows are skipped by the same keys
+        RadioButton skip = node("skipExistingRadio");
+        FxTestSupport.run(() -> skip.setSelected(true));
+        assertFalse(FxTestSupport.call(keys::isDisabled));
+        request = FxTestSupport.call(dialog::buildRequest);
+        assertEquals(ParquetImporter.Mode.SKIP_EXISTING, request.getMode());
+        assertEquals(List.of("id", "name"), request.getKeyColumns());
+        assertFalse(request.isSkipErrors());
+        assertEquals(0, request.getCommitRows());
+        FxTestSupport.run(() -> ((CheckBox) node("skipErrorsCheck")).setSelected(true));
+        assertTrue(FxTestSupport.call(dialog::buildRequest).isSkipErrors());
+        // Rows per commit typed in the dialog, the page size of the settings by default
+        FxTestSupport.run(() -> ((RadioButton) node("commitEveryRadio")).setSelected(true));
+        assertEquals(context.getSettings().getTransferPageSize(), FxTestSupport.call(dialog::buildRequest)
+                .getCommitRows());
+        FxTestSupport.run(() -> ((Spinner<?>) node("commitRowsSpinner")).getEditor().setText("50"));
+        assertEquals(50, FxTestSupport.call(dialog::buildRequest).getCommitRows());
+        // ClickHouse can not match rows by key
+        ConnectionProfile clickHouse = new ConnectionProfile();
+        clickHouse.setName("ClickHouse");
+        clickHouse.setDbType(DbType.CLICKHOUSE);
+        ComboBox<ConnectionProfile> targets = node("targetCombo");
+        RadioButton upsert = node("upsertRadio");
+        FxTestSupport.run(() -> {
+            targets.getItems().add(clickHouse);
+            targets.setValue(clickHouse);
+        });
+        FxTestSupport.closeAllDialogs();
+        assertTrue(FxTestSupport.call(() -> upsert.isDisabled() && !upsert.isSelected()));
+        assertTrue(FxTestSupport.call(() -> skip.isDisabled() && !skip.isSelected()));
+        assertTrue(FxTestSupport.call(() -> ((RadioButton) node("appendRadio")).isSelected()));
+    }
+
+    @Test
+    void previewsCsvWithOptions() throws Exception {
+        open(null);
+        File file = new File(dir, "sales.txt");
+        Files.write(file.toPath(), "1;北京;10.5\n2;上海;7\n".getBytes(Charset.forName("GBK")));
+        addFiles(file);
+        assertTrue(FxTestSupport.call(() -> node("csvOptionsBox").isVisible()));
+        // Detected as UTF-8 the GBK bytes are not readable, the encoding and the header are chosen
+        FxTestSupport.waitUntil(() -> !text("warningLabel").isEmpty() || !preview().getItems().isEmpty());
+        FxTestSupport.run(() -> {
+            ((ComboBox<String>) node("csvEncodingCombo")).setValue("GBK");
+            ((CheckBox) node("csvHeaderCheck")).setSelected(false);
+        });
+        FxTestSupport.waitUntil(() -> preview().getItems().size() == 2);
+        assertEquals("北京", FxTestSupport.call(() -> preview().getItems().get(0).get(1)));
+        assertEquals("GBK", FxTestSupport.call(dialog::buildRequest).getCsvOptions().getEncoding());
     }
 }

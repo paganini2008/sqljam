@@ -114,7 +114,7 @@ public class ItVerifier {
         return tableName;
     }
 
-    private String ref(String name) {
+    public String ref(String name) {
         return dialect.getSourceTableName(catalog, schema, table(name));
     }
 

@@ -29,6 +29,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
@@ -68,13 +69,19 @@ public class SqlScriptRunner {
      */
     public static final int ORACLE_BLOCK_SIZE = 100;
 
-    private static final Pattern INSERT_STATEMENT = Pattern.compile("(?is)^INSERT\\s+INTO\\s.*");
+    private static final Pattern INSERT_STATEMENT = Pattern.compile("(?is)^(INSERT|MERGE)\\s+INTO\\s.*");
+    private static final Pattern MERGE_STATEMENT = Pattern.compile("(?is)^MERGE\\s+INTO\\s.*");
 
     private final Connection connection;
     private boolean stopOnError = true;
     private int batchCommitSize = 500;
     private int batchSize = DEFAULT_BATCH_SIZE;
     private Boolean oracle;
+    private Boolean sqlServer;
+    /**
+     * Errors of statements which create existing objects, they are skipped, e.g. tables which are not dropped
+     */
+    private Predicate<SQLException> skippedError;
     private ExportListener exportListener = ExportListener.NONE;
     private Statement statement;
     /**
@@ -89,6 +96,13 @@ public class SqlScriptRunner {
 
     public SqlScriptRunner(Connection connection) {
         this.connection = connection;
+    }
+
+    /**
+     * Statements failing with these errors are skipped instead of failed, e.g. objects which exist already
+     */
+    public void setSkippedError(Predicate<SQLException> skippedError) {
+        this.skippedError = skippedError;
     }
 
     public void setStopOnError(boolean stopOnError) {
@@ -131,7 +145,8 @@ public class SqlScriptRunner {
             int uncommitted = 0;
             int index = 0;
             exportListener.onProgress(0, total);
-            for (String sql : statements) {
+            for (String statementText : statements) {
+                String sql = terminate(statementText);
                 index++;
                 if (exportListener.isCancelled()) {
                     throw new ExportCancelledException();
@@ -219,6 +234,8 @@ public class SqlScriptRunner {
      * Executes and commits a batch. A failed batch is rolled back and executed statement by statement
      */
     private void executeBatch(List<String> batch) throws SQLException {
+        // A transaction of the whole import goes on from the savepoint, earlier rows are kept
+        Savepoint savepoint = !stopOnError && transactional ? setSavepointQuietly() : null;
         try {
             if (isOracle()) {
                 for (String sql : getOracleBlockStatements(batch)) {
@@ -230,6 +247,7 @@ public class SqlScriptRunner {
                 }
                 statement().executeBatch();
             }
+            releaseSavepoint(savepoint);
             commit();
             executedCount += batch.size();
         } catch (SQLException e) {
@@ -237,7 +255,11 @@ public class SqlScriptRunner {
                 throw e;
             }
             statement().clearBatch();
-            rollback();
+            if (savepoint != null) {
+                connection.rollback(savepoint);
+            } else {
+                rollback();
+            }
             if (log.isDebugEnabled()) {
                 log.debug("Batch failed, statements are executed one by one: {}", e.getMessage());
             }
@@ -255,16 +277,26 @@ public class SqlScriptRunner {
      * keeps the transaction usable after a failure (PostgreSQL aborts the whole transaction otherwise)
      */
     private boolean execute(String sql) throws SQLException {
-        Savepoint savepoint = stopOnError || !transactional ? null : connection.setSavepoint();
+        Savepoint savepoint = (stopOnError && skippedError == null) || !transactional ? null
+                : setSavepointQuietly();
         try {
             statement().execute(sql);
             executedCount++;
             releaseSavepoint(savepoint);
             return true;
         } catch (SQLException e) {
+            if (skippedError != null && skippedError.test(e)) {
+                // The object exists, the transaction goes on from the savepoint
+                rollbackQuietly(savepoint);
+                if (log.isInfoEnabled()) {
+                    log.info("Exists already, skipped: {}", StringUtils.abbreviate(sql, 200));
+                }
+                return false;
+            }
             failedCount++;
-            String message = String.format("Unable to execute sql: %s, cause: %s", StringUtils.abbreviate(sql, 500),
-                    e.getMessage());
+            // Statements with errors are skipped when the import goes on
+            String message = String.format(stopOnError ? "Unable to execute sql: %s, cause: %s"
+                    : "Skipped sql: %s, cause: %s", StringUtils.abbreviate(sql, 500), e.getMessage());
             if (log.isErrorEnabled()) {
                 log.error(message);
             }
@@ -289,6 +321,42 @@ public class SqlScriptRunner {
         } catch (SQLException e) {
             // Oracle does not support releasing savepoints, they are released by commit
         }
+    }
+
+    private Savepoint setSavepointQuietly() {
+        try {
+            return connection.setSavepoint();
+        } catch (SQLException e) {
+            return null;
+        }
+    }
+
+    private void rollbackQuietly(Savepoint savepoint) {
+        if (savepoint != null) {
+            try {
+                connection.rollback(savepoint);
+            } catch (SQLException ignored) {
+                // DDL of some databases ends the transaction and its savepoints
+            }
+        }
+    }
+
+    /**
+     * A MERGE statement of SQL Server must end with a semicolon, scripts are parsed without end marks
+     */
+    private String terminate(String sql) throws SQLException {
+        if (MERGE_STATEMENT.matcher(sql).matches() && !sql.trim().endsWith(";") && isSqlServer()) {
+            return sql.trim() + ";";
+        }
+        return sql;
+    }
+
+    private boolean isSqlServer() throws SQLException {
+        if (sqlServer == null) {
+            String productName = connection.getMetaData().getDatabaseProductName();
+            sqlServer = productName != null && productName.toLowerCase(Locale.ENGLISH).contains("sql server");
+        }
+        return sqlServer;
     }
 
     private boolean isOracle() throws SQLException {

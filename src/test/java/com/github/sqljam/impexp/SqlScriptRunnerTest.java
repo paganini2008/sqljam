@@ -212,4 +212,35 @@ class SqlScriptRunnerTest {
             return rs.getInt(1);
         }
     }
+
+    /**
+     * Statements with errors are skipped in one transaction: the savepoint of a failed batch keeps the statements
+     * before it, each skipped statement is reported
+     */
+    @Test
+    void skipsStatementsInTransaction() throws Exception {
+        String url = "jdbc:h2:mem:skipTx;DB_CLOSE_DELAY=-1";
+        try (Connection setup = DriverManager.getConnection(url)) {
+            setup.createStatement().execute("CREATE TABLE s (id INT PRIMARY KEY)");
+        }
+        try (com.github.sqljam.jdbc.ManualTransaction transaction = new com.github.sqljam.jdbc.ManualTransaction(
+                DriverManager.getConnection(url), false)) {
+            SqlScriptRunner runner = new SqlScriptRunner(transaction.getConnection());
+            runner.setBatchSize(2);
+            runner.setStopOnError(false);
+            CollectingListener listener = new CollectingListener();
+            runner.setExportListener(listener);
+            runner.runScript("INSERT INTO s VALUES (1);\nINSERT INTO s VALUES (2);\nINSERT INTO s VALUES (3);\n"
+                    + "INSERT INTO s VALUES (1);\nINSERT INTO s VALUES (4);");
+            assertFalse(transaction.isRolledBack());
+            assertEquals(List.of(), transaction.commit());
+            assertEquals(1, runner.getFailedCount());
+            assertEquals(1, listener.getErrors().size());
+            assertTrue(listener.getErrors().get(0).startsWith("Skipped sql: INSERT INTO s VALUES (1), cause: "),
+                    listener.getErrors().get(0));
+        }
+        try (Connection check = DriverManager.getConnection(url)) {
+            assertEquals(4, rows(check, "SELECT COUNT(*) FROM s"));
+        }
+    }
 }

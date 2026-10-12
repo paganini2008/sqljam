@@ -531,4 +531,12 @@ public class ClickHouseDialect extends Dialect {
         }
         return result;
     }
+
+    /**
+     * ClickHouse has no update of a row by its key
+     */
+    @Override
+    public boolean isUpsertSupported() {
+        return false;
+    }
 }

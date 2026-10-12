@@ -39,6 +39,10 @@
     -fx-text-fill: -color-success-fg;
 }
 
+.status-pending {
+    -fx-text-fill: -color-warning-fg;
+}
+
 .form-status {
     -fx-font-size: 12px;
 }

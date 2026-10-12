@@ -15,6 +15,7 @@
  */
 package com.github.sqljam.impexp.db;
 
+import java.sql.SQLException;
 import java.sql.Types;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -514,5 +515,35 @@ public class SQLServerDialect extends Dialect {
     public String getCreateSchemaIfNotExistsStatement(String schema) {
         return String.format("IF SCHEMA_ID(N'%s') IS NULL EXEC(N'CREATE SCHEMA %s')", schema.replace("'", "''"),
                 quoteIdentifier(schema).replace("'", "''"));
+    }
+
+    /**
+     * MERGE with the row of a VALUES table, a MERGE statement must end with a semicolon
+     */
+    @Override
+    public String getUpsertStatement(String catalog, String schema, String tableName, String[] columnNames,
+                                     String[] keyColumnNames, String[] updateColumnNames, Object[] values) {
+        StringBuilder sql = new StringBuilder("MERGE INTO ").append(getQualifiedTableName(catalog, schema, tableName))
+                .append(" AS tgt USING (VALUES (").append(StringUtils.join(values, ",")).append(")) AS src (")
+                .append(getIdentifiers(columnNames)).append(") ON ").append(Arrays.stream(keyColumnNames)
+                        .map(name -> "tgt." + getIdentifier(name) + " = src." + getIdentifier(name))
+                        .collect(Collectors.joining(" AND ")));
+        if (updateColumnNames.length > 0) {
+            sql.append(" WHEN MATCHED THEN UPDATE SET ").append(Arrays.stream(updateColumnNames).map(name -> "tgt."
+                    + getIdentifier(name) + " = src." + getIdentifier(name)).collect(Collectors.joining(", ")));
+        }
+        return sql.append(" WHEN NOT MATCHED THEN INSERT (").append(getIdentifiers(columnNames)).append(") VALUES (")
+                .append(Arrays.stream(columnNames).map(name -> "src." + getIdentifier(name))
+                        .collect(Collectors.joining(", "))).append(");").toString();
+    }
+
+    /**
+     * Object exists (2714), index exists (1913), table has a primary key (1779), constraint of a column exists
+     * (1781)
+     */
+    @Override
+    public boolean isAlreadyExistsError(SQLException e) {
+        int code = e.getErrorCode();
+        return code == 2714 || code == 1913 || code == 1779 || code == 1781 || super.isAlreadyExistsError(e);
     }
 }

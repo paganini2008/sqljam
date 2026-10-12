@@ -16,20 +16,38 @@
 package com.github.sqljam.face.view;
 
 import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.ExportCancelledException;
 import com.github.sqljam.impexp.ExportListener;
+import com.github.sqljam.jdbc.ManualTransaction;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
+import javafx.collections.FXCollections;
+import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonBar;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -40,6 +58,7 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
+import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
@@ -57,6 +76,11 @@ import atlantafx.base.theme.Styles;
 public class ProgressDialog {
 
     private static final int MAX_LOG_ENTRIES = 5000;
+    /**
+     * Entries kept for Save Log, e.g. every skipped row of a large import
+     */
+    private static final int MAX_SAVED_LOG_ENTRIES = 1_000_000;
+    private static final DateTimeFormatter LOG_TIME = DateTimeFormatter.ofPattern("HH:mm:ss");
 
     private final AppContext context;
     private final Stage stage = new Stage();
@@ -68,9 +92,17 @@ public class ProgressDialog {
     private final ProgressBar tableBar = new ProgressBar(0);
     private final Label elapsedLabel = new Label();
     private final ListView<LogEntry> logList = new ListView<>();
+    private final ObservableList<LogEntry> logEntries = FXCollections.observableArrayList();
+    private final FilteredList<LogEntry> shownLogEntries = new FilteredList<>(logEntries);
+    private final List<LogEntry> savedLogEntries = new ArrayList<>();
+    private long droppedLogEntries;
+    private final CheckBox errorsOnlyCheck = new CheckBox(Messages.get("progress.errorsOnly"));
+    private final Button saveLogButton = new Button(Messages.get("progress.saveLog"), Icons.of(Icons.SAVE));
     private final Button cancelButton = new Button(Messages.get("button.cancel"), Icons.of(Icons.CANCEL));
     private final Button openFolderButton = new Button(Messages.get("progress.openFolder"), Icons.of(Icons.OPEN));
     private final Button viewPackageButton = new Button(Messages.get("package.view"), Icons.of(Icons.TABLE));
+    private final Button commitButton = new Button(Messages.get("progress.commit"), Icons.of(Icons.START));
+    private final Button rollbackButton = new Button(Messages.get("progress.rollback"), Icons.of(Icons.CANCEL));
     private final Label manifestLabel = new Label();
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private final int totalTables;
@@ -80,15 +112,41 @@ public class ProgressDialog {
     private Timeline timer;
     private File outputDirectory;
     private boolean finished;
+    /**
+     * Transaction of an import waiting for the decision of the user: commit or roll back
+     */
+    private ManualTransaction pendingTransaction;
+    private Runnable pendingCompleted;
+    /**
+     * Reminds the user of an import waiting for commit, its transaction holds locks, undo and log space
+     */
+    private Timeline reminder;
+    private Duration reminderInterval;
+    private long pendingSince;
+    private boolean reminded;
+    /**
+     * The transaction is committed or rolled back without asking the user
+     */
+    private boolean automatic;
+    /**
+     * Errors of rows which were skipped do not roll back the transaction
+     */
+    private boolean skipErrors;
 
     private static class LogEntry {
 
+        private final LocalTime time = LocalTime.now();
         private final String message;
         private final boolean error;
 
         LogEntry(String message, boolean error) {
             this.message = message;
             this.error = error;
+        }
+
+        @Override
+        public String toString() {
+            return LOG_TIME.format(time) + (error ? " ERROR " : " INFO  ") + message;
         }
     }
 
@@ -107,10 +165,14 @@ public class ProgressDialog {
         tableBar.setId("tableBar");
         elapsedLabel.setId("elapsedLabel");
         logList.setId("logList");
+        errorsOnlyCheck.setId("errorsOnlyCheck");
+        saveLogButton.setId("saveLogButton");
         cancelButton.setId("cancelButton");
         openFolderButton.setId("openFolderButton");
         viewPackageButton.setId("viewPackageButton");
         manifestLabel.setId("manifestLabel");
+        commitButton.setId("commitButton");
+        rollbackButton.setId("rollbackButton");
 
         statusLabel.getStyleClass().add("progress-status");
         statusLabel.setText(Messages.get("progress.running"));
@@ -140,6 +202,12 @@ public class ProgressDialog {
             }
         });
         logList.getStyleClass().addAll("log-list", Styles.DENSE);
+        logList.setItems(shownLogEntries);
+        // Errors and skipped rows only
+        errorsOnlyCheck.selectedProperty().addListener((obs, oldValue, errorsOnly) -> shownLogEntries.setPredicate(
+                errorsOnly ? entry -> entry.error : null));
+        saveLogButton.setMinWidth(Region.USE_PREF_SIZE);
+        saveLogButton.setOnAction(event -> saveLog());
         VBox.setVgrow(logList, Priority.ALWAYS);
 
         cancelButton.setOnAction(event -> {
@@ -173,9 +241,18 @@ public class ProgressDialog {
         openFolderButton.setMinWidth(Region.USE_PREF_SIZE);
         viewPackageButton.setMinWidth(Region.USE_PREF_SIZE);
         cancelButton.setMinWidth(Region.USE_PREF_SIZE);
+        commitButton.getStyleClass().add(Styles.ACCENT);
+        for (Button button : new Button[]{commitButton, rollbackButton}) {
+            button.setMinWidth(Region.USE_PREF_SIZE);
+            button.setVisible(false);
+            button.setManaged(false);
+        }
+        commitButton.setOnAction(event -> decide(true));
+        rollbackButton.setOnAction(event -> decide(false));
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox buttons = new HBox(8, spacer, viewPackageButton, openFolderButton, cancelButton);
+        HBox buttons = new HBox(8, errorsOnlyCheck, saveLogButton, spacer, viewPackageButton, openFolderButton,
+                rollbackButton, commitButton, cancelButton);
         buttons.setAlignment(Pos.CENTER_RIGHT);
 
         Region headerSpacer = new Region();
@@ -196,7 +273,14 @@ public class ProgressDialog {
         }
         stage.setScene(scene);
         stage.setOnCloseRequest(event -> {
-            if (!finished) {
+            if (pendingTransaction != null) {
+                // The window stays until the import is rolled back
+                event.consume();
+                if (Dialogs.confirm(stage, Messages.get("progress.decide.title"),
+                        Messages.get("progress.decide.close"))) {
+                    decide(false, true);
+                }
+            } else if (!finished) {
                 cancelled.set(true);
             }
         });
@@ -210,7 +294,7 @@ public class ProgressDialog {
      * Error entries of the log
      */
     long getErrorLogCount() {
-        return logList.getItems().stream().filter(entry -> entry.error).count();
+        return logEntries.stream().filter(entry -> entry.error).count();
     }
 
     boolean isFinished() {
@@ -312,11 +396,54 @@ public class ProgressDialog {
         if (StringUtils.isBlank(message)) {
             return;
         }
-        logList.getItems().add(new LogEntry(message, error));
-        if (logList.getItems().size() > MAX_LOG_ENTRIES) {
-            logList.getItems().remove(0, logList.getItems().size() - MAX_LOG_ENTRIES);
+        LogEntry entry = new LogEntry(message, error);
+        logEntries.add(entry);
+        if (logEntries.size() > MAX_LOG_ENTRIES) {
+            logEntries.remove(0, logEntries.size() - MAX_LOG_ENTRIES);
         }
-        logList.scrollTo(logList.getItems().size() - 1);
+        if (savedLogEntries.size() < MAX_SAVED_LOG_ENTRIES) {
+            savedLogEntries.add(entry);
+        } else {
+            droppedLogEntries++;
+        }
+        if (!shownLogEntries.isEmpty()) {
+            logList.scrollTo(shownLogEntries.size() - 1);
+        }
+    }
+
+    /**
+     * Saves the whole log, the window shows its last entries only
+     */
+    private void saveLog() {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle(Messages.get("progress.saveLog"));
+        chooser.setInitialFileName("sqljam-" + DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(
+                LocalDateTime.now()) + ".log");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(Messages.get("progress.logFiles"),
+                "*.log", "*.txt"));
+        File file = chooser.showSaveDialog(stage);
+        if (file != null) {
+            try {
+                writeLog(file);
+                addLog(Messages.format("progress.logSaved", file.getAbsolutePath()), false);
+            } catch (IOException e) {
+                Dialogs.showError(stage, Messages.get("progress.saveLog"), e);
+            }
+        }
+    }
+
+    /**
+     * Writes the log as text, one entry a line with its time and level
+     */
+    void writeLog(File file) throws IOException {
+        List<String> lines = new ArrayList<>();
+        lines.add(stage.getTitle());
+        lines.add(Messages.format("progress.statusLine", statusLabel.getText(), errorCount));
+        savedLogEntries.forEach(entry -> lines.add(entry.toString()));
+        if (droppedLogEntries > 0) {
+            lines.add(Messages.format("progress.logDropped", droppedLogEntries));
+        }
+        Files.write(file.toPath(), lines, StandardCharsets.UTF_8);
     }
 
     /**
@@ -325,6 +452,26 @@ public class ProgressDialog {
      * @param summary summary text of the job result when completed, may be null
      */
     public <T> void run(Callable<T> job, Function<T, String> summary, Runnable onCompleted) {
+        run(job, summary, null, onCompleted);
+    }
+
+    /**
+     * Shows the dialog and runs an import in one transaction which waits for the user to commit or roll back
+     */
+    public <T> void run(Callable<T> job, Function<T, String> summary, Supplier<ManualTransaction> transaction,
+                        Runnable onCompleted) {
+        run(job, summary, transaction, true, onCompleted);
+    }
+
+    /**
+     * Shows the dialog and runs an import in background. An import in one transaction is committed when it
+     * succeeds and rolled back when it fails or has errors, with confirm the user commits or rolls back.
+     *
+     * @param transaction the transaction opened by the job, null or a supplier of null for commits every N rows
+     * @param confirm     whether a successful import waits for the user to commit or roll back
+     */
+    public <T> void run(Callable<T> job, Function<T, String> summary, Supplier<ManualTransaction> transaction,
+                        boolean confirm, Runnable onCompleted) {
         startTime = System.currentTimeMillis();
         timer = new Timeline(new KeyFrame(Duration.seconds(1), event -> updateElapsed()));
         timer.setCycleCount(Timeline.INDEFINITE);
@@ -335,13 +482,29 @@ public class ProgressDialog {
         TaskRunner.execute(() -> {
             try {
                 T result = job.call();
-                Platform.runLater(() -> finish(errorCount == 0 ? Messages.get("progress.completed")
-                        : Messages.format("progress.completedWithErrors", errorCount), false, false,
-                        summary != null ? summary.apply(result) : null, onCompleted));
+                ManualTransaction pending = transaction != null ? transaction.get() : null;
+                Platform.runLater(() -> {
+                    String text = summary != null ? summary.apply(result) : null;
+                    if (pending != null && confirm) {
+                        awaitDecision(pending, text, onCompleted);
+                    } else if (pending != null) {
+                        completeTransaction(pending, text, onCompleted);
+                    } else {
+                        finish(errorCount == 0 ? Messages.get("progress.completed")
+                                : Messages.format("progress.completedWithErrors", errorCount), false, false, text,
+                                onCompleted);
+                    }
+                });
             } catch (Throwable e) {
                 boolean cancel = isCancellation(e);
                 if (!cancel && log.isErrorEnabled()) {
                     log.error(e.getMessage(), e);
+                }
+                // Nothing of a failed or cancelled import is kept
+                ManualTransaction pending = transaction != null ? transaction.get() : null;
+                if (pending != null) {
+                    pending.close();
+                    Platform.runLater(() -> addLog(Messages.get("progress.rolledBack"), false));
                 }
                 Platform.runLater(() -> {
                     if (!cancel) {
@@ -353,6 +516,215 @@ public class ProgressDialog {
                 });
             }
         });
+    }
+
+    /**
+     * The import is written in a transaction: the user is asked to commit or roll back. An import with errors is
+     * rolled back, nothing of it is kept, unless the rows with errors were skipped.
+     */
+    private void awaitDecision(ManualTransaction transaction, String summary, Runnable onCompleted) {
+        if (StringUtils.isNotBlank(summary)) {
+            addLog(summary, false);
+        }
+        pendingTransaction = transaction;
+        pendingCompleted = onCompleted;
+        if (transaction.isRolledBack() || (errorCount > 0 && !skipErrors)) {
+            decide(false, false);
+            return;
+        }
+        timer.stop();
+        updateElapsed();
+        completedTables = Math.max(completedTables, totalTables);
+        updateOverall();
+        updatePercent(1, 1);
+        if (tableBar.getProgress() < 0) {
+            tableBar.setProgress(1);
+        }
+        statusLabel.setText(Messages.get("progress.pending"));
+        statusLabel.getStyleClass().add("status-pending");
+        addLog(Messages.get("progress.pending.message"), false);
+        if (!transaction.isTransactionalDdl()) {
+            addLog(Messages.get("progress.pending.ddl"), false);
+        }
+        if (!transaction.getDeferredStatements().isEmpty()) {
+            addLog(Messages.format("progress.pending.deferred", transaction.getDeferredStatements().size()), false);
+        }
+        cancelButton.setVisible(false);
+        cancelButton.setManaged(false);
+        for (Button button : new Button[]{commitButton, rollbackButton}) {
+            button.setVisible(true);
+            button.setManaged(true);
+        }
+        startReminder();
+        Platform.runLater(this::askDecision);
+    }
+
+    /**
+     * Whether the import skips rows with errors: its transaction is committed (or confirmed) with the errors
+     */
+    public void setSkipErrors(boolean skipErrors) {
+        this.skipErrors = skipErrors;
+    }
+
+    /**
+     * Interval of the reminders, sqljam.import.confirm-commit.reminder-minutes by default
+     */
+    void setReminderInterval(Duration reminderInterval) {
+        this.reminderInterval = reminderInterval;
+    }
+
+    private void startReminder() {
+        pendingSince = System.currentTimeMillis();
+        Duration interval = reminderInterval != null ? reminderInterval
+                : Duration.minutes(context.getSettings().getConfirmCommitReminderMinutes());
+        if (interval.lessThanOrEqualTo(Duration.ZERO)) {
+            return;
+        }
+        reminder = new Timeline(new KeyFrame(interval, event -> remind()));
+        reminder.setCycleCount(Timeline.INDEFINITE);
+        reminder.play();
+    }
+
+    /**
+     * Each reminder is logged, the first one is also shown without blocking the buttons of the window
+     */
+    private void remind() {
+        if (pendingTransaction == null) {
+            return;
+        }
+        long minutes = Math.round((System.currentTimeMillis() - pendingSince) / 60000.0);
+        addLog(Messages.format("progress.reminder.log", minutes), false);
+        statusLabel.setText(Messages.get("progress.pending") + " (" + minutes + " min)");
+        if (!reminded) {
+            reminded = true;
+            Alert alert = new Alert(Alert.AlertType.WARNING, Messages.format("progress.reminder.message", minutes));
+            Dialogs.initOwner(alert, stage);
+            Branding.applyIcons(alert);
+            alert.setTitle(Messages.get("progress.reminder.title"));
+            alert.setHeaderText(Messages.get("progress.reminder.title"));
+            alert.getDialogPane().setId("reminderPane");
+            alert.show();
+        }
+    }
+
+    /**
+     * One transaction without confirm: committed when the import succeeds, rolled back when it has errors which
+     * were not skipped
+     */
+    private void completeTransaction(ManualTransaction transaction, String summary, Runnable onCompleted) {
+        if (StringUtils.isNotBlank(summary)) {
+            addLog(summary, false);
+        }
+        pendingTransaction = transaction;
+        pendingCompleted = onCompleted;
+        automatic = true;
+        decide(!transaction.isRolledBack() && (errorCount == 0 || skipErrors), false);
+    }
+
+    /**
+     * Asks the user to commit or roll back, closing the question keeps both buttons in the window
+     */
+    private void askDecision() {
+        if (pendingTransaction == null || !stage.isShowing()) {
+            return;
+        }
+        ButtonType commit = new ButtonType(Messages.get("progress.commit"), ButtonBar.ButtonData.OK_DONE);
+        ButtonType rollback = new ButtonType(Messages.get("progress.rollback"), ButtonBar.ButtonData.OTHER);
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, Messages.format("progress.decide.message",
+                stage.getTitle()), commit, rollback, ButtonType.CANCEL);
+        Dialogs.initOwner(alert, stage);
+        Branding.applyIcons(alert);
+        alert.setTitle(Messages.get("progress.decide.title"));
+        alert.setHeaderText(Messages.get("progress.decide.title"));
+        alert.getDialogPane().setId("decisionPane");
+        ((Button) alert.getDialogPane().lookupButton(ButtonType.CANCEL)).setText(Messages.get("progress.decide.later"));
+        alert.showAndWait().ifPresent(type -> {
+            if (type == commit) {
+                decide(true);
+            } else if (type == rollback) {
+                decide(false);
+            }
+        });
+    }
+
+    private void decide(boolean commit) {
+        decide(commit, false);
+    }
+
+    /**
+     * Commits or rolls back the pending transaction in background, the window is closed afterwards if asked
+     */
+    private void decide(boolean commit, boolean close) {
+        ManualTransaction transaction = pendingTransaction;
+        if (transaction == null || transaction.isFinished()) {
+            return;
+        }
+        commitButton.setDisable(true);
+        rollbackButton.setDisable(true);
+        statusLabel.setText(Messages.get(commit ? "progress.committing" : "progress.rollingBack"));
+        // Skipped rows do not roll back the import, the user may still do it
+        boolean errors = transaction.isRolledBack() || (errorCount > 0 && !skipErrors);
+        int skippedErrors = errorCount;
+        TaskRunner.run(() -> {
+            try {
+                if (commit) {
+                    return transaction.commit();
+                }
+                transaction.rollback();
+                return Collections.<String>emptyList();
+            } finally {
+                transaction.close();
+            }
+        }, failures -> {
+            failures.forEach(failure -> addLog(failure, true));
+            errorCount += failures.size();
+            String status;
+            if (!commit) {
+                status = Messages.get(errors ? "progress.rolledBackErrors" : "progress.rolledBack");
+            } else if (!failures.isEmpty()) {
+                status = Messages.format("progress.committedWithErrors", failures.size());
+            } else if (skippedErrors > 0) {
+                // Rows with errors were skipped, the others are committed
+                status = Messages.format(automatic ? "progress.completedWithErrors" : "progress.committedSkipped",
+                        skippedErrors);
+            } else {
+                status = Messages.get(automatic ? "progress.completed" : "progress.committed");
+            }
+            completeDecision(status, !commit, close);
+        }, e -> {
+            errorCount++;
+            addLog(StringUtils.defaultIfBlank(rootMessage(e), e.getClass().getName()), true);
+            completeDecision(Messages.get("progress.failed"), true, close);
+        });
+    }
+
+    private void completeDecision(String status, boolean failed, boolean close) {
+        if (reminder != null) {
+            reminder.stop();
+            reminder = null;
+        }
+        Runnable onCompleted = pendingCompleted;
+        pendingTransaction = null;
+        pendingCompleted = null;
+        statusLabel.getStyleClass().remove("status-pending");
+        for (Button button : new Button[]{commitButton, rollbackButton}) {
+            button.setVisible(false);
+            button.setManaged(false);
+        }
+        cancelButton.setVisible(true);
+        cancelButton.setManaged(true);
+        // A roll back by the user is not an error of the import
+        finish(status, failed, failed && errorCount == 0, null, onCompleted);
+        if (close) {
+            stage.close();
+        }
+    }
+
+    /**
+     * Whether the import waits for the user to commit or roll back
+     */
+    boolean isPending() {
+        return pendingTransaction != null;
     }
 
     private boolean isCancellation(Throwable e) {
@@ -379,6 +751,9 @@ public class ProgressDialog {
         statusLabel.setText(status);
         statusLabel.getStyleClass().add(failed ? "status-error" : "status-success");
         if (!failed) {
+            // Scripts of a package are imported file by file, every table is complete at the end
+            completedTables = Math.max(completedTables, totalTables);
+            updateOverall();
             updatePercent(1, 1);
         } else if (overallBar.getProgress() < 0) {
             overallBar.setProgress(0);

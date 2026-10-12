@@ -87,4 +87,12 @@ public class MariaDBDialect extends MySQLDialect {
     public int getNullSqlType(int sqlType) {
         return sqlType == Types.OTHER ? Types.VARCHAR : super.getNullSqlType(sqlType);
     }
+
+    /**
+     * MariaDB has no row alias of INSERT, VALUES() is the value of the row
+     */
+    @Override
+    protected boolean isRowAliasSupported() {
+        return false;
+    }
 }
