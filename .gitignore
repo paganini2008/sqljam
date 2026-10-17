@@ -12,7 +12,8 @@ dependency-reduced-pom.xml
 .project
 .settings/
 .factorypath
-bin/
+# Runnable jars and scripts built into the root bin/, src/bin/ holds their sources
+/bin/
 out/
 
 # OS
