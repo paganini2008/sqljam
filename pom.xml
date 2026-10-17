@@ -22,7 +22,7 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.release>17</maven.compiler.release>
         <javafx.version>17.0.20</javafx.version>
-        <atlantafx.version>2.0.1</atlantafx.version>
+        <atlantafx.version>3.0.0</atlantafx.version>
         <ikonli.version>12.4.0</ikonli.version>
         <richtextfx.version>0.11.7</richtextfx.version>
         <db2.version>12.1.5.0</db2.version>
