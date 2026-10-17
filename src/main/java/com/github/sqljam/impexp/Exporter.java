@@ -17,8 +17,13 @@ package com.github.sqljam.impexp;
 
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -32,6 +37,7 @@ import com.github.sqljam.page.EachPage;
 import com.github.sqljam.page.PageReader;
 import com.github.sqljam.page.PageRequest;
 import com.github.sqljam.page.PageResponse;
+import com.github.sqljam.utils.CaseInsensitiveMap;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -124,6 +130,18 @@ public class Exporter {
          * inserted.
          */
         private Map<String, List<String>> keyColumnNames = new HashMap<>();
+        /**
+         * Free queries exported as tables, SQL by table name, e.g. results of the SQL editor. Only the queries are
+         * exported then, as tables of the included catalog and schema.
+         */
+        private Map<String, String> queries = new LinkedHashMap<>();
+
+        /**
+         * Whether free queries are exported instead of tables
+         */
+        public boolean isQueryExport() {
+            return queries != null && !queries.isEmpty();
+        }
 
         /**
          * Query of a table, null if all rows and columns are exported. Grouped rows are not rows of the table.
@@ -184,7 +202,7 @@ public class Exporter {
                 ddlScripter = new DdlScripter(configuration.getDialect());
                 serverMetaData = new ServerMetaData(configuration.getUsername(), configuration.getPassword(),
                         connection.getMetaData(),
-                        getMetaDataOperations(), configuration.getDialect());
+                        getSourceMetaDataOperations(), configuration.getDialect());
                 MetaDataVisitor metaDataVisitor = new DefaultMetaDataVisitor(configuration, ddlScripter);
                 exportListener.onMessage("Reading metadata ...");
                 serverMetaData.accept(metaDataVisitor);
@@ -263,6 +281,15 @@ public class Exporter {
                             continue;
                         }
                         checkCancelled();
+                        String query = configuration.isQueryExport() ? configuration.getQueries().get(
+                                tableMd.getTableName()) : null;
+                        if (query != null) {
+                            // Rows of a query which can not be counted are reported as they are read
+                            Long rows = countQueryRows(connection, query);
+                            tableRows.put(tableMd, rows != null ? rows : -1L);
+                            totalRows += rows != null ? rows : 0L;
+                            continue;
+                        }
                         String sql = sourceDialect.getCountQueryStatement(catalogMd.getCatalogName(),
                                 schemaMd.getSchemaName(), tableMd.getTableName(),
                                 configuration.getTableQuery(tableMd.getTableName()));
@@ -279,6 +306,20 @@ public class Exporter {
         exportListener.onProgress(0, totalRows);
     }
 
+    /**
+     * Rows of a free query, null if it can not be counted, e.g. SHOW statements
+     */
+    private Long countQueryRows(Connection connection, String query) {
+        try {
+            return JdbcUtils.fetchOne(connection, "SELECT COUNT(*) FROM (" + query + ") q__", Long.class);
+        } catch (SQLException e) {
+            if (log.isInfoEnabled()) {
+                log.info("Rows of the query can not be counted: {}", e.getMessage());
+            }
+            return null;
+        }
+    }
+
     private boolean isDataIncluded(String tableName) {
         return ArrayUtils.isEmpty(configuration.getIncludedTableNamesForBackupingData())
                 || ArrayUtils.contains(configuration.getIncludedTableNamesForBackupingData(), tableName);
@@ -290,6 +331,12 @@ public class Exporter {
         }
         if (configuration.getDbType() == null) {
             throw new IllegalArgumentException("Database type must be required.");
+        }
+        if (configuration.isQueryExport()) {
+            // The queries are the tables of the export, filters of table names do not apply to them
+            configuration.setIncludedTableNames(configuration.getQueries().keySet().toArray(new String[0]));
+            configuration.setIncludedTableNamePattern(null);
+            configuration.setIncludedTableNamesForBackupingData(null);
         }
         Dialect dialect = configuration.getDialect();
         if (dialect.getDbType() != configuration.getDbType() && dialect.getSourceDbType() == null) {
@@ -311,6 +358,14 @@ public class Exporter {
         }
         exportListener.onMessage(String.format("Source database: %s %s", databaseMetaData.getDatabaseProductName(),
                 databaseMetaData.getDatabaseProductVersion()));
+    }
+
+    /**
+     * Metadata of the source: tables of the database, or free queries presented as tables
+     */
+    private MetaDataOperations getSourceMetaDataOperations() {
+        return configuration.isQueryExport() ? new QueryMetaDataOperations(getMetaDataOperations(),
+                configuration.getQueries()) : getMetaDataOperations();
     }
 
     public MetaDataOperations getMetaDataOperations() {
@@ -354,6 +409,12 @@ public class Exporter {
         if (configuration.getDialect() != null) {
             sourceDialect.setReadTargetDbType(configuration.getDialect().getDbType());
         }
+        String freeQuery = configuration.isQueryExport() ? configuration.getQueries().get(tableName) : null;
+        if (freeQuery != null) {
+            scanQuery(catalogName, schemaName, tableName, tableMetaData, freeQuery, sourceDialect,
+                    connectionFactory);
+            return;
+        }
         String[] columnNames = tableMetaData.getColumnMetaDatas().stream().map(ColumnMetaData::getColumnName)
                 .toArray(String[]::new);
         String[] typeNames = tableMetaData.getColumnMetaDatas().stream()
@@ -374,27 +435,217 @@ public class Exporter {
         long tableProcessedRows = 0;
         exportListener.onTableStart(catalogName, schemaName, tableName, tableTotalRows);
         for (EachPage<Map<String, Object>> eachPage : pageResponse) {
-            checkCancelled();
-            try {
-                exportHandler.exportData(catalogName, schemaName, tableName, tableMetaData, eachPage,
-                        configuration.isIdReused(), connectionFactory);
-            } catch (Exception e) {
-                if (configuration.isFailFast()) {
-                    throw new ImpExpException(e.getMessage(), e);
-                } else {
-                    exportListener.onError(String.format("Failed to export data of table '%s': %s", tableName,
-                            e.getMessage()), e);
-                    if (log.isErrorEnabled()) {
-                        log.error(e.getMessage(), e);
+            tableProcessedRows = exportPage(catalogName, schemaName, tableName, tableMetaData, eachPage,
+                    connectionFactory, tableProcessedRows, tableTotalRows);
+        }
+        exportListener.onTableEnd(catalogName, schemaName, tableName, tableProcessedRows);
+    }
+
+    /**
+     * Exports a page of rows and reports the progress
+     *
+     * @return rows of the table processed with this page
+     */
+    private long exportPage(String catalogName, String schemaName, String tableName, TableMetaData tableMetaData,
+                            EachPage<Map<String, Object>> eachPage, ConnectionFactory connectionFactory,
+                            long tableProcessedRows, long tableTotalRows) {
+        checkCancelled();
+        try {
+            exportHandler.exportData(catalogName, schemaName, tableName, tableMetaData, eachPage,
+                    configuration.isIdReused(), connectionFactory);
+        } catch (Exception e) {
+            if (configuration.isFailFast()) {
+                throw new ImpExpException(e.getMessage(), e);
+            } else {
+                exportListener.onError(String.format("Failed to export data of table '%s': %s", tableName,
+                        e.getMessage()), e);
+                if (log.isErrorEnabled()) {
+                    log.error(e.getMessage(), e);
+                }
+            }
+        }
+        long processed = tableProcessedRows + eachPage.getContent().size();
+        this.processedRows += eachPage.getContent().size();
+        exportListener.onTableProgress(catalogName, schemaName, tableName, processed, tableTotalRows);
+        exportListener.onProgress(this.processedRows, Math.max(this.totalRows, this.processedRows));
+        return processed;
+    }
+
+    /**
+     * Rows of a free query are read once by a cursor and exported page by page: paging by OFFSET would run the
+     * query again for each page, and its rows have no stable order
+     */
+    private void scanQuery(String catalogName, String schemaName, String tableName, TableMetaData tableMetaData,
+                           String query, Dialect sourceDialect, ConnectionFactory connectionFactory) {
+        long tableTotalRows = tableRows.getOrDefault(tableMetaData, -1L);
+        int pageSize = getPageSize(configuration.getPageSize(), configuration.getLobPageSize(),
+                tableMetaData.getColumnMetaDatas().stream().anyMatch(ScriptExportHandler::isLobColumn));
+        exportListener.onTableStart(catalogName, schemaName, tableName, tableTotalRows);
+        long tableProcessedRows = 0;
+        Connection connection = null;
+        boolean transactionStarted = false;
+        try {
+            connection = connectionFactory.getConnection();
+            try (Statement statement = connection.createStatement()) {
+                transactionStarted = sourceDialect.prepareStreaming(connection, statement, pageSize);
+                try (ResultSet rs = statement.executeQuery(getQueryStatement(query, tableMetaData, sourceDialect))) {
+                    ResultSetMetaData metaData = rs.getMetaData();
+                    List<String> names = QueryMetaDataOperations.getColumnNames(metaData);
+                    int columnCount = metaData.getColumnCount();
+                    int[] types = new int[columnCount];
+                    String[] typeNames = new String[columnCount];
+                    for (int i = 0; i < columnCount; i++) {
+                        types[i] = metaData.getColumnType(i + 1);
+                        typeNames[i] = metaData.getColumnTypeName(i + 1);
+                    }
+                    List<Map<String, Object>> rows = new ArrayList<>();
+                    int pageNumber = 1;
+                    boolean more = rs.next();
+                    while (more) {
+                        Map<String, Object> row = new CaseInsensitiveMap<>(new LinkedHashMap<>(columnCount));
+                        for (int i = 1; i <= columnCount; i++) {
+                            try {
+                                row.put(names.get(i - 1), sourceDialect.getColumnValue(rs, i, types[i - 1],
+                                        typeNames[i - 1]));
+                            } catch (LinkageError e) {
+                                throw QueryMetaDataOperations.toReadError(metaData, i, e);
+                            }
+                        }
+                        rows.add(row);
+                        more = rs.next();
+                        if (rows.size() >= pageSize || !more) {
+                            tableProcessedRows = exportPage(catalogName, schemaName, tableName, tableMetaData,
+                                    new QueryPage(rows, pageNumber++, pageSize, !more, tableTotalRows),
+                                    connectionFactory, tableProcessedRows, tableTotalRows);
+                            rows = new ArrayList<>();
+                        }
                     }
                 }
             }
-            tableProcessedRows += eachPage.getContent().size();
-            this.processedRows += eachPage.getContent().size();
-            exportListener.onTableProgress(catalogName, schemaName, tableName, tableProcessedRows, tableTotalRows);
-            exportListener.onProgress(this.processedRows, Math.max(this.totalRows, this.processedRows));
+        } catch (ImpExpException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ImpExpException(String.format("Unable to read the rows of query '%s': %s", tableName,
+                    e.getMessage()), e);
+        } finally {
+            if (connection != null && transactionStarted) {
+                try {
+                    // The cursor only read rows
+                    connection.rollback();
+                    connection.setAutoCommit(true);
+                } catch (SQLException ignored) {
+                }
+            }
+            if (connection != null) {
+                try {
+                    connectionFactory.close(connection);
+                } catch (SQLException ignored) {
+                }
+            }
         }
         exportListener.onTableEnd(catalogName, schemaName, tableName, tableProcessedRows);
+    }
+
+    /**
+     * The query, or the query selected again with the conversions of a table export when its columns need them,
+     * e.g. text of Map and Tuple of ClickHouse, FROM_VECTOR and XMLSERIALIZE of Oracle. A query whose labels were
+     * renamed (columns of the same name) can not be selected again, it is read as it is.
+     */
+    static String getQueryStatement(String query, TableMetaData tableMetaData, Dialect sourceDialect) {
+        List<String> expressions = new ArrayList<>();
+        boolean converted = false;
+        for (ColumnMetaData column : tableMetaData.getColumnMetaDatas()) {
+            String name = column.getColumnName();
+            if (!name.equals(column.getDetail().get(QueryMetaDataOperations.QUERY_LABEL))) {
+                return query;
+            }
+            String expression = sourceDialect.getSelectColumnExpression(name, (String) column.getDetail().get(
+                    "TYPE_NAME"));
+            converted |= !expression.equals(sourceDialect.quoteIdentifier(name));
+            expressions.add(expression);
+        }
+        return converted ? "SELECT " + String.join(", ", expressions) + " FROM (" + query + ") q__" : query;
+    }
+
+    /**
+     * A page of rows read from the cursor of a free query
+     */
+    private static class QueryPage implements EachPage<Map<String, Object>> {
+
+        private final List<Map<String, Object>> content;
+        private final int pageNumber;
+        private final int pageSize;
+        private final boolean lastPage;
+        private final long totalRecords;
+
+        QueryPage(List<Map<String, Object>> content, int pageNumber, int pageSize, boolean lastPage,
+                  long totalRecords) {
+            this.content = content;
+            this.pageNumber = pageNumber;
+            this.pageSize = pageSize;
+            this.lastPage = lastPage;
+            this.totalRecords = totalRecords;
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return content.isEmpty();
+        }
+
+        @Override
+        public boolean isLastPage() {
+            return lastPage;
+        }
+
+        @Override
+        public boolean isFirstPage() {
+            return pageNumber == 1;
+        }
+
+        @Override
+        public boolean hasNextPage() {
+            return !lastPage;
+        }
+
+        @Override
+        public boolean hasPreviousPage() {
+            return pageNumber > 1;
+        }
+
+        @Override
+        public int getTotalPages() {
+            return totalRecords < 0 ? -1 : (int) ((totalRecords + pageSize - 1) / pageSize);
+        }
+
+        @Override
+        public long getTotalRecords() {
+            return totalRecords;
+        }
+
+        @Override
+        public int getOffset() {
+            return (pageNumber - 1) * pageSize;
+        }
+
+        @Override
+        public int getPageSize() {
+            return pageSize;
+        }
+
+        @Override
+        public int getPageNumber() {
+            return pageNumber;
+        }
+
+        @Override
+        public List<Map<String, Object>> getContent() {
+            return content;
+        }
+
+        @Override
+        public Object getNextToken() {
+            return null;
+        }
     }
 
     /**

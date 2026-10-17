@@ -879,8 +879,9 @@ public class ImportExportHandler implements ExportHandler {
             return types;
         }
         types = new HashMap<>();
+        // Schemas of Db2 are padded with blanks
         try (ResultSet rs = connection.getMetaData().getColumns(connection.getCatalog(),
-                connection.getSchema(), dialect.foldIdentifier(targetTableName), null)) {
+                StringUtils.trimToNull(connection.getSchema()), dialect.foldIdentifier(targetTableName), null)) {
             while (rs.next()) {
                 types.put(rs.getString("COLUMN_NAME").toLowerCase(Locale.ENGLISH),
                         rs.getString("TYPE_NAME"));

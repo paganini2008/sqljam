@@ -35,7 +35,8 @@ import com.github.sqljam.jdbc.JdbcUtils;
 /**
  * @Description: MariaDBMetaDataOperations reads MariaDB like MySQL, with the differences of MariaDB: column defaults
  *               of information_schema are sql already (quoted literals, NULL, current_timestamp(), nextval), JSON
- *               columns are LONGTEXT with a json_valid check, sequences are tables of type SEQUENCE.
+ *               columns are LONGTEXT with a json_valid check, sequences are tables of type SEQUENCE, system versioned
+ *               tables (partitioned by SYSTEM_TIME) are marked by SYSTEM_VERSIONED.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -46,6 +47,31 @@ public class MariaDBMetaDataOperations extends MySQLMetaDataOperations {
             "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection"));
     private static final Pattern FRACTION = Pattern.compile("^(?:datetime|timestamp|time)\\((\\d)\\)$");
     private static final Pattern JSON_VALID = Pattern.compile("(?i)^\\s*json_valid\\(\\s*`?([^`)]+)`?\\s*\\)\\s*$");
+
+    /**
+     * System versioned tables keep WITH SYSTEM VERSIONING for MariaDB targets, it is required by SYSTEM_TIME
+     * partitions
+     */
+    @Override
+    public List<Map<String, Object>> getTableInfos(DatabaseMetaData databaseMetaData, String catalogName,
+                                                   String schemaName) throws SQLException {
+        List<Map<String, Object>> tableInfos = super.getTableInfos(databaseMetaData, catalogName, schemaName);
+        if (tableInfos.isEmpty()) {
+            return tableInfos;
+        }
+        Set<String> versionedTables = new HashSet<>();
+        for (Map<String, Object> row : JdbcUtils.fetchAll(databaseMetaData.getConnection(),
+                "SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?"
+                        + " AND TABLE_TYPE = 'SYSTEM VERSIONED'", new Object[]{catalogName})) {
+            versionedTables.add((String) row.get("TABLE_NAME"));
+        }
+        for (Map<String, Object> tableInfo : tableInfos) {
+            if (versionedTables.contains((String) tableInfo.get("TABLE_NAME"))) {
+                tableInfo.put("SYSTEM_VERSIONED", true);
+            }
+        }
+        return tableInfos;
+    }
 
     /**
      * JSON columns of MariaDB are LONGTEXT checked by json_valid, they are JSON of other databases

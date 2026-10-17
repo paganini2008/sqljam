@@ -464,4 +464,18 @@ public class DuckDBMetaDataOperations extends MetaDataOperations {
     private static String getCatalog(DatabaseMetaData databaseMetaData, String catalogName) throws SQLException {
         return StringUtils.isNotBlank(catalogName) ? catalogName : databaseMetaData.getConnection().getCatalog();
     }
+
+    /**
+     * Types of a result set: an ENUM has no values there, it is text
+     */
+    @Override
+    public void normalizeQueryColumnInfo(Map<String, Object> columnInfo) {
+        String typeName = StringUtils.upperCase((String) columnInfo.get("TYPE_NAME"), Locale.ENGLISH);
+        if (typeName != null && typeName.startsWith("ENUM") && !typeName.contains("(")) {
+            columnInfo.put("TYPE_NAME", "VARCHAR");
+            columnInfo.put("DATA_TYPE", Types.VARCHAR);
+            columnInfo.put("COLUMN_SIZE", null);
+        }
+        normalizeType(columnInfo);
+    }
 }

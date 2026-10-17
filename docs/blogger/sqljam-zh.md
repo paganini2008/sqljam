@@ -6,7 +6,7 @@
 
 **SqlJam**：*Move tables across databases. Schema, data and all.*
 
-一个 Java 17 + JavaFX 的桌面导入导出工具，支持关系型与 OLAP 数据库（**MySQL、MariaDB、PostgreSQL、Oracle、SQL Server、H2、SQLite、DuckDB、ClickHouse** 等）任意互导：
+一个 Java 17 + JavaFX 的桌面导入导出工具，支持关系型与 OLAP 数据库（**MySQL、MariaDB、PostgreSQL、Oracle、SQL Server、Db2、H2、SQLite、DuckDB、ClickHouse** 等）任意互导：
 可以**直接导入目标库**，也可以在同一个 schema 里复制表，或者导出为带描述文件的 **SQL / Parquet / CSV 导出包**，之后再成对导入。导入目标库默认在**一个事务**里完成，出错整体回滚，数据可以**按主键更新、插入或跳过**。
 
 ![SqlJam 主界面](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
@@ -21,7 +21,7 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 |---|---|
 | 方言差异 | 按目标方言统一翻译类型 / 标识符 / 默认值 / 自增 / 字面量 |
 | 老版本 | `Oracle11gDialect`、`PostgreSQL9Dialect`、`MySQL56Dialect`、`SQLServer2008Dialect` 等版本子类 |
-| 丢键丢索引 | 主键、唯一/普通索引、外键、注释、序列、分区一起迁移 |
+| 丢键丢索引 | 主键、唯一/普通索引、外键、注释、序列、各类分区（范围、列表、哈希、间隔、组合、引用、多级）一起迁移，树上分区表带分区方式标签 |
 | 脚本太大 | 数据文件按大小切分：SQL 与 CSV 按 10 MB 切成 `orders.sql`、`orders_2.sql`…，Parquet 按 256 MB 切成 `orders.parquet`、`orders_2.parquet`…，导入时按序号依次导入 |
 | LOB 难处理 | LOB 单独存文件，按主键回填 |
 | 脚本没有上下文 | `manifest.json`：源、目标、选项、文件 SHA-256、行数 |
@@ -31,6 +31,7 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 | 目标已有部分数据 | **按主键更新或插入**：主键（或自选的唯一索引列）相同的行更新，其余插入。**按主键跳过已存在的行**：已有的行保持不变，只插入新行。默认是插入 |
 | 数仓和业务库割裂 | DuckDB、ClickHouse 作为 OLAP 数据源，和关系型数据库分组展示 |
 | 只要表的一部分 | 数据页查询（列、WHERE、GROUP BY、ORDER BY），只导出查询结果的行 |
+| 数据来自多表关联或报表 | **SQL Query** 查询器带语法高亮，先看前几行，再把查询的全部结果当作一张表导出 |
 | 原地复制一份表 | 同一 schema 内按 `{table}_copy` 复制，键、索引、约束自动改名，原表受保护 |
 | 自定义和新型类型 | PostgreSQL 枚举与域、向量、联合、Map、Tuple、Variant |
 
@@ -64,6 +65,10 @@ bin/
 首次启动会自带一个 **Example Shop (H2)** 示例数据源，包含几张电商表（categories、customers、products、orders、order_items），装好就能直接体验。删掉了也没关系，登录页的 **Example** 按钮或菜单 **Help → Restore Example Database** 随时可以恢复。
 
 右键数据源选 **Connect**，连上之后同一个菜单变成 **Disconnect**，断开时它的表页签一起关闭。导入导出选目标数据源时，旁边的 **+** 按钮可以当场新建一个。工具栏最右边是 **Exit**。**Help → About SqlJam** 里有版本、主页、仓库地址和作者联系方式，右下角的 GitHub 图标点一下直接打开仓库。
+
+工具栏的 **SQL Query** 为选中的数据源打开查询器。**Ctrl+Enter**（macOS 上是 **⌘+Enter**）执行光标所在的语句，**Ctrl+Shift+Enter** 执行全部，**Export…** 把查询的全部结果导出为 SQL、Parquet、CSV 或导入另一个数据库：
+
+![SQL Query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sql-editor.png)
 
 [教学视频](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-tutorial.mp4)以示例库演示一遍：筛选行、导出到文件、导出包导入 PostgreSQL，再直接复制到 SQL Server 和 Oracle。
 
@@ -259,4 +264,5 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 7. 连接池 + 批量写入，直接导入 4 万 ~ 9.5 万行/秒。
 8. 暗色主流界面，7 种主题，百分比进度与取消。
 9. Parquet、CSV 导出包与外部文件加载，DuckDB、ClickHouse 作为 OLAP 数据源，导入默认一个事务、出错整体回滚，支持按主键更新或插入。
+10. SQL Query 查询器的任意查询结果都能走同样的导出出口，来自表的列保留原类型。
 10. 表数据可查询，只导出查询结果，也能在同一 schema 内复制表。

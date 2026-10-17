@@ -409,7 +409,8 @@ public class ClickHouseDialect extends Dialect {
             return String.format("hex(%1$s) AS %1$s", quoteIdentifier(columnName));
         }
         if (ClickHouseMetaDataOperations.isTextReadType(typeName)) {
-            return String.format("toString(%1$s) AS %1$s", quoteIdentifier(columnName));
+            // NULL stays NULL, toString of a NULL Variant is the text ᴺᵁᴸᴸ in some versions (25.8)
+            return String.format("if(isNull(%1$s), NULL, toString(%1$s)) AS %1$s", quoteIdentifier(columnName));
         }
         return super.getSelectColumnExpression(columnName, typeName);
     }

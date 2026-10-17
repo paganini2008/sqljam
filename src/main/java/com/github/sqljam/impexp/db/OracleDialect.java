@@ -16,6 +16,7 @@
 package com.github.sqljam.impexp.db;
 
 import java.math.BigDecimal;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.time.LocalTime;
@@ -353,6 +354,12 @@ public class OracleDialect extends Dialect {
         if (isCrossDatabase()) {
             return null;
         }
+        // Partitioned like the parent table by the foreign key, which is renamed with the copied tables
+        String constraint = (String) detail.get("PARTITION_REFERENCE_CONSTRAINT");
+        if (StringUtils.isNotBlank(constraint)) {
+            return String.format("PARTITION BY REFERENCE (%s)", quoteIdentifier(getLimitedIdentifier(
+                    foldIdentifier(getTargetTableName(constraint)))));
+        }
         return (String) detail.get("PARTITION_CLAUSE");
     }
 
@@ -512,5 +519,18 @@ public class OracleDialect extends Dialect {
         int code = e.getErrorCode();
         return code == 955 || code == 2260 || code == 2261 || code == 2264 || code == 2275 || code == 1408
                 || super.isAlreadyExistsError(e);
+    }
+
+    /**
+     * Vectors of free queries are read as text, like FROM_VECTOR of the columns of a table export: the driver has
+     * no default java type for them
+     */
+    @Override
+    public Object getColumnValue(ResultSet rs, int columnIndex, int columnType, String columnTypeName)
+            throws SQLException {
+        if ("VECTOR".equalsIgnoreCase(columnTypeName)) {
+            return rs.getString(columnIndex);
+        }
+        return super.getColumnValue(rs, columnIndex, columnType, columnTypeName);
     }
 }

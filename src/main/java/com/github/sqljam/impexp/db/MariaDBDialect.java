@@ -15,14 +15,18 @@
  */
 package com.github.sqljam.impexp.db;
 
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
+import java.util.Map;
 
 import com.github.sqljam.impexp.DbType;
 
 /**
  * @Description: MariaDBDialect generates ddl/dml of MariaDB, which is compatible with MySQL. Differences of MariaDB:
  *               sequences (CREATE SEQUENCE, nextval defaults), native UUID, INET4 and INET6 types, JSON stored as
- *               LONGTEXT with a json_valid check.
+ *               LONGTEXT with a json_valid check, system versioned tables.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -32,6 +36,18 @@ public class MariaDBDialect extends MySQLDialect {
     @Override
     public DbType getDbType() {
         return DbType.MARIADB;
+    }
+
+    /**
+     * System versioned tables of MariaDB are created with system versioning, their SYSTEM_TIME partitions require it
+     */
+    @Override
+    public String getTableOptions(String catalog, String schema, String tableName, Map<String, Object> detail) {
+        String options = super.getTableOptions(catalog, schema, tableName, detail);
+        if (!isCrossDatabase() && detail != null && Boolean.TRUE.equals(detail.get("SYSTEM_VERSIONED"))) {
+            return options + " WITH SYSTEM VERSIONING";
+        }
+        return options;
     }
 
     /**
@@ -93,6 +109,15 @@ public class MariaDBDialect extends MySQLDialect {
      */
     @Override
     protected boolean isRowAliasSupported() {
+        return false;
+    }
+
+    /**
+     * MariaDB Connector/J streams the rows by the fetch size
+     */
+    @Override
+    public boolean prepareStreaming(Connection connection, Statement statement, int fetchSize) throws SQLException {
+        statement.setFetchSize(fetchSize);
         return false;
     }
 }

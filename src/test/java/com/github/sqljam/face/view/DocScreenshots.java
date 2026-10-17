@@ -207,7 +207,13 @@ class DocScreenshots {
                 .filter(item -> "test".equals(item.getValue().getLabel())).findFirst().orElseThrow());
         expand(catalog);
         FxTestSupport.run(() -> {
-            tree.getSelectionModel().select(catalog);
+            // The fixture tables with the partitioned ones (sjm_pt_..., sjm_sales) are in view, the table selected
+            TreeItem<DbNode> first = catalog.getChildren().stream()
+                    .filter(item -> item.getValue().getLabel().startsWith("sjm_")).findFirst().orElse(catalog);
+            TreeItem<DbNode> opened = catalog.getChildren().stream()
+                    .filter(item -> table.equals(item.getValue().getLabel())).findFirst().orElse(catalog);
+            tree.getSelectionModel().select(opened);
+            tree.scrollTo(Math.max(0, tree.getRow(first) - 1));
             mainView.openTable(tableNode(table));
         });
         return mainView;
@@ -259,6 +265,31 @@ class DocScreenshots {
             ((Button) mainView.lookup("#applyQueryButton")).fire();
         });
         snapshot("table-data.png");
+    }
+
+    /**
+     * SQL editor of the MySQL database: a highlighted query with a join and its first rows
+     */
+    @Test
+    void sqlEditor() throws IOException {
+        MainView mainView = openTable("sjm_emp", 1280, 753);
+        FxTestSupport.run(() -> {
+            TabPane tables = (TabPane) mainView.lookup("#tableTabs");
+            tables.getTabs().clear();
+            mainView.openSqlTab(DbNode.catalog(mysql, "test"));
+        });
+        SqlTab tab = FxTestSupport.call(() -> (SqlTab) ((TabPane) mainView.lookup("#tableTabs")).getTabs().get(0));
+        FxTestSupport.run(() -> tab.getEditor().setText("-- Employees with their departments\n"
+                + "SELECT e.id, e.name, d.name AS dept, e.salary,\n"
+                + "       CASE WHEN e.salary > 5000 THEN 'senior' ELSE 'junior' END AS level\n"
+                + "FROM sjm_emp e\n"
+                + "JOIN sjm_dept d ON d.id = e.dept_id\n"
+                + "WHERE e.active = 1 AND e.name LIKE 'Emp%'\n"
+                + "ORDER BY e.salary DESC;"));
+        FxTestSupport.run(() -> tab.run(false));
+        FxTestSupport.waitUntil(() -> !tab.isBusy() && tab.getLastQuery() != null);
+        snapshot("sql-editor.png");
+        FxTestSupport.run(tab::close);
     }
 
     /**

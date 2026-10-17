@@ -16,6 +16,9 @@
 package com.github.sqljam.impexp.db;
 
 
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.util.Map;
 
@@ -416,5 +419,18 @@ public class PostgreSQLDialect extends Dialect {
     @Override
     public boolean isGeneratedColumnSupported() {
         return true;
+    }
+
+    /**
+     * PostgreSQL reads the rows by a cursor only in a transaction, without it all rows are read into memory
+     */
+    @Override
+    public boolean prepareStreaming(Connection connection, Statement statement, int fetchSize) throws SQLException {
+        statement.setFetchSize(fetchSize);
+        if (connection.getAutoCommit()) {
+            connection.setAutoCommit(false);
+            return true;
+        }
+        return false;
     }
 }

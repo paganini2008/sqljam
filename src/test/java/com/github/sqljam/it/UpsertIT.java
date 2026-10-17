@@ -249,55 +249,68 @@ class UpsertIT {
             statement.execute("CREATE TABLE sjh_skip (id INT PRIMARY KEY, note VARCHAR(20))");
             statement.execute("INSERT INTO sjh_skip SELECT X, 'row ' || X FROM SYSTEM_RANGE(1, 6)");
         }
-        ImportExporter create = newImporter(target, WriteMode.INSERT, true);
-        create.getExportConfiguration().setIncludedTableNames(new String[]{"SJH_SKIP"});
-        create.setExportListener(new CollectingListener());
-        create.exportDdlAndData();
-        for (boolean oneTransaction : new boolean[]{false, true}) {
-            String label = (oneTransaction ? "one transaction of " : "commits every N rows of ") + target;
-            try (Connection connection = target.getTargetConnection(); Statement statement = connection
-                    .createStatement()) {
-                ItVerifier verifier = new ItVerifier(SOURCE, target, connection);
-                statement.executeUpdate("DELETE FROM " + verifier.ref("skip") + " WHERE id IN (2, 4)");
-                if (!connection.getAutoCommit()) {
-                    connection.commit();
-                }
-            }
-            ImportExporter importExporter = newImporter(target, WriteMode.INSERT, false);
-            importExporter.getExportConfiguration().setIncludedTableNames(new String[]{"SJH_SKIP"});
-            importExporter.getExportConfiguration().setPageSize(2);
-            importExporter.getExportConfiguration().setFailFast(false);
-            CollectingListener listener = new CollectingListener();
-            importExporter.setExportListener(listener);
-            boolean rolledBack = false;
-            if (oneTransaction) {
-                try (ManualTransaction transaction = new ManualTransaction(target.getTargetConnection(),
-                        target.getDbType().isTransactionalDdl())) {
-                    importExporter.setTargetConnectionFactory(new SharedConnectionFactory(
-                            transaction.getConnection()));
-                    importExporter.exportData();
-                    rolledBack = transaction.isRolledBack();
-                    if (!rolledBack) {
-                        assertEquals(List.of(), transaction.commit(), label);
+        try {
+            ImportExporter create = newImporter(target, WriteMode.INSERT, true);
+            create.getExportConfiguration().setIncludedTableNames(new String[]{"SJH_SKIP"});
+            create.setExportListener(new CollectingListener());
+            create.exportDdlAndData();
+            for (boolean oneTransaction : new boolean[]{false, true}) {
+                String label = (oneTransaction ? "one transaction of " : "commits every N rows of ") + target;
+                try (Connection connection = target.getTargetConnection(); Statement statement = connection
+                        .createStatement()) {
+                    ItVerifier verifier = new ItVerifier(SOURCE, target, connection);
+                    statement.executeUpdate("DELETE FROM " + verifier.ref("skip") + " WHERE id IN (2, 4)");
+                    if (!connection.getAutoCommit()) {
+                        connection.commit();
                     }
                 }
-            } else {
-                importExporter.exportData();
-            }
-            try (Connection connection = target.getTargetConnection()) {
-                ItVerifier verifier = new ItVerifier(SOURCE, target, connection);
-                if (rolledBack) {
-                    // Without savepoints the transaction can not go on (DuckDB)
-                    assertEquals(DbType.DUCKDB, target.getDbType(), label);
-                    assertEquals(4, verifier.count("skip"), label);
-                    continue;
+                ImportExporter importExporter = newImporter(target, WriteMode.INSERT, false);
+                importExporter.getExportConfiguration().setIncludedTableNames(new String[]{"SJH_SKIP"});
+                importExporter.getExportConfiguration().setPageSize(2);
+                importExporter.getExportConfiguration().setFailFast(false);
+                CollectingListener listener = new CollectingListener();
+                importExporter.setExportListener(listener);
+                boolean rolledBack = false;
+                if (oneTransaction) {
+                    try (ManualTransaction transaction = new ManualTransaction(target.getTargetConnection(),
+                            target.getDbType().isTransactionalDdl())) {
+                        importExporter.setTargetConnectionFactory(new SharedConnectionFactory(
+                                transaction.getConnection()));
+                        importExporter.exportData();
+                        rolledBack = transaction.isRolledBack();
+                        if (!rolledBack) {
+                            assertEquals(List.of(), transaction.commit(), label);
+                        }
+                    }
+                } else {
+                    importExporter.exportData();
                 }
-                assertEquals(6, verifier.count("skip"), label);
+                try (Connection connection = target.getTargetConnection()) {
+                    ItVerifier verifier = new ItVerifier(SOURCE, target, connection);
+                    if (rolledBack) {
+                        // Without savepoints the transaction can not go on (DuckDB)
+                        assertEquals(DbType.DUCKDB, target.getDbType(), label);
+                        assertEquals(4, verifier.count("skip"), label);
+                        continue;
+                    }
+                    assertEquals(6, verifier.count("skip"), label);
+                }
+                List<String> skipped = listener.getErrors();
+                assertEquals(4, skipped.size(), label + ": " + skipped);
+                assertTrue(skipped.stream().allMatch(error -> error.toLowerCase().startsWith(
+                        "skipped row of table 'sjh_skip' (id=")), label + ": " + skipped);
             }
-            List<String> skipped = listener.getErrors();
-            assertEquals(4, skipped.size(), label + ": " + skipped);
-            assertTrue(skipped.stream().allMatch(error -> error.toLowerCase().startsWith(
-                    "skipped row of table 'sjh_skip' (id=")), label + ": " + skipped);
+        } finally {
+            // The table of the source is not a fixture table of other tests
+            try (Connection source = SOURCE.getSourceConnection(); Statement statement = source.createStatement()) {
+                statement.execute("DROP TABLE IF EXISTS sjh_skip");
+            }
+            try (Connection connection = target.getTargetConnection(); Statement statement = connection
+                    .createStatement()) {
+                statement.execute("DROP TABLE " + new ItVerifier(SOURCE, target, connection).ref("skip"));
+            } catch (Exception | AssertionError e) {
+                // The table was not created
+            }
         }
     }
 
@@ -331,8 +344,10 @@ class UpsertIT {
                     // The table does not exist
                 }
             }
-            statement.execute("CREATE TABLE " + table + " (" + quote(dialect, "orderid") + " INT PRIMARY KEY, "
-                    + quote(dialect, "CUSTOMERNAME") + " VARCHAR(20), " + quote(dialect, "Amount") + " INT)");
+            // Columns of primary keys are NOT NULL in Db2
+            statement.execute("CREATE TABLE " + table + " (" + quote(dialect, "orderid")
+                    + " INT NOT NULL PRIMARY KEY, " + quote(dialect, "CUSTOMERNAME") + " VARCHAR(20), "
+                    + quote(dialect, "Amount") + " INT)");
             if (!connection.getAutoCommit()) {
                 connection.commit();
             }

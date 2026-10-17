@@ -29,7 +29,8 @@ public final class Icons {
     public static final String CATALOG = "fth-database";
     public static final String SCHEMA = "fth-folder";
     public static final String TABLE = "fth-grid";
-    public static final String PARTITION = "fth-layers";
+    public static final String PARTITIONED = "fth-layers";
+    public static final String PARTITION = "fth-pie-chart";
     public static final String LOADING = "fth-loader";
     public static final String ADD = "fth-plus";
     public static final String EDIT = "fth-edit";
@@ -55,6 +56,7 @@ public final class Icons {
     public static final String DISCONNECT = "fth-power";
     public static final String EXIT = "fth-log-out";
     public static final String SAVE = "fth-save";
+    public static final String SQL = "fth-terminal";
 
     private Icons() {
     }

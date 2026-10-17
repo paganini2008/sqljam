@@ -237,7 +237,7 @@ public class DefaultMetaDataVisitor implements MetaDataVisitor {
     public void visit(ForeignKeyMetaData metaData) throws SQLException {
         String[] statements = metaData.getStatements();
         if (ArrayUtils.isNotEmpty(statements)) {
-            if (configuration.getDialect().isForeignKeyInline()) {
+            if (configuration.getDialect().isForeignKeyInline() || metaData.isPartitionReference()) {
                 Table table = getDdlScripter().getTable(metaData.getCatalogName(), metaData.getSchemaName(),
                         metaData.getTableName());
                 addStatements(table.getPrimaryKeyStatements(), statements);

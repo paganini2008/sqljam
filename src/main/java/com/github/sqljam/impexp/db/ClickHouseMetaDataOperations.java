@@ -107,17 +107,19 @@ public class ClickHouseMetaDataOperations extends MetaDataOperations {
 
     /**
      * Tables of the database, inner tables of materialized views are skipped. ENGINE_FULL keeps the table engine
-     * with its sorting key, partition and settings for ClickHouse targets.
+     * with its sorting key, partition and settings for ClickHouse targets, PARTITION_KEY is the partition expression.
      */
     @Override
     public List<Map<String, Object>> getTableInfos(DatabaseMetaData databaseMetaData, String catalogName,
                                                    String schemaName) throws SQLException {
         String schema = getSchema(databaseMetaData, schemaName);
         Map<String, String> engines = new HashMap<>();
-        String sql = "SELECT name, engine_full FROM system.tables WHERE database = ?";
+        Map<String, String> partitionKeys = new HashMap<>();
+        String sql = "SELECT name, engine_full, partition_key FROM system.tables WHERE database = ?";
         for (Map<String, Object> row : JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql,
                 new Object[]{schema})) {
             engines.put((String) row.get("name"), (String) row.get("engine_full"));
+            partitionKeys.put((String) row.get("name"), (String) row.get("partition_key"));
         }
         List<Map<String, Object>> tableInfos = new ArrayList<>();
         for (Map<String, Object> info : super.getTableInfos(databaseMetaData, null, schema)) {
@@ -127,6 +129,10 @@ public class ClickHouseMetaDataOperations extends MetaDataOperations {
             }
             Map<String, Object> tableInfo = new LinkedHashMap<>(info);
             tableInfo.put("ENGINE_FULL", engines.get(tableName));
+            // The partition key is kept by ENGINE_FULL, it is shown to tell partitioned tables
+            if (StringUtils.isNotBlank(partitionKeys.get(tableName))) {
+                tableInfo.put("PARTITION_KEY", partitionKeys.get(tableName));
+            }
             tableInfos.add(tableInfo);
         }
         return tableInfos;
@@ -524,5 +530,13 @@ public class ClickHouseMetaDataOperations extends MetaDataOperations {
      */
     private static String getSchema(DatabaseMetaData databaseMetaData, String schemaName) throws SQLException {
         return StringUtils.isNotBlank(schemaName) ? schemaName : databaseMetaData.getConnection().getSchema();
+    }
+
+    /**
+     * Types of a result set have their wrappers like the types of system.columns, e.g. Nullable(String)
+     */
+    @Override
+    public void normalizeQueryColumnInfo(Map<String, Object> columnInfo) {
+        normalizeType(columnInfo, (String) columnInfo.get("TYPE_NAME"));
     }
 }

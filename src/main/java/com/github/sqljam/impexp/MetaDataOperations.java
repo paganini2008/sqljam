@@ -99,4 +99,11 @@ public class MetaDataOperations {
                                                       String schemaName) throws SQLException {
         return Collections.emptyList();
     }
+
+    /**
+     * A column of a free query described by the metadata of its result set, normalized like a column of a table,
+     * e.g. wrapped types of ClickHouse. Columns which come from a table are described by their table instead.
+     */
+    public void normalizeQueryColumnInfo(Map<String, Object> columnInfo) {
+    }
 }

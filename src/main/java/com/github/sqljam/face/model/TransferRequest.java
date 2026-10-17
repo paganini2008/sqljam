@@ -18,6 +18,7 @@ package com.github.sqljam.face.model;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -139,4 +140,9 @@ public class TransferRequest {
      * Rows and columns of tables narrowed in the data viewer, by table name
      */
     private Map<String, TableQuery> tableQueries = new HashMap<>();
+    /**
+     * Free queries exported as tables, SQL by table name, e.g. of the SQL editor. The tables of the schema are not
+     * exported then.
+     */
+    private Map<String, String> queries = new LinkedHashMap<>();
 }

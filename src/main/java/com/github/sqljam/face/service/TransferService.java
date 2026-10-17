@@ -21,6 +21,7 @@ import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 
 import org.apache.commons.lang3.StringUtils;
@@ -130,6 +131,7 @@ public class TransferService {
         configuration.setLobPageSize(request.getLobPageSize());
         configuration.setConnectionPoolEnabled(true);
         configuration.setTableQueries(new HashMap<>(request.getTableQueries()));
+        configuration.setQueries(new LinkedHashMap<>(request.getQueries()));
         configuration.setWriteMode(request.getWriteMode());
         configuration.setKeyColumnNames(new HashMap<>(request.getKeyColumnNames()));
     }

@@ -59,10 +59,10 @@ public class ItVerifier {
 
     private static final Set<ItDatabase> SEQUENCE_DATABASES = EnumSet.of(ItDatabase.DUCKDB,
             ItDatabase.MARIADB, ItDatabase.POSTGRESQL, ItDatabase.ORACLE,
-            ItDatabase.SQLSERVER, ItDatabase.H2);
+            ItDatabase.SQLSERVER, ItDatabase.DB2, ItDatabase.H2);
     private static final Set<ItDatabase> PARTITION_DATABASES = EnumSet.of(ItDatabase.MYSQL,
             ItDatabase.MARIADB, ItDatabase.POSTGRESQL,
-            ItDatabase.ORACLE, ItDatabase.SQLSERVER);
+            ItDatabase.ORACLE, ItDatabase.SQLSERVER, ItDatabase.DB2);
 
     private final ItDatabase source;
     private final ItDatabase target;
@@ -85,7 +85,8 @@ public class ItVerifier {
         this.operations = target.getDbType().createMetaDataOperations();
         this.dialect = target.getDbType().createDialect();
         DbType dbType = target.getDbType();
-        this.catalog = dbType == DbType.ORACLE || dbType == DbType.SQLITE ? null : connection.getCatalog();
+        this.catalog = dbType == DbType.ORACLE || dbType == DbType.SQLITE || dbType == DbType.DB2 ? null
+                : connection.getCatalog();
         this.schema = schema;
         for (Map<String, Object> info : operations.getTableInfos(connection.getMetaData(), catalog, schema)) {
             String tableName = (String) info.get("TABLE_NAME");
@@ -327,8 +328,8 @@ public class ItVerifier {
         List<Map<String, Object>> expected;
         try (Connection sourceConnection = source.getSourceConnection()) {
             MetaDataOperations sourceOperations = source.getDbType().createMetaDataOperations();
-            String sourceCatalog = source.getDbType() == DbType.ORACLE || source.getDbType() == DbType.SQLITE ? null
-                    : sourceConnection.getCatalog();
+            String sourceCatalog = source.getDbType() == DbType.ORACLE || source.getDbType() == DbType.SQLITE
+                    || source.getDbType() == DbType.DB2 ? null : sourceConnection.getCatalog();
             String typesTable = sourceOperations.getTableInfos(sourceConnection.getMetaData(), sourceCatalog,
                     source.getSourceSchema()).stream().map(info -> (String) info.get("TABLE_NAME"))
                     .filter(name -> name.equalsIgnoreCase(source.getPrefix() + "types")).findFirst().orElseThrow();

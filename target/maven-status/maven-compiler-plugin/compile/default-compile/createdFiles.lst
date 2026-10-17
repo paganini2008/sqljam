@@ -9,7 +9,9 @@ com/github/sqljam/face/model/IndexInfo.class
 com/github/sqljam/face/view/ConnectionTree$1.class
 com/github/sqljam/impexp/ImpExpException.class
 com/github/sqljam/face/view/PackageViewer$1.class
+com/github/sqljam/impexp/DbType$11.class
 com/github/sqljam/face/service/DdlGenerator.class
+com/github/sqljam/face/service/SqlStatements.class
 com/github/sqljam/utils/CaseInsensitiveMap.class
 com/github/sqljam/face/view/ConnectionForm.class
 com/github/sqljam/impexp/DbType$4.class
@@ -18,6 +20,7 @@ com/github/sqljam/impexp/AbstractFileImporter.class
 com/github/sqljam/impexp/ScriptImporter.class
 com/github/sqljam/face/service/SettingsStore.class
 com/github/sqljam/impexp/ImportExporter.class
+com/github/sqljam/face/view/SqlTab$1.class
 com/github/sqljam/impexp/PartitionTableMetaData.class
 com/github/sqljam/face/view/PackageViewer.class
 com/github/sqljam/impexp/ParquetExporter.class
@@ -25,6 +28,7 @@ com/github/sqljam/impexp/ScriptExportHandler$DataFile.class
 com/github/sqljam/impexp/db/SQLServerDialect.class
 com/github/sqljam/impexp/SqlTextUtils.class
 com/github/sqljam/utils/Observable.class
+com/github/sqljam/face/view/SqlTab.class
 com/github/sqljam/face/model/ColumnInfo.class
 com/github/sqljam/impexp/DbType.class
 com/github/sqljam/impexp/db/MySQL57Dialect.class
@@ -35,6 +39,7 @@ com/github/sqljam/face/view/ProgressDialog$1.class
 com/github/sqljam/page/EachPage.class
 com/github/sqljam/page/SimplePageResponse$PageIterator.class
 com/github/sqljam/impexp/DuckDBWorkspace.class
+com/github/sqljam/impexp/db/Db2MetaDataOperations.class
 com/github/sqljam/page/PageResponse.class
 com/github/sqljam/face/view/ConnectionDialog.class
 com/github/sqljam/face/service/ConnectionStore.class
@@ -45,6 +50,7 @@ com/github/sqljam/impexp/db/MariaDBMetaDataOperations.class
 com/github/sqljam/face/view/ExportDialog$2.class
 com/github/sqljam/impexp/IdentityValueTracker.class
 com/github/sqljam/impexp/IdentifierCase.class
+com/github/sqljam/face/model/SqlResult.class
 com/github/sqljam/impexp/DbCategory.class
 com/github/sqljam/face/view/DbNode$Kind.class
 com/github/sqljam/impexp/DbType$9.class
@@ -52,17 +58,20 @@ com/github/sqljam/face/Banner$Mode.class
 com/github/sqljam/impexp/DbType$3.class
 com/github/sqljam/face/view/ProgressDialog$2.class
 com/github/sqljam/impexp/DbType$5.class
+com/github/sqljam/face/view/SqlTab$SqlFailure.class
 com/github/sqljam/impexp/DataFileStrategy.class
 com/github/sqljam/impexp/DataFileExporter.class
 com/github/sqljam/face/service/DdlGenerator$CapturingHandler.class
 com/github/sqljam/impexp/db/DuckDBDialect.class
 com/github/sqljam/face/view/ThemeManager.class
+com/github/sqljam/face/view/ExportDialog$3.class
 com/github/sqljam/face/view/ConnectionTree$LazyItem.class
 com/github/sqljam/face/view/TableTab.class
 com/github/sqljam/page/ReadonlyPage.class
 com/github/sqljam/impexp/db/Oracle12cDialect.class
 com/github/sqljam/jdbc/DataAccessException.class
 com/github/sqljam/face/view/ImportPackageDialog$ImportRequest.class
+com/github/sqljam/impexp/db/Db2Dialect.class
 com/github/sqljam/jdbc/ManualTransaction$Managed.class
 com/github/sqljam/jdbc/JdbcUtils$MapCursor.class
 com/github/sqljam/face/view/SplashView.class
@@ -145,11 +154,13 @@ com/github/sqljam/impexp/LobManifestWriter.class
 com/github/sqljam/face/view/CsvOptionsPane$1.class
 com/github/sqljam/face/view/ProgressDialog.class
 com/github/sqljam/page/PageReader.class
+com/github/sqljam/impexp/Exporter$QueryPage.class
 com/github/sqljam/impexp/db/PostgreSQL10Dialect.class
 com/github/sqljam/impexp/DbType$1.class
 com/github/sqljam/face/view/ImportParquetDialog$ParquetRequest.class
 com/github/sqljam/face/SqlJamApplication.class
 com/github/sqljam/impexp/db/SQLiteDialect.class
+com/github/sqljam/face/view/SqlTab$LogEntry.class
 com/github/sqljam/impexp/CsvSplitter.class
 com/github/sqljam/face/view/Dialogs.class
 com/github/sqljam/face/view/DbTypeCells$1.class
@@ -190,6 +201,7 @@ com/github/sqljam/face/view/KeyColumnsDialog.class
 com/github/sqljam/impexp/MetaDataOperations.class
 com/github/sqljam/impexp/CsvExporter.class
 com/github/sqljam/impexp/ExportManifest$Database.class
+com/github/sqljam/face/view/SqlEditor.class
 com/github/sqljam/impexp/MetaDataVisitor.class
 com/github/sqljam/impexp/ImportExportHandler$RowBinder.class
 com/github/sqljam/impexp/TableMetaData.class
@@ -210,6 +222,7 @@ com/github/sqljam/page/SimplePageResponse.class
 com/github/sqljam/impexp/db/PostgreSQL9Dialect.class
 com/github/sqljam/impexp/WriteMode.class
 com/github/sqljam/face/view/DbNode.class
+com/github/sqljam/face/service/SqlStatements$Statement.class
 com/github/sqljam/face/SplashPreloader.class
 com/github/sqljam/impexp/DdlScripter$PartitionTable.class
 com/github/sqljam/impexp/ImportExportHandler.class
@@ -223,6 +236,7 @@ com/github/sqljam/impexp/ExportListener.class
 com/github/sqljam/impexp/ScriptExporter.class
 com/github/sqljam/impexp/Dialect.class
 com/github/sqljam/jdbc/PreparedStatementCallback.class
+com/github/sqljam/impexp/QueryMetaDataOperations.class
 com/github/sqljam/impexp/db/PostgreSQLDialect.class
 com/github/sqljam/impexp/ExportMode.class
 com/github/sqljam/impexp/HikariDataSourceConnectionFactory.class

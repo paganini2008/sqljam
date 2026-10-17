@@ -332,7 +332,7 @@ public class DataPane extends BorderPane {
     /**
      * Column width estimated by the header and values of the first rows
      */
-    private static double getColumnWidth(String header, List<List<String>> rows, int index) {
+    static double getColumnWidth(String header, List<List<String>> rows, int index) {
         int length = header.length();
         for (int i = 0; i < Math.min(rows.size(), 50); i++) {
             String value = rows.get(i).get(index);
@@ -365,7 +365,7 @@ public class DataPane extends BorderPane {
     /**
      * Cell showing NULL values in a dimmed style
      */
-    private static class NullableCell extends TableCell<List<String>, String> {
+    static class NullableCell extends TableCell<List<String>, String> {
 
         @Override
         protected void updateItem(String item, boolean empty) {

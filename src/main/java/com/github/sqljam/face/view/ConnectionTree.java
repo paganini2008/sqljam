@@ -17,15 +17,22 @@ package com.github.sqljam.face.view;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.function.Consumer;
 
+import org.apache.commons.lang3.StringUtils;
+import org.kordamp.ikonli.javafx.FontIcon;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.DbType;
 import javafx.application.Platform;
+import javafx.geometry.Pos;
 import javafx.scene.control.ContextMenu;
+import javafx.scene.control.Label;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Tooltip;
@@ -33,6 +40,7 @@ import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.input.MouseButton;
+import javafx.scene.layout.HBox;
 import lombok.Setter;
 
 /**
@@ -49,6 +57,11 @@ public class ConnectionTree extends TreeView<DbNode> {
 
     @Setter
     private Consumer<DbNode> onOpenTable;
+    /**
+     * Opens a SQL editor on the data source, catalog, schema or table of the node
+     */
+    @Setter
+    private Consumer<DbNode> onSqlQuery;
     @Setter
     private Consumer<DbNode> onExport;
     @Setter
@@ -199,10 +212,78 @@ public class ConnectionTree extends TreeView<DbNode> {
         return children;
     }
 
-    private static void addTables(List<TreeItem<DbNode>> children, ConnectionProfile profile, List<TableInfo> tables) {
+    /**
+     * Partitions (PostgreSQL) are children of their partitioned tables, like DBeaver and DataGrip show them
+     */
+    static void addTables(List<TreeItem<DbNode>> children, ConnectionProfile profile, List<TableInfo> tables) {
+        Map<String, TreeItem<DbNode>> items = new LinkedHashMap<>();
         for (TableInfo table : tables) {
-            children.add(new TreeItem<>(DbNode.table(profile, table)));
+            items.put(table.getName(), new TreeItem<>(DbNode.table(profile, table)));
         }
+        for (TableInfo table : tables) {
+            TreeItem<DbNode> parent = table.isPartition() ? items.get(table.getParent()) : null;
+            if (parent != null) {
+                parent.getChildren().add(items.get(table.getName()));
+            } else {
+                children.add(items.get(table.getName()));
+            }
+        }
+    }
+
+    /**
+     * Badge of a partitioned table showing its partitioning, e.g. RANGE, LIST, HASH, or the partition key of
+     * ClickHouse. Null for other tables.
+     */
+    static Label partitionBadge(TableInfo table) {
+        if (!table.isPartitioned()) {
+            return null;
+        }
+        String text = StringUtils.isNotBlank(table.getPartitionType())
+                ? table.getPartitionType().toUpperCase(Locale.ENGLISH)
+                : StringUtils.defaultIfBlank(table.getPartitionKey(), Messages.get("tree.partition"));
+        Label badge = new Label(StringUtils.abbreviate(text, 24));
+        badge.getStyleClass().add("partition-badge");
+        return badge;
+    }
+
+    /**
+     * Icon of a table: partitioned tables (accent layers) and partitions (muted slices) differ from plain tables
+     */
+    static FontIcon tableIcon(TableInfo table) {
+        if (table.isPartitioned()) {
+            FontIcon icon = Icons.of(Icons.PARTITIONED);
+            icon.getStyleClass().add("partitioned-icon");
+            return icon;
+        }
+        if (table.isPartition()) {
+            FontIcon icon = Icons.of(Icons.PARTITION);
+            icon.getStyleClass().add("partition-icon");
+            return icon;
+        }
+        return Icons.of(Icons.TABLE);
+    }
+
+    /**
+     * Partitioning and comment of a table, null if it has none
+     */
+    static String tableTooltip(TableInfo table) {
+        List<String> lines = new ArrayList<>();
+        if (table.isPartitioned()) {
+            // e.g. RANGE (sale_year), toYYYYMM(created) of ClickHouse
+            String partitioning = StringUtils.defaultString(table.getPartitionType());
+            if (StringUtils.isNotBlank(table.getPartitionKey())) {
+                partitioning = StringUtils.isBlank(partitioning) ? table.getPartitionKey()
+                        : partitioning + " (" + table.getPartitionKey() + ")";
+            }
+            lines.add(Messages.format("tree.partitioned", partitioning).trim());
+        }
+        if (table.isPartition() && table.getParent() != null) {
+            lines.add(Messages.format("tree.partitionOf", table.getParent()));
+        }
+        if (table.getRemarks() != null) {
+            lines.add(table.getRemarks());
+        }
+        return lines.isEmpty() ? null : String.join("\n", lines);
     }
 
     /**
@@ -298,7 +379,17 @@ public class ConnectionTree extends TreeView<DbNode> {
                     setGraphic(Icons.of(Icons.SCHEMA));
                     break;
                 case TABLE:
-                    setGraphic(Icons.of(node.getTable().isPartition() ? Icons.PARTITION : Icons.TABLE));
+                    TableInfo table = node.getTable();
+                    Label badge = partitionBadge(table);
+                    if (badge != null) {
+                        // Name with the badge of the partitioning after it
+                        setText(null);
+                        HBox graphic = new HBox(6, tableIcon(table), new Label(node.getLabel()), badge);
+                        graphic.setAlignment(Pos.CENTER_LEFT);
+                        setGraphic(graphic);
+                    } else {
+                        setGraphic(tableIcon(table));
+                    }
                     break;
                 case LOADING:
                     setGraphic(Icons.of(Icons.LOADING));
@@ -309,8 +400,9 @@ public class ConnectionTree extends TreeView<DbNode> {
                     getStyleClass().add("tree-message");
                     break;
             }
-            if (node.getKind() == DbNode.Kind.TABLE && node.getTable().getRemarks() != null) {
-                setTooltip(new Tooltip(node.getTable().getRemarks()));
+            String tooltip = node.getKind() == DbNode.Kind.TABLE ? tableTooltip(node.getTable()) : null;
+            if (tooltip != null) {
+                setTooltip(new Tooltip(tooltip));
             } else {
                 setTooltip(null);
             }
@@ -335,6 +427,7 @@ public class ConnectionTree extends TreeView<DbNode> {
                     menu.getItems().addAll(connect, disconnect,
                             menuItem("action.refresh", Icons.REFRESH, ConnectionTree.this::refreshSelected),
                             new SeparatorMenuItem(),
+                            menuItem("action.sqlQuery", Icons.SQL, () -> fire(onSqlQuery, node)),
                             menuItem("action.export", Icons.EXPORT, () -> fire(onExport, node)),
                             menuItem("action.importScripts", Icons.IMPORT, () -> fire(onImportScripts, node)),
                             menuItem("action.importParquet", Icons.IMPORT, () -> fire(onImportParquet, node)),
@@ -347,6 +440,7 @@ public class ConnectionTree extends TreeView<DbNode> {
                     menu.getItems().addAll(
                             menuItem("action.refresh", Icons.REFRESH, ConnectionTree.this::refreshSelected),
                             new SeparatorMenuItem(),
+                            menuItem("action.sqlQuery", Icons.SQL, () -> fire(onSqlQuery, node)),
                             menuItem("action.export", Icons.EXPORT, () -> fire(onExport, node)),
                             menuItem("action.importScripts", Icons.IMPORT, () -> fire(onImportScripts, node)),
                             menuItem("action.importParquet", Icons.IMPORT, () -> fire(onImportParquet, node)));
@@ -354,6 +448,7 @@ public class ConnectionTree extends TreeView<DbNode> {
                 case TABLE:
                     menu.getItems().addAll(
                             menuItem("tree.openTable", Icons.TABLE, () -> fire(onOpenTable, node)),
+                            menuItem("action.sqlQuery", Icons.SQL, () -> fire(onSqlQuery, node)),
                             menuItem("action.export", Icons.EXPORT, () -> fire(onExport, node)));
                     break;
                 default:

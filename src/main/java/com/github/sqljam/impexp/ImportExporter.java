@@ -173,7 +173,9 @@ public class ImportExporter {
             dialect.setIdentifierCase(identifierCase);
         }
         dialect.setTableNamePattern(importConfiguration.getTableNamePattern());
-        if (!dialect.isTableRenamed() && isSameTables(exportConfiguration, importConfiguration)) {
+        // Rows of free queries are new tables, they are not the tables which are read
+        if (!dialect.isTableRenamed() && !exportConfiguration.isQueryExport()
+                && isSameTables(exportConfiguration, importConfiguration)) {
             // Target tables would be dropped and created before rows are read from them
             throw new ImpExpException("Source and target tables are the same, please choose another schema or a "
                     + "table name pattern such as " + Dialect.TABLE_PLACEHOLDER + "_copy");

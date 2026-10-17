@@ -814,4 +814,63 @@ class ExportDialogTest {
         assertEquals(List.of(), KeyColumnsDialog.parse(null));
         FxTestSupport.run(keys::close);
     }
+
+    /**
+     * Rows of a query of the SQL editor are exported as one table: the source is fixed, the table list is the
+     * name of the table, options of tables are hidden, the same schema is a valid target
+     */
+    @Test
+    void exportsQueryAsTable() throws Exception {
+        dialog = FxTestSupport.call(() -> {
+            ExportDialog exportDialog = ExportDialog.forQuery(stage, context, schemaNode(),
+                    "  SELECT ID, NAME FROM T_ONE\n  WHERE ID > 2  ");
+            exportDialog.show();
+            return exportDialog;
+        });
+        TextField table = node("queryTableField");
+        assertEquals("query_result", FxTestSupport.call(table::getText));
+        assertEquals("SELECT ID, NAME FROM T_ONE WHERE ID > 2", FxTestSupport.call(() -> ((Label) node(
+                "querySqlLabel")).getText()));
+        for (String hidden : new String[]{"indexCheck", "foreignKeyCheck", "keyColumnsButton",
+                "tableNamePatternField", "tableList"}) {
+            Node control = node(hidden);
+            assertTrue(control == null || !FxTestSupport.call(control::isVisible), hidden);
+        }
+        assertTrue(FxTestSupport.call(() -> node("sourceCombo").isMouseTransparent()));
+        FxTestSupport.waitUntil(() -> !startDisabled() || !error().isEmpty());
+        setText("directoryField", dir.getAbsolutePath());
+        // Names of tables only
+        for (String invalid : new String[]{"", "1st", "bad name", "a;b"}) {
+            setText("queryTableField", invalid);
+            assertTrue(startDisabled(), invalid);
+            assertEquals("The table name of the query must start with a letter or underscore and have letters,"
+                    + " digits and underscores only", error());
+        }
+        setText("queryTableField", "  BIG_ONES ");
+        assertFalse(startDisabled());
+        TransferRequest request = build();
+        assertEquals(Map.of("BIG_ONES", "SELECT ID, NAME FROM T_ONE\n  WHERE ID > 2"), request.getQueries());
+        assertEquals(List.of(), request.getTables());
+        assertEquals(UiDatabase.CATALOG, request.getSourceCatalog());
+        assertEquals(UiDatabase.SCHEMA, request.getSourceSchema());
+        // The same schema is a valid target of a query, the table name pattern is not used
+        FxTestSupport.run(() -> ((RadioButton) node("databaseRadio")).setSelected(true));
+        @SuppressWarnings("unchecked")
+        ComboBox<ConnectionProfile> target = (ComboBox<ConnectionProfile>) node("targetCombo");
+        FxTestSupport.run(() -> target.setValue(target.getItems().get(0)));
+        @SuppressWarnings("unchecked")
+        ComboBox<String> targetSchema = (ComboBox<String>) node("targetSchemaCombo");
+        FxTestSupport.waitUntil(() -> !targetSchema.getItems().isEmpty());
+        FxTestSupport.run(() -> targetSchema.getEditor().setText(UiDatabase.SCHEMA));
+        assertFalse(startDisabled(), error());
+        request = build();
+        assertEquals(null, request.getTableNamePattern());
+        // The rows of the query go into a new table of the same schema
+        context.getTransferService().transfer(request, ExportListener.NONE);
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection(profile.getJdbcUrl(), "sa", "");
+             java.sql.ResultSet rs = connection.createStatement().executeQuery("SELECT COUNT(*) FROM BIG_ONES")) {
+            rs.next();
+            assertEquals(3, rs.getInt(1));
+        }
+    }
 }

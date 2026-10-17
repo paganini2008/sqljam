@@ -6,7 +6,7 @@
 
 **SqlJam**: *Move tables across databases. Schema, data and all.*
 
-A Java 17 + JavaFX desktop tool that copies tables between relational and OLAP databases (**MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, H2, SQLite, DuckDB, ClickHouse** and more) in any direction:
+A Java 17 + JavaFX desktop tool that copies tables between relational and OLAP databases (**MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, DuckDB, ClickHouse** and more) in any direction:
 **import directly** into a target database or into the same schema as copies, or save a self-describing **export package** of SQL, **Parquet** or **CSV** files and import it later. Imports into a database run in **one transaction** which an error rolls back, and rows are **inserted, updated or skipped by key**.
 
 ![SqlJam main window](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
@@ -21,7 +21,7 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 |---|---|
 | Dialect differences | Types, identifiers, defaults, identity and literals translated by the dialect of each target |
 | Old versions | Version subclasses: `Oracle11gDialect`, `PostgreSQL9Dialect`, `MySQL56Dialect`, `SQLServer2008Dialect` … |
-| Missing keys & indexes | Primary keys, unique/regular indexes, foreign keys, comments, sequences, partitions |
+| Missing keys & indexes | Primary keys, unique/regular indexes, foreign keys, comments, sequences, partitions of every kind (range, list, hash, interval, composite, reference, nested), shown with their partitioning in the tree |
 | Huge scripts | Data files split by size: SQL and CSV at 10 MB (`orders.sql`, `orders_2.sql` …), Parquet at 256 MB (`orders.parquet`, `orders_2.parquet` …), imported part by part in order |
 | LOBs | Stored as files, restored by primary key |
 | Scripts without context | `manifest.json`: source, target, options, SHA-256 per file, row counts |
@@ -31,6 +31,7 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 | Rows exist already | **Update or insert by key** or **skip existing by key**: the primary key or the columns of a unique index match the rows, insert is the default |
 | Warehouses apart from OLTP | DuckDB and ClickHouse data sources, grouped as OLAP databases |
 | Only part of a table | Data viewer query (columns, WHERE, GROUP BY, ORDER BY) and export of the rows of the query |
+| Rows of a join or a report | **SQL Query** editor with syntax highlighting, the first rows are shown and all rows of the query are exported as a table |
 | A copy next to the original | Copies in the same schema with `{table}_copy`, keys and indexes renamed, source tables protected |
 | Custom and modern types | PostgreSQL enums and domains, vectors, unions, maps, tuples and variants |
 
@@ -64,6 +65,10 @@ A splash screen shows the loading of the configuration, the data sources and the
 The first start brings an **Example Shop (H2)** data source with a few e-commerce tables (categories, customers, products, orders, order_items) to try everything right away. **Example** on the login page or **Help → Restore Example Database** brings it back at any time.
 
 Right-click a data source to **Connect**, and once it is connected the same menu offers **Disconnect**, which also closes its table tabs. When an import or export needs a target data source, the **+** button next to it creates one on the spot. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and how to reach the author, and the GitHub icon at the bottom right opens the repository.
+
+**SQL Query** on the toolbar opens an editor for the selected data source. **Ctrl+Enter** (**⌘+Enter** on macOS) runs the statement at the caret, **Ctrl+Shift+Enter** runs them all, and **Export…** sends all rows of the query to SQL, Parquet, CSV or another database:
+
+![SQL Query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sql-editor.png)
 
 A short [tutorial video](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-tutorial.mp4) walks through the example database: query rows, export into files, import the package into PostgreSQL, and copy the tables straight into SQL Server and Oracle.
 
@@ -259,4 +264,5 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 7. Pooled connections and batch inserts: 40k to 95k rows/s for direct imports.
 8. A mainstream dark UI with 7 themes, percentage progress and cancel.
 9. Parquet and CSV packages and files of other tools, DuckDB and ClickHouse as OLAP data sources, imports in one transaction and rows updated by key.
+10. A SQL Query editor exports the rows of any query through the same exits, columns of tables keep their types.
 10. Query the rows of a table, export just those rows, or copy tables inside the same schema.
