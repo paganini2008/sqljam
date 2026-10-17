@@ -235,4 +235,15 @@ public class SQLServerMetaDataOperations extends MetaDataOperations {
                 + " WHERE s.name = ? ORDER BY seq.name", catalogPrefix(catalogName));
         return JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql, new Object[]{schemaName});
     }
+
+    /**
+     * Row versions of a result set are maintained by the database of the target table too
+     */
+    @Override
+    public void normalizeQueryColumnInfo(Map<String, Object> columnInfo) {
+        String typeName = StringUtils.defaultString((String) columnInfo.get("TYPE_NAME")).toLowerCase(Locale.ENGLISH);
+        if (typeName.equals("timestamp") || typeName.equals("rowversion")) {
+            columnInfo.put("IS_ROWVERSION", true);
+        }
+    }
 }

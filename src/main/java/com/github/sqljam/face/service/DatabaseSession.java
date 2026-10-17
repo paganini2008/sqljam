@@ -24,6 +24,7 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -35,6 +36,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
@@ -43,11 +45,13 @@ import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.DataPage;
 import com.github.sqljam.face.model.ForeignKeyInfo;
 import com.github.sqljam.face.model.IndexInfo;
+import com.github.sqljam.face.model.SqlResult;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.HikariDataSourceConnectionFactory;
 import com.github.sqljam.impexp.MetaDataOperations;
+import com.github.sqljam.impexp.QueryMetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
 import com.github.sqljam.impexp.TableQuery;
 import com.github.sqljam.jdbc.ConnectionFactory;
@@ -209,9 +213,17 @@ public class DatabaseSession implements Closeable {
             List<TableInfo> tables = new ArrayList<>();
             for (Map<String, Object> info : metaDataOperations.getTableInfos(connection.getMetaData(),
                     getMetaCatalog(catalog), schema)) {
-                tables.add(new TableInfo(catalog, schema, (String) info.get("TABLE_NAME"),
-                        (String) info.get("REMARKS"), Boolean.TRUE.equals(info.get("IS_PARTITIONED")),
-                        Boolean.TRUE.equals(info.get("IS_PARTITION_TABLE"))));
+                // ClickHouse keeps the partition key in the engine, it is not a partition definition to copy
+                String partitionKey = (String) info.get("PARTITION_KEY");
+                boolean partitioned = Boolean.TRUE.equals(info.get("IS_PARTITIONED"))
+                        || StringUtils.isNotBlank(partitionKey);
+                TableInfo table = new TableInfo(catalog, schema, (String) info.get("TABLE_NAME"),
+                        (String) info.get("REMARKS"), partitioned, Boolean.TRUE.equals(info.get("IS_PARTITION_TABLE")));
+                table.setPartitionType((String) info.get("PARTITION_TYPE"));
+                table.setPartitionKey(StringUtils.isNotBlank(partitionKey) ? partitionKey
+                        : (String) info.get("PARTITION_COLUMN_NAMES"));
+                table.setParent((String) info.get("INHERITED_TABLE_NAME"));
+                tables.add(table);
             }
             tables.sort(Comparator.comparing(TableInfo::getName, String.CASE_INSENSITIVE_ORDER));
             return tables;
@@ -365,6 +377,85 @@ public class DatabaseSession implements Closeable {
                 }
             }
             return new DataPage(columns, rows, pageNumber, pageSize, totalRows);
+        }
+    }
+
+    /**
+     * A connection of its own for the SQL editor: its statements share session settings and temporary tables, the
+     * editor closes it. It is not a connection of the pool, which would reset or retire it.
+     */
+    public Connection openSqlConnection(String catalog, String schema) throws SQLException {
+        String url = dbType == DbType.POSTGRESQL ? profile.getJdbcUrl(StringUtils.defaultString(catalog,
+                profile.getDatabase())) : profile.getJdbcUrl();
+        Connection connection = DriverManager.getConnection(url, profile.getUsername(), profile.getPassword());
+        try {
+            JdbcUtils.setPath(connection, dbType == DbType.POSTGRESQL || !dbType.isCatalogSupported() ? null
+                    : catalog, schema);
+        } catch (SQLException e) {
+            JdbcUtils.closeQuietly(connection);
+            throw e;
+        }
+        return connection;
+    }
+
+    /**
+     * Runs a statement of the SQL editor with auto commit: the first rows of a query, or the rows changed by
+     * another statement. The first result set of a statement with more results is shown, values are read like
+     * the values of an export, e.g. vectors of Oracle as text.
+     *
+     * @param maxRows rows of a query which are read for viewing
+     * @param running receives the running statement, e.g. to cancel it
+     */
+    public SqlResult execute(Connection connection, String sql, int maxRows, Consumer<Statement> running)
+            throws SQLException {
+        long start = System.currentTimeMillis();
+        try (Statement statement = connection.createStatement()) {
+            if (running != null) {
+                running.accept(statement);
+            }
+            // One more row tells whether there are more
+            statement.setMaxRows(maxRows + 1);
+            boolean resultSet = statement.execute(sql);
+            long updateCount = resultSet ? -1 : statement.getUpdateCount();
+            long changed = Math.max(updateCount, 0);
+            while (!resultSet && updateCount != -1) {
+                resultSet = statement.getMoreResults();
+                updateCount = resultSet ? -1 : statement.getUpdateCount();
+                changed += Math.max(updateCount, 0);
+            }
+            if (!resultSet) {
+                return new SqlResult(sql, null, Collections.emptyList(), false, changed, System.currentTimeMillis()
+                        - start);
+            }
+            try (ResultSet rs = statement.getResultSet()) {
+                ResultSetMetaData metaData = rs.getMetaData();
+                List<String> columns = QueryMetaDataOperations.getColumnNames(metaData);
+                List<List<String>> rows = new ArrayList<>();
+                boolean truncated = false;
+                while (rs.next()) {
+                    if (rows.size() >= maxRows) {
+                        truncated = true;
+                        break;
+                    }
+                    List<String> row = new ArrayList<>(columns.size());
+                    for (int i = 1; i <= columns.size(); i++) {
+                        try {
+                            row.add(formatValue(dialect.getColumnValue(rs, i, metaData.getColumnType(i),
+                                    metaData.getColumnTypeName(i))));
+                        } catch (LinkageError e) {
+                            // A value which the driver can not read, e.g. XMLTYPE of Oracle, is shown by its type,
+                            // an export reads it as text
+                            row.add("(" + metaData.getColumnTypeName(i) + ")");
+                        }
+                    }
+                    rows.add(row);
+                }
+                return new SqlResult(sql, columns, rows, truncated, -1, System.currentTimeMillis() - start);
+            }
+        } finally {
+            if (running != null) {
+                running.accept(null);
+            }
         }
     }
 

@@ -10,6 +10,7 @@
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/model/DataPage.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/model/ForeignKeyInfo.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/model/IndexInfo.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/model/SqlResult.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/model/TableInfo.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/model/TransferRequest.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/service/ConnectionStore.java
@@ -18,6 +19,7 @@
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/service/ExampleDatabase.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/service/JsonStore.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/service/SettingsStore.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/service/SqlStatements.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/service/TransferService.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/AppContext.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/Branding.java
@@ -43,6 +45,8 @@
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/ProgressDialog.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/SessionManager.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/SplashView.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/SqlEditor.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/SqlTab.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/TableTab.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/TaskRunner.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/face/view/ThemeManager.java
@@ -91,6 +95,7 @@
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/PartitionTableMetaData.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/PooledConnectionFactory.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/PrimaryKeyMetaData.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/QueryMetaDataOperations.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/SchemaMetaData.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/ScriptExportHandler.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/ScriptExporter.java
@@ -109,6 +114,8 @@
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/WriteMode.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/db/ClickHouseDialect.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/db/ClickHouseMetaDataOperations.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/db/Db2Dialect.java
+/Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/db/Db2MetaDataOperations.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/db/DuckDBDialect.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/db/DuckDBMetaDataOperations.java
 /Users/fred/work/repo/sqljam/src/main/java/com/github/sqljam/impexp/db/H2Dialect.java

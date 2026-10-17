@@ -502,4 +502,53 @@ class MainViewTest {
         FxTestSupport.waitUntil(() -> "Committed".equals(status.getText()));
         FxTestSupport.run(() -> status.getScene().getWindow().hide());
     }
+
+    /**
+     * The SQL editor of the selected schema: a query runs, its rows are exported as a new table of the same
+     * schema, the editor is closed with its data source
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void exportsQueryOfSqlEditor() throws Exception {
+        TreeItem<DbNode> schemaItem = expandToSchema();
+        assertTrue(FxTestSupport.call(() -> contextMenu(schemaItem).getItems().stream().anyMatch(item -> "SQL Query"
+                .equals(item.getText()))));
+        FxTestSupport.run(() -> tree().getSelectionModel().select(schemaItem));
+        FxTestSupport.fireLater((Button) FxTestSupport.call(() -> mainView.lookup("#action-sqlQuery")));
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> tabs().getTabs().size()) == 1);
+        SqlTab tab = (SqlTab) FxTestSupport.call(() -> tabs().getTabs().get(0));
+        FxTestSupport.run(() -> tab.getEditor().setText("SELECT ID, NAME FROM T_ONE WHERE ID <= 3"));
+        FxTestSupport.run(() -> tab.run(false));
+        FxTestSupport.waitUntil(() -> !tab.isBusy() && tab.getLastQuery() != null);
+        // The export wizard waits for the user
+        javafx.application.Platform.runLater(tab::export);
+        DialogPane export = FxTestSupport.waitForDialogPane();
+        FxTestSupport.run(() -> ((TextField) export.lookup("#queryTableField")).setText("SQL_COPY"));
+        FxTestSupport.run(() -> ((RadioButton) export.lookup("#databaseRadio")).setSelected(true));
+        ComboBox<ConnectionProfile> target = FxTestSupport.call(() -> (ComboBox<ConnectionProfile>) export
+                .lookup("#targetCombo"));
+        FxTestSupport.run(() -> target.setValue(target.getItems().stream().filter(item -> "Embedded H2".equals(item
+                .getName())).findFirst().orElseThrow()));
+        ComboBox<String> targetSchema = FxTestSupport.call(() -> (ComboBox<String>) export
+                .lookup("#targetSchemaCombo"));
+        FxTestSupport.waitUntil(() -> !targetSchema.getItems().isEmpty());
+        FxTestSupport.run(() -> targetSchema.getEditor().setText(UiDatabase.SCHEMA));
+        FxTestSupport.fireLater((Button) FxTestSupport.call(() -> export.lookupButton(ButtonType.OK)));
+        Label status = progressStatus();
+        FxTestSupport.waitUntil(() -> "Completed".equals(status.getText()));
+        FxTestSupport.run(() -> status.getScene().getWindow().hide());
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection(profile.getJdbcUrl(), "sa", "");
+             java.sql.ResultSet rs = connection.createStatement().executeQuery("SELECT COUNT(*) FROM SQL_COPY")) {
+            rs.next();
+            assertEquals(3, rs.getInt(1));
+        }
+        // Closed with its data source
+        TreeItem<DbNode> connection = child(tree().getRoot(), "Embedded H2");
+        FxTestSupport.run(() -> tree().disconnect(connection));
+        assertTrue(FxTestSupport.call(() -> tabs().getTabs().isEmpty()));
+        // Nothing selected: the first data source
+        FxTestSupport.run(() -> mainView.openSqlTab(null));
+        assertTrue(FxTestSupport.call(() -> tabs().getTabs().get(0).getText()).startsWith("SQL 2: "));
+        FxTestSupport.run(() -> ((SqlTab) tabs().getTabs().get(0)).close());
+    }
 }

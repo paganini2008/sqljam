@@ -58,10 +58,28 @@ public class ForeignKeyMetaData implements TiedMetaData {
             }
             fkName = dialect.getTargetTableName(foreignKeyName);
         }
+        if (isPartitionReference()) {
+            return new String[]{dialect.getInlineForeignKeyStatement(getCatalogName(), getSchemaName(), fkName,
+                    columnNames, refTableName, refColumnNames, getRuleName(getDetail().get("DELETE_RULE")))};
+        }
         String statement = dialect.getCreateForeignKeyStatement(getCatalogName(), getSchemaName(),
                 dialect.getTargetTableName(getTableName()), fkName, columnNames, refTableName, refColumnNames,
                 getRuleName(getDetail().get("UPDATE_RULE")), getRuleName(getDetail().get("DELETE_RULE")));
         return new String[]{statement};
+    }
+
+    /**
+     * Whether the table is partitioned by this foreign key (reference partitioning of Oracle), it is defined in the
+     * create table statement then
+     */
+    public boolean isPartitionReference() {
+        Dialect dialect = getDialect();
+        if (dialect.isCrossDatabase() || !dialect.isPartitionSupported()) {
+            return false;
+        }
+        Map<String, Object> tableDetail = tiedMetaData.getDetail();
+        return tableDetail != null && foreignKeyName != null
+                && foreignKeyName.equals(tableDetail.get("PARTITION_REFERENCE_CONSTRAINT"));
     }
 
     /**

@@ -39,6 +39,7 @@ import javafx.application.Platform;
 import javafx.beans.binding.Bindings;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.Menu;
@@ -81,6 +82,7 @@ public class MainView extends BorderPane {
     private final AppContext context;
     private final ConnectionTree connectionTree;
     private final TabPane tabPane = new TabPane();
+    private int sqlTabCount;
     private final Label statusLabel = new Label(Messages.get("status.ready"));
 
     public MainView(AppContext context) {
@@ -88,6 +90,7 @@ public class MainView extends BorderPane {
         getStyleClass().add("main-view");
         connectionTree = new ConnectionTree(context);
         connectionTree.setOnOpenTable(this::openTable);
+        connectionTree.setOnSqlQuery(this::openSqlTab);
         connectionTree.setOnExport(this::showExportDialog);
         connectionTree.setOnImportScripts(this::showImportDialog);
         connectionTree.setOnImportParquet(this::showImportParquetDialog);
@@ -99,7 +102,10 @@ public class MainView extends BorderPane {
         tabPane.setTabClosingPolicy(TabPane.TabClosingPolicy.ALL_TABS);
         tabPane.setId("tableTabs");
         statusLabel.setId("statusLabel");
-        StackPane center = new StackPane(createWelcome(), tabPane);
+        // The welcome is shown without tabs only, it would show through transparent rows of tables
+        Node welcome = createWelcome();
+        welcome.visibleProperty().bind(Bindings.isEmpty(tabPane.getTabs()));
+        StackPane center = new StackPane(welcome, tabPane);
         tabPane.visibleProperty().bind(Bindings.isNotEmpty(tabPane.getTabs()));
         SplitPane splitPane = new SplitPane(connectionTree, center);
         splitPane.setDividerPositions(0.24);
@@ -142,14 +148,20 @@ public class MainView extends BorderPane {
         MenuItem importParquet = new MenuItem(Messages.get("action.importParquet"), Icons.of(Icons.IMPORT));
         importParquet.setId("importParquetMenuItem");
         importParquet.setOnAction(event -> showImportParquetDialog(connectionTree.getSelectedNode()));
+        MenuItem sqlQuery = new MenuItem(Messages.get("action.sqlQuery"), Icons.of(Icons.SQL));
+        sqlQuery.setId("sqlQueryMenuItem");
+        sqlQuery.setAccelerator(new KeyCodeCombination(KeyCode.Q, KeyCombination.SHORTCUT_DOWN,
+                KeyCombination.SHIFT_DOWN));
+        sqlQuery.setOnAction(event -> openSqlTab(connectionTree.getSelectedNode()));
         MenuItem openPackage = new MenuItem(Messages.get("package.open"), Icons.of(Icons.FOLDER));
         openPackage.setId("openPackageMenuItem");
         openPackage.setAccelerator(new KeyCodeCombination(KeyCode.O, KeyCombination.SHORTCUT_DOWN));
         openPackage.setOnAction(event -> openPackage());
         MenuItem exit = new MenuItem(Messages.get("action.exit"), Icons.of(Icons.EXIT));
         exit.setOnAction(event -> exit());
-        Menu fileMenu = new Menu(Messages.get("menu.file"), null, newConnection, new SeparatorMenuItem(), export,
-                importScripts, importParquet, new SeparatorMenuItem(), openPackage, new SeparatorMenuItem(), exit);
+        Menu fileMenu = new Menu(Messages.get("menu.file"), null, newConnection, new SeparatorMenuItem(), sqlQuery,
+                export, importScripts, importParquet, new SeparatorMenuItem(), openPackage, new SeparatorMenuItem(),
+                exit);
 
         Menu themeMenu = new Menu(Messages.get("menu.theme"), Icons.of(Icons.THEME));
         ToggleGroup themeGroup = new ToggleGroup();
@@ -218,6 +230,9 @@ public class MainView extends BorderPane {
         Button importButton = toolButton(Icons.IMPORT, "action.importScripts",
                 () -> showImportDialog(connectionTree.getSelectedNode()));
         importButton.setText(Messages.get("action.import"));
+        Button sqlButton = toolButton(Icons.SQL, "action.sqlQuery", () -> openSqlTab(connectionTree
+                .getSelectedNode()));
+        sqlButton.setText(Messages.get("action.sqlQuery"));
         ImageView mark = Branding.logoMarkView(22);
         mark.setId("toolbarLogo");
         StackPane markBox = new StackPane(mark);
@@ -230,7 +245,7 @@ public class MainView extends BorderPane {
         return new ToolBar(markBox, new Separator(),
                 toolButton(Icons.ADD, "action.newConnection", this::newConnection), editButton,
                 deleteButton, toolButton(Icons.REFRESH, "action.refresh", connectionTree::refreshSelected),
-                new Separator(), exportButton, importButton, spacer, exitButton);
+                new Separator(), sqlButton, exportButton, importButton, spacer, exitButton);
     }
 
     /**
@@ -305,8 +320,42 @@ public class MainView extends BorderPane {
      * Closes table tabs of the data source, e.g. after it is disconnected or deleted
      */
     private void closeTabs(ConnectionProfile profile) {
-        tabPane.getTabs().removeIf(tab -> tab.getUserData() instanceof String
-                && ((String) tab.getUserData()).startsWith(profile.getId() + "|"));
+        List<Tab> closed = tabPane.getTabs().stream().filter(tab -> tab.getUserData() instanceof String
+                && ((String) tab.getUserData()).startsWith(profile.getId() + "|")).collect(Collectors.toList());
+        tabPane.getTabs().removeAll(closed);
+        // Removed tabs are not closed by the user, the connections of SQL editors are closed here
+        closed.stream().filter(tab -> tab instanceof SqlTab).forEach(tab -> ((SqlTab) tab).close());
+    }
+
+    /**
+     * Opens a SQL editor on the selected data source, catalog, schema or table, the first data source if nothing
+     * is selected
+     */
+    void openSqlTab(DbNode node) {
+        DbNode target = node;
+        if (target == null || target.getProfile() == null) {
+            if (context.getProfileRegistry().getProfiles().isEmpty()) {
+                Dialogs.showInfo(getWindow(), Messages.get("action.sqlQuery"), Messages.get(
+                        "export.error.noConnections"));
+                return;
+            }
+            target = DbNode.connection(context.getProfileRegistry().getProfiles().get(0));
+        }
+        SqlTab tab = new SqlTab(context, target, ++sqlTabCount);
+        tab.setOnExport(this::showQueryExportDialog);
+        tab.setUserData(target.getProfile().getId() + "|sql|" + sqlTabCount);
+        tabPane.getTabs().add(tab);
+        tabPane.getSelectionModel().select(tab);
+    }
+
+    /**
+     * Exports all rows of a query of the SQL editor as a table
+     */
+    private void showQueryExportDialog(DbNode node, String sql) {
+        ExportDialog dialog = ExportDialog.forQuery(getWindow(), context, node, sql);
+        Optional<TransferRequest> request = dialog.showAndWait();
+        connectionTree.addNewConnections();
+        request.ifPresent(transferRequest -> startTransfer(transferRequest, 1));
     }
 
     void openTable(DbNode node) {

@@ -4,7 +4,7 @@
 
 **Move tables across databases. Schema, data and all.**
 
-SqlJam is a desktop import/export tool for relational and OLAP databases: MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, H2, SQLite, DuckDB, ClickHouse and more.
+SqlJam is a desktop import/export tool for relational and OLAP databases: MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, DuckDB, ClickHouse and more.
 It copies tables (with indexes, constraints, sequences and partitions) **directly into another database** or into the same schema as copies, or saves them as a **self-describing export package** of SQL, **Parquet** or **CSV** files that can be imported later. Imports into a database run in **one transaction** which an error rolls back as a whole, and rows are **inserted, updated or skipped by key**.
 
 ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
@@ -36,6 +36,7 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 | An import went wrong, now what? | **One transaction** by default: an error rolls back the whole import, or **commit every N rows** like other import tools. **Skip rows with errors** goes on and lists every skipped row in the log, which you can filter and save. **Confirm before commit** lets you review a successful import in one transaction, then **Commit** or **Roll Back** |
 | Some rows exist already | **Update or insert by key** updates the rows of the same primary key, or of the columns you choose, and inserts the others. **Skip existing by key** keeps them and inserts the new rows only. Insert is the default |
 | Warehouses live apart from OLTP databases | **DuckDB and ClickHouse data sources**, grouped as OLAP databases next to the relational ones |
+| The rows come from a join or a report, not from one table | **SQL Query** editor with syntax highlighting: run the SQL, check the first rows, then export all rows of the query as a table into SQL, Parquet, CSV or another database |
 | Only part of a table is needed | **Data viewer query**: columns, WHERE, GROUP BY and ORDER BY, then export the rows of the query. Missing target tables are created with the selected columns |
 | A copy next to the original | **Copy in the same schema** with a table name such as `{table}_copy`. Keys, indexes and constraints get their own names and the source tables are protected |
 | What is inside this package? | **Package viewer**: files with size and modified time, previews of manifest, SQL, LOB, Parquet and CSV files |
@@ -94,6 +95,7 @@ Only **Java 17+** is needed to run SqlJam. JavaFX and all JDBC drivers are insid
 | PostgreSQL | 16 | 9.x (`PostgreSQL9/10Dialect`) |
 | Oracle | 23ai Free | 11g (`Oracle11g/12cDialect`) |
 | SQL Server | 2022 | 2008 (`SQLServer2008Dialect`) |
+| Db2 for Linux, UNIX and Windows | 12.1 | 11.1 |
 | MariaDB | 11.8 | 10.3 |
 | H2 | 2.3 | 2.x |
 | SQLite | 3.46 | 3.x |
@@ -138,7 +140,8 @@ SqlJam starts with a splash screen while it loads the configuration, the data so
 2. Right-click a database or schema → **Export…**
 3. Pick tables, choose **SQL scripts**, **Parquet** or **CSV** (folder) or **Database** (another data source, or a new one from the **+** button next to it), press **Start**. An import into a database runs in one transaction or commits every N rows (N is typed next to it), check **Skip rows with errors** to go on after bad rows and **Confirm before commit** to review it first, and choose **Update or insert by key** or **Skip existing by key** for rows which exist already.
 4. Open a table, narrow its rows on the **Data** tab with columns, WHERE, GROUP BY and ORDER BY, then **Export…** just those rows.
-5. Right-click a connected data source → **Disconnect** when you are done, its table tabs close with it. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and the author, and the GitHub icon at the bottom right opens the repository.
+5. **SQL Query** on the toolbar or a right-click opens an editor for the data source. **Ctrl+Enter** (**⌘+Enter** on macOS) runs the statement at the caret, **Ctrl+Shift+Enter** runs them all, then **Export…** sends all rows of the query through the same exits.
+6. Right-click a connected data source → **Disconnect** when you are done, its table tabs close with it. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and the author, and the GitHub icon at the bottom right opens the repository.
 
 A short [tutorial video](docs/assets/sqljam-tutorial.mp4) walks through the example database: query rows, export into files, import the package into PostgreSQL, and copy the tables straight into SQL Server and Oracle.
 
@@ -149,6 +152,10 @@ A short [tutorial video](docs/assets/sqljam-tutorial.mp4) walks through the exam
 | Data query | Package viewer | Parquet files |
 |---|---|---|
 | ![query](docs/assets/table-data.png) | ![viewer](docs/assets/package-viewer.png) | ![parquet](docs/assets/import-parquet.png) |
+
+| SQL query | Package import | Light theme |
+|---|---|---|
+| ![sql](docs/assets/sql-editor.png) | ![import](docs/assets/import-package.png) | ![light](docs/assets/main-light.png) |
 
 Expected export package:
 
@@ -292,6 +299,10 @@ try (ManualTransaction transaction = new ManualTransaction(connection, DbType.PO
 | Oracle `NUMBER(9)` / `NUMBER(19)` | `int4` / `int8` | same | `int` / `bigint` | `int` / `bigint` |
 | SQL Server `datetime2(7)` | `timestamp` (µs) | `TIMESTAMP(7)` | same | `datetime(6)` |
 | SQL Server `tinyint` (0 to 255) | `int2` | `NUMBER(5)` | same | `smallint` |
+| Db2 `DECFLOAT(34)` | `numeric` | `NUMBER` | `decimal(38,10)` | `decimal(65,30)` |
+| Db2 `GRAPHIC(10)` | `char(10)` | `CHAR(10 CHAR)` | `nchar(10)` | `char(10)` |
+| Db2 `CHAR(4) FOR BIT DATA` | `bytea` | `RAW(4)` | `binary(4)` | `binary(4)` |
+| Db2 `XML` | `xml` | `CLOB` | `xml` | `longtext` |
 | PostgreSQL enum / domain | same (type created in the target schema) | `VARCHAR2` / base type | `varchar` / base type | `varchar` / base type |
 | MySQL / Oracle `VECTOR` | `text` | same | `nvarchar(max)` | same |
 | ClickHouse `Nullable(String)` / `Array(T)` | `text` | `CLOB` | `nvarchar(max)` | `longtext` |
@@ -309,6 +320,7 @@ try (ManualTransaction transaction = new ManualTransaction(connection, DbType.PO
 | Use **CSV** for spreadsheets and text tools | Opens anywhere, and SqlJam still restores the exact types from `manifest.json` |
 | Keep **one transaction** for imports | An error rolls back everything, **Confirm before commit** shows the log and the row counts before the commit |
 | Load again with **Update or insert by key** | Kept tables are updated by their primary keys, nothing is dropped |
+| Shape a report in **SQL Query** first | The first rows show the columns and values, **Export…** then reads all rows by one cursor |
 | Copy with a **target table name** | `{table}_copy` keeps the originals, a copy in the same schema without a new name is refused |
 
 ---
@@ -374,6 +386,7 @@ Export options (UI / `ExportConfiguration`):
 | `CsvOptions` | comma, `"`, UTF-8 | Delimiter, quote, NULL text, header, encoding and date format of CSV files |
 | `tableNamePattern` | | Target table name, `{table}` is the source name, e.g. `{table}_copy` |
 | `tableQueries` | | Columns, WHERE and ORDER BY per table, e.g. rows narrowed in the data viewer |
+| `queries` | | Free queries exported as tables, SQL by table name, e.g. the query of the SQL editor |
 
 ---
 
@@ -406,6 +419,7 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 |---|---|
 | Project site | [paganini2008.github.io/sqljam](https://paganini2008.github.io/sqljam/) |
 | Blog | [docs/blogger/sqljam-en.md](docs/blogger/sqljam-en.md) |
+| Developer guide | [docs/developer-guide.md](docs/developer-guide.md), the Java API for exports, imports, copies and queries |
 | Change logs | [change_logs](change_logs) |
 | Core API | `com.github.sqljam.impexp` (`Exporter`, `ScriptExporter`, `ImportExporter`, `ScriptImporter`, `ParquetExporter`, `ParquetImporter`, `CsvExporter`, `CsvImporter`, `ManualTransaction`) |
 
@@ -414,14 +428,17 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | Question | Answer |
 |---|---|
 | Can I export only some rows or columns? | Yes. Narrow the rows on the **Data** tab (columns, WHERE, ORDER BY) and press **Export…**, or set `tableQueries`. A missing target table is created with the selected columns |
+| Can I export the rows of my own SQL? | Yes. Write it in **SQL Query**, run it, then **Export…**. Columns of tables keep their types, the rows are read once by a cursor. In code, put the SQL into `queries` |
 | Can I copy a table inside the same database? | Yes. Choose the same data source and schema as the target and a table name such as `{table}_copy` |
 | How are LOBs stored in Parquet? | Inside the Parquet columns (strings and binaries), no extra LOB files |
 | How exact is CSV? | Exact. NULL is an empty field, an empty string is `""`, binaries are escaped, and every column is read back with its type from `manifest.json` |
 | How are rows matched when they are updated or skipped? | By the primary key, or by the columns chosen in **Key Columns**. Choose the columns of a unique index of the target table: MySQL and MariaDB match rows by their unique indexes, PostgreSQL, SQLite and DuckDB require such an index. A table without primary key and chosen columns is inserted |
+| Why does Db2 refuse a wide table? | Rows wider than a 4K page need a table space of larger pages. Create one once, e.g. `CREATE BUFFERPOOL BP32K PAGESIZE 32K` and `CREATE TABLESPACE TS32K PAGESIZE 32K BUFFERPOOL BP32K`, Db2 then places wide tables there by itself |
 | Do names have to match in case? | No. An existing target table and its columns are matched without case, e.g. `OrderId` of the source writes the column `orderid` of PostgreSQL or `ORDERID` of Oracle |
 | Which rows were skipped? | Each skipped row is in the log of the import with its key and its error. **Errors only** shows them, **Save Log** writes the whole log to a file |
-| What does a roll back undo? | Everything on PostgreSQL, SQL Server, SQLite and DuckDB, tables included. MySQL, MariaDB, Oracle and H2 commit DDL at once, there the created tables stay empty and keys and identity values are set after the commit |
+| What does a roll back undo? | Everything on PostgreSQL, SQL Server, Db2, SQLite and DuckDB, tables included. MySQL, MariaDB, Oracle and H2 commit DDL at once, there the created tables stay empty and keys and identity values are set after the commit |
 | Can I export only the structure? | Yes. Rows are optional. Pick content **Structure** (`ExportMode.DDL`) for a package or a direct import. Tables, keys, indexes, comments, sequences and partitions are created without rows |
+| Are partitioned tables kept? | Yes. The same database type creates the partitioning again with its partitions, bounds and rows: range, list, hash, key and subpartitions of MySQL and MariaDB (system time too), range, list, hash, default and nested partitions of PostgreSQL, range, list, hash, interval, automatic list, composite and reference partitions of Oracle, partition functions of SQL Server, range partitions of Db2 and partition keys of ClickHouse. Other databases get the tables with all rows. In the tree a partitioned table shows its partitioning next to its name and PostgreSQL partitions are listed under their table |
 | Can I generate scripts for an older server? | Yes, choose the target version (e.g. Oracle `11.2`, SQL Server `2008`) and a compatible dialect is used |
 | Can I keep the password out of disk? | Uncheck *Remember password* on the login page, it stays in memory for the session |
 | How do I run the tests? | `mvn verify`, integration tests use local databases and are skipped when unreachable |

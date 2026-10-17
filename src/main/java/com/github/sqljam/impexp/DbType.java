@@ -22,6 +22,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import com.github.sqljam.impexp.db.ClickHouseDialect;
 import com.github.sqljam.impexp.db.ClickHouseMetaDataOperations;
+import com.github.sqljam.impexp.db.Db2Dialect;
+import com.github.sqljam.impexp.db.Db2MetaDataOperations;
 import com.github.sqljam.impexp.db.DuckDBDialect;
 import com.github.sqljam.impexp.db.DuckDBMetaDataOperations;
 import com.github.sqljam.impexp.db.H2Dialect;
@@ -164,6 +166,32 @@ public enum DbType {
             String database = StringUtils.isNotBlank(catalogName) ? ";databaseName=" + catalogName : "";
             return String.format("jdbc:sqlserver://%s:%d%s;encrypt=false;trustServerCertificate=true;sendTimeAsDatetime=false", hostname, port,
                     database);
+        }
+    },
+
+    DB2("Db2", "com.ibm.db2.jcc.DB2Driver", 50000, false, true, true, Db2Dialect::new,
+            Db2MetaDataOperations::new) {
+        /**
+         * Exhausted result sets stay open for their metadata, LOB values are read with their rows
+         */
+        @Override
+        public String getUrl(String hostname, int port, String catalogName) {
+            Validate.notBlank(catalogName, "Database name must be required while connecting to Db2.");
+            return String.format("jdbc:db2://%s:%d/%s:allowNextOnExhaustedResultSet=1;progressiveStreaming=2;",
+                    hostname, port, catalogName);
+        }
+
+        /**
+         * One database per connection, its schemas hold the tables
+         */
+        @Override
+        public boolean isCatalogSupported() {
+            return false;
+        }
+
+        @Override
+        public String getValidationQuery() {
+            return "SELECT 1 FROM SYSIBM.SYSDUMMY1";
         }
     },
 
@@ -338,6 +366,7 @@ public enum DbType {
         switch (this) {
             case POSTGRESQL:
             case SQLSERVER:
+            case DB2:
             case SQLITE:
             case DUCKDB:
                 return true;
@@ -416,6 +445,8 @@ public enum DbType {
             return ORACLE;
         } else if (url.startsWith("jdbc:sqlserver:")) {
             return SQLSERVER;
+        } else if (url.startsWith("jdbc:db2:")) {
+            return DB2;
         } else if (url.startsWith("jdbc:h2:")) {
             return H2;
         } else if (url.startsWith("jdbc:sqlite:")) {

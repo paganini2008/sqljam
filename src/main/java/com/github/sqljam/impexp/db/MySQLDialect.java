@@ -17,7 +17,9 @@ package com.github.sqljam.impexp.db;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.sql.Connection;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.util.Arrays;
 import java.util.Locale;
@@ -567,5 +569,15 @@ public class MySQLDialect extends Dialect {
     public boolean isAlreadyExistsError(SQLException e) {
         int code = e.getErrorCode();
         return code == 1050 || code == 1061 || code == 1826 || code == 1068 || super.isAlreadyExistsError(e);
+    }
+
+    /**
+     * MySQL Connector/J streams the rows of a statement whose fetch size is Integer.MIN_VALUE, other fetch sizes
+     * read all rows into memory
+     */
+    @Override
+    public boolean prepareStreaming(Connection connection, Statement statement, int fetchSize) throws SQLException {
+        statement.setFetchSize(Integer.MIN_VALUE);
+        return false;
     }
 }

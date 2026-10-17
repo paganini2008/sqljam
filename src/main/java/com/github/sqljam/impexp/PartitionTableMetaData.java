@@ -21,10 +21,14 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
+import org.apache.commons.lang3.ArrayUtils;
+
 /**
- * @Description: PartitionTableMetaData is a partition of a partitioned table of PostgreSQL
+ * @Description: PartitionTableMetaData is a partition of a partitioned table of PostgreSQL, partitions of a
+ *               partition which is partitioned again follow it
  * @Author: Fred Feng
  * @Date: 17/05/2023
  * @Version 1.0.0
@@ -94,7 +98,10 @@ public class PartitionTableMetaData implements TiedMetaData {
         String tableName = getTableName();
         List<Map<String, Object>> infoList = getMetaDataOperations().getPrimaryKeyInfos(getMetaData(), catalogName,
                 schemaName, tableName);
-        if (!infoList.isEmpty()) {
+        // Partitions of a partition with the primary key inherit it, it is not defined again (PostgreSQL)
+        boolean inherited = tiedMetaData instanceof PartitionTableMetaData
+                && !((PartitionTableMetaData) tiedMetaData).primaryKeyMetaDatas.isEmpty();
+        if (!infoList.isEmpty() && !inherited) {
             // Composite primary key is one constraint
             List<Map<String, Object>> pkInfos = new ArrayList<>(infoList);
             pkInfos.sort(Comparator.comparingInt(info -> TableMetaData.getInt(info, "KEY_SEQ")));
@@ -108,6 +115,17 @@ public class PartitionTableMetaData implements TiedMetaData {
         new PartitionExpressionMetaData(tableName, this).accept(visitor);
 
         visitor.visit(this);
+
+        // Partitions of a partition which is partitioned again, created after it
+        String[] partitionTableNames = (String[]) detail.get("PARTITION_TABLE_NAMES");
+        if (Boolean.TRUE.equals(detail.get("IS_PARTITIONED")) && ArrayUtils.isNotEmpty(partitionTableNames)) {
+            for (String partitionTableName : partitionTableNames) {
+                Optional<TableMetaData> opt = unwrap(SchemaMetaData.class).findTableMetaData(partitionTableName);
+                if (opt.isPresent()) {
+                    new PartitionTableMetaData(partitionTableName, opt.get().getDetail(), this).accept(visitor);
+                }
+            }
+        }
     }
 
     @Override

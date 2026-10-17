@@ -86,6 +86,10 @@ import javafx.util.StringConverter;
 public class ExportDialog extends Dialog<TransferRequest> {
 
     private static final long MB = 1024L * 1024L;
+    /**
+     * Default name of the table of a free query
+     */
+    static final String DEFAULT_QUERY_TABLE = "query_result";
     private static final Map<DbType, List<String>> VERSION_PRESETS = new EnumMap<>(DbType.class);
 
     static {
@@ -94,6 +98,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
         VERSION_PRESETS.put(DbType.POSTGRESQL, List.of("", "9.6", "10", "12", "16"));
         VERSION_PRESETS.put(DbType.ORACLE, List.of("", "11.2", "12.1", "19", "23"));
         VERSION_PRESETS.put(DbType.SQLSERVER, List.of("", "2008", "2012", "2016", "2019", "2022"));
+        VERSION_PRESETS.put(DbType.DB2, List.of("", "11.1", "11.5", "12.1"));
         VERSION_PRESETS.put(DbType.H2, List.of("", "2.2"));
         VERSION_PRESETS.put(DbType.SQLITE, List.of("", "3"));
     }
@@ -162,6 +167,14 @@ public class ExportDialog extends Dialog<TransferRequest> {
     private final Label queryLabel = new Label();
     private TableQuery tableQuery;
     private String queryTableName;
+    /**
+     * SQL of a free query exported as a table (the SQL editor), null for tables of the schema
+     */
+    private final String freeQuery;
+    private final DbNode queryNode;
+    private final TextField queryTableField = new TextField(DEFAULT_QUERY_TABLE);
+    private VBox tablesBox;
+    private Label tableNamePatternLabel;
     private final CheckBox createSchemaCheck = new CheckBox(Messages.get("export.database.createSchema"));
     private final Label errorLabel = new Label();
     private Button startButton;
@@ -188,7 +201,21 @@ public class ExportDialog extends Dialog<TransferRequest> {
      * Export of a table narrowed by a query of the data viewer: selected columns, condition and order
      */
     public ExportDialog(Window owner, AppContext context, DbNode node, TableQuery query) {
+        this(owner, context, node, query, null);
+    }
+
+    /**
+     * Export of the rows of a free query as a table of the given name, e.g. of the SQL editor. The source is the
+     * data source, catalog and schema of the node.
+     */
+    public static ExportDialog forQuery(Window owner, AppContext context, DbNode node, String sql) {
+        return new ExportDialog(owner, context, node, null, sql);
+    }
+
+    private ExportDialog(Window owner, AppContext context, DbNode node, TableQuery query, String sql) {
         this.context = context;
+        this.freeQuery = StringUtils.trimToNull(sql);
+        this.queryNode = freeQuery != null ? node : null;
         this.tableQuery = query != null && !query.isEmpty() && node != null && node.getTable() != null ? query : null;
         this.queryTableName = tableQuery != null ? node.getTable().getName() : null;
         Dialogs.initOwner(this, owner);
@@ -263,6 +290,9 @@ public class ExportDialog extends Dialog<TransferRequest> {
         targetCombo.valueProperty().addListener((obs, oldProfile, profile) -> updateWriteModes());
         scriptDbTypeCombo.valueProperty().addListener((obs, oldType, type) -> updateWriteModes());
         preselect(node);
+        if (freeQuery != null) {
+            applyQueryMode();
+        }
         if (tableQuery != null) {
             queryLabel.setText(Messages.format("export.query", queryTableName, tableQuery));
             queryLabel.setVisible(true);
@@ -352,18 +382,32 @@ public class ExportDialog extends Dialog<TransferRequest> {
         HBox filterBox = new HBox(8, filterField, allButton, noneButton, tableCountLabel);
         filterBox.setAlignment(Pos.CENTER_LEFT);
         HBox.setHgrow(filterField, Priority.ALWAYS);
-        tableList.setCellFactory(CheckBoxListCell.forListView(choice -> choice.selected,
-                new StringConverter<>() {
-                    @Override
-                    public String toString(TableChoice choice) {
-                        return choice != null ? choice.table.getName() : "";
-                    }
+        StringConverter<TableChoice> names = new StringConverter<>() {
+            @Override
+            public String toString(TableChoice choice) {
+                return choice != null ? choice.table.getName() : "";
+            }
 
-                    @Override
-                    public TableChoice fromString(String text) {
-                        return null;
-                    }
-                }));
+            @Override
+            public TableChoice fromString(String text) {
+                return null;
+            }
+        };
+        tableList.setCellFactory(view -> new CheckBoxListCell<>(choice -> choice.selected, names) {
+            @Override
+            public void updateItem(TableChoice choice, boolean empty) {
+                super.updateItem(choice, empty);
+                Label badge = empty || choice == null ? null : ConnectionTree.partitionBadge(choice.table);
+                // Partitioned tables show the badge of their partitioning after the name, like the tree
+                if (badge != null) {
+                    HBox graphic = new HBox(6, getGraphic(), ConnectionTree.tableIcon(choice.table),
+                            new Label(choice.table.getName()), badge);
+                    graphic.setAlignment(Pos.CENTER_LEFT);
+                    setGraphic(graphic);
+                    setText(null);
+                }
+            }
+        });
         tableList.setPrefHeight(200);
         tableList.setPlaceholder(new Label(Messages.get("export.tables.empty")));
 
@@ -371,7 +415,8 @@ public class ExportDialog extends Dialog<TransferRequest> {
         grid.addRow(0, new Label(Messages.get("export.source.connection")), sourceCombo);
         grid.addRow(1, new Label(Messages.get("export.source.catalog")), catalogCombo);
         grid.addRow(2, new Label(Messages.get("export.source.schema")), schemaCombo);
-        VBox box = new VBox(8, grid, new Label(Messages.get("export.tables.hint")), filterBox, tableList);
+        tablesBox = new VBox(8, new Label(Messages.get("export.tables.hint")), filterBox, tableList);
+        VBox box = new VBox(8, grid, tablesBox);
         // Rows of the table narrowed in the data viewer
         queryLabel.setId("queryLabel");
         queryLabel.getStyleClass().add("muted");
@@ -574,8 +619,12 @@ public class ExportDialog extends Dialog<TransferRequest> {
         Label tableNameHint = new Label(Messages.get("export.database.tableName.hint"));
         tableNameHint.getStyleClass().add("muted");
         tableNameHint.setWrapText(true);
-        databaseGrid.addRow(4, new Label(Messages.get("export.database.tableName")), tableNamePatternField);
+        tableNamePatternLabel = new Label(Messages.get("export.database.tableName"));
+        databaseGrid.addRow(4, tableNamePatternLabel, tableNamePatternField);
         databaseGrid.add(tableNameHint, 1, 5);
+        // The name of the query table is the target name
+        tableNameHint.visibleProperty().bind(tableNamePatternField.visibleProperty());
+        tableNameHint.managedProperty().bind(tableNamePatternField.managedProperty());
         transactionOption = new TransactionOption(context, targetCombo.valueProperty(), pageSizeSpinner.getValue());
         // Errors of an import into a database are skipped or not by the transaction option
         failFastCheck.visibleProperty().bind(scriptRadio.selectedProperty());
@@ -644,6 +693,33 @@ public class ExportDialog extends Dialog<TransferRequest> {
         if (directory != null) {
             directoryField.setText(directory.getAbsolutePath());
         }
+    }
+
+    /**
+     * A free query is exported as one table: the source is fixed, the table list is replaced by the name of the
+     * table, options of tables which a query has not (indexes, keys, comments, sequences) are hidden
+     */
+    private void applyQueryMode() {
+        queryTableField.setId("queryTableField");
+        Label sqlLabel = new Label(StringUtils.abbreviate(freeQuery.replaceAll("\\s+", " "), 300));
+        sqlLabel.setId("querySqlLabel");
+        sqlLabel.getStyleClass().add("muted");
+        sqlLabel.setWrapText(true);
+        GridPane queryGrid = grid();
+        queryGrid.addRow(0, new Label(Messages.get("export.query.table")), queryTableField);
+        queryGrid.addRow(1, new Label(Messages.get("export.query.sql")), sqlLabel);
+        tablesBox.getChildren().setAll(queryGrid);
+        for (Node control : new Node[]{sourceCombo, catalogCombo, schemaCombo}) {
+            // Shown but not changed, a disabled catalog or schema means none
+            control.setMouseTransparent(true);
+            control.setFocusTraversable(false);
+        }
+        for (Node option : new Node[]{idReusedCheck, indexCheck, foreignKeyCheck, commentCheck, sequenceCheck,
+                keyColumnsButton, tableNamePatternField, tableNamePatternLabel}) {
+            option.setVisible(false);
+            option.setManaged(false);
+        }
+        queryTableField.textProperty().addListener(observable -> updateValidation());
     }
 
     private void preselect(DbNode node) {
@@ -869,7 +945,12 @@ public class ExportDialog extends Dialog<TransferRequest> {
         if (sourceCombo.getValue() == null) {
             return Messages.get("export.error.source");
         }
-        if (!tableChoices.isEmpty() && tableChoices.stream().noneMatch(choice -> choice.selected.get())) {
+        if (freeQuery != null && !StringUtils.trimToEmpty(queryTableField.getText()).matches(
+                "[\\p{L}_][\\p{L}\\p{N}_$]*")) {
+            return Messages.get("export.error.queryTable");
+        }
+        if (freeQuery == null && !tableChoices.isEmpty() && tableChoices.stream().noneMatch(choice -> choice.selected
+                .get())) {
             return Messages.get("export.error.tables");
         }
         if (!isSpinnerTextValid(pageSizeSpinner)) {
@@ -893,7 +974,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
             }
         } else if (targetCombo.getValue() == null) {
             return Messages.get("export.error.target");
-        } else {
+        } else if (freeQuery == null) {
             return validateTableNames();
         }
         return null;
@@ -979,6 +1060,13 @@ public class ExportDialog extends Dialog<TransferRequest> {
                 .map(choice -> choice.table.getName()).collect(Collectors.toList());
         // All tables selected means the whole schema
         request.setTables(selected.size() == tableChoices.size() ? new ArrayList<>() : selected);
+        if (freeQuery != null) {
+            // The rows of the query as one table, in the catalog and schema of the editor
+            request.setTables(new ArrayList<>());
+            request.getQueries().put(queryTableField.getText().trim(), freeQuery);
+            request.setSourceCatalog(queryNode != null ? queryNode.getCatalog() : null);
+            request.setSourceSchema(queryNode != null ? queryNode.getSchema() : null);
+        }
         request.setExportMode((ExportMode) modeGroup.getSelectedToggle().getUserData());
         request.setTableRecreated(recreateCheck.isSelected());
         request.setIdReused(idReusedCheck.isSelected());
@@ -1021,7 +1109,9 @@ public class ExportDialog extends Dialog<TransferRequest> {
             request.setTargetSchema(targetSchemaCombo.isDisabled() ? null : StringUtils.trimToNull(
                     targetSchemaCombo.getEditor().getText()));
             request.setTargetSchemaCreated(createSchemaCheck.isSelected());
-            request.setTableNamePattern(StringUtils.trimToNull(tableNamePatternField.getText()));
+            // The table of a query has its own name
+            request.setTableNamePattern(freeQuery != null ? null : StringUtils.trimToNull(
+                    tableNamePatternField.getText()));
             request.setOneTransaction(transactionOption.isOneTransaction());
             request.setConfirmCommit(transactionOption.isConfirmCommit());
             request.setFailFast(!transactionOption.isSkipErrors());

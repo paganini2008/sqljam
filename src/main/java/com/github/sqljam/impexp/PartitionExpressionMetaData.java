@@ -19,8 +19,11 @@ import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.util.Map;
 
+import org.apache.commons.lang3.StringUtils;
+
 /**
- * @Description: PartitionExpressionMetaData is the bound expression of a partition of PostgreSQL
+ * @Description: PartitionExpressionMetaData is the bound expression of a partition of PostgreSQL, with the
+ *               partition clause of a partition which is partitioned again
  * @Author: Fred Feng
  * @Date: 17/05/2023
  * @Version 1.0.0
@@ -84,9 +87,21 @@ public class PartitionExpressionMetaData implements TiedMetaData {
         visitor.visit(this);
     }
 
+    /**
+     * The bound of the partition, followed by its own partition clause if it is partitioned again, e.g.
+     * FOR VALUES FROM ('2024-01-01') TO ('2025-01-01') PARTITION BY LIST (region)
+     */
     @Override
     public String[] getStatements() throws SQLException {
-        String partitionExpression = (String) getDetail().get("PARTITION_EXPRESSION");
-        return new String[]{partitionExpression};
+        Map<String, Object> detail = getDetail();
+        String partitionExpression = (String) detail.get("PARTITION_EXPRESSION");
+        if (!Boolean.TRUE.equals(detail.get("IS_PARTITIONED"))) {
+            return new String[]{partitionExpression};
+        }
+        String partitionClause = getDialect().getDefinePartitionTableStatement(getCatalogName(), getSchemaName(),
+                getDialect().getTargetTableName(tableName), (String) detail.get("PARTITION_TYPE"),
+                (String) detail.get("PARTITION_COLUMN_NAMES"), detail);
+        return StringUtils.isBlank(partitionClause) ? new String[]{partitionExpression}
+                : new String[]{partitionExpression, partitionClause};
     }
 }

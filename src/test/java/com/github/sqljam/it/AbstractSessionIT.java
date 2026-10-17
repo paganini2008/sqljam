@@ -35,6 +35,7 @@ import com.github.sqljam.face.model.ColumnInfo;
 import com.github.sqljam.face.model.DataPage;
 import com.github.sqljam.face.model.ForeignKeyInfo;
 import com.github.sqljam.face.model.IndexInfo;
+import com.github.sqljam.face.model.SqlResult;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.face.service.DatabaseSession;
@@ -141,6 +142,39 @@ public abstract class AbstractSessionIT {
     /**
      * Exports selected tables to an export directory and imports the directory into a file database
      */
+    /**
+     * The SQL editor of the database: its connection is in the catalog and schema of the source, tables are
+     * named without them, values of every type are shown, other statements report their rows
+     */
+    @Test
+    void runsSqlOfEditor() throws Exception {
+        try (DatabaseSession session = new DatabaseSession(source.getSourceProfile());
+             java.sql.Connection connection = session.openSqlConnection(source.getSourceCatalog(),
+                     source.getSourceSchema())) {
+            String types = findTable(session, "types");
+            String emp = findTable(session, "emp");
+            com.github.sqljam.impexp.Dialect dialect = source.getDbType().createDialect();
+            SqlResult all = session.execute(connection, "SELECT * FROM " + dialect.quoteIdentifier(types), 1,
+                    null);
+            assertTrue(all.isQuery());
+            assertTrue(all.getColumns().size() > 10, all.getColumns().toString());
+            assertEquals(1, all.getRows().size());
+            SqlResult count = session.execute(connection, "SELECT COUNT(*) AS n FROM " + dialect.quoteIdentifier(
+                    emp), 10, null);
+            assertEquals(String.valueOf(ItDatabase.EMP_COUNT), count.getRows().get(0).get(0));
+            assertFalse(count.isTruncated());
+            if (source != ItDatabase.CLICKHOUSE) {
+                // A row of no table is changed, the names of the columns are the ones of the database
+                String id = dialect.quoteIdentifier(session.getColumns(source.getSourceCatalog(),
+                        source.getSourceSchema(), types).get(0).getName());
+                SqlResult update = session.execute(connection, "UPDATE " + dialect.quoteIdentifier(types) + " SET "
+                        + id + " = " + id + " WHERE " + id + " = -1", 10, null);
+                assertFalse(update.isQuery());
+                assertEquals(0, update.getUpdateCount());
+            }
+        }
+    }
+
     @Test
     void transferByScripts() throws Exception {
         ItDatabase target = source == ItDatabase.H2 ? ItDatabase.SQLITE : ItDatabase.H2;

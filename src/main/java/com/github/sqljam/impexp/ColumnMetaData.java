@@ -74,7 +74,9 @@ public class ColumnMetaData implements TiedMetaData {
         int columnScale = TableMetaData.getInt(detail, "DECIMAL_DIGITS");
         String comment = (String) detail.get("REMARKS");
         String defaultValue = isGenerated() ? null : replaceSchema((String) detail.get("COLUMN_DEF"), dialect);
-        boolean nullable = "YES".equalsIgnoreCase((String) detail.get("IS_NULLABLE"));
+        // Columns of a primary key are never NULL, SQLite allows NULL in them, Db2 refuses such keys
+        boolean nullable = "YES".equalsIgnoreCase((String) detail.get("IS_NULLABLE"))
+                && !unwrap(TableMetaData.class).isPrimaryKeyColumn(columnName);
         String statement;
         String expression = (String) detail.get("GENERATION_EXPRESSION");
         if (isGenerated() && StringUtils.isNotBlank(expression) && !dialect.isCrossDatabase()

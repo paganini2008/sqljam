@@ -32,7 +32,9 @@ import java.time.LocalDateTime;
 import java.time.temporal.Temporal;
 import java.util.EnumMap;
 import java.util.HexFormat;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
@@ -51,49 +53,26 @@ import com.github.sqljam.jdbc.JdbcUtils;
  */
 public enum ItDatabase {
 
-    MYSQL(DbType.MYSQL, "sjm_", "test", null, "test_test", null) {
-        @Override
-        public String getUrl(String catalog) {
-            return DbType.MYSQL.getUrl("localhost", 3306, catalog);
-        }
-    },
+    MYSQL(DbType.MYSQL, "sjm_"),
 
-    MARIADB(DbType.MARIADB, "sjb_", "demo", null, "demo", null) {
-        @Override
-        public String getUrl(String catalog) {
-            return DbType.MARIADB.getUrl("localhost", 3307, "demo");
-        }
-    },
+    MARIADB(DbType.MARIADB, "sjb_"),
 
-    POSTGRESQL(DbType.POSTGRESQL, "sjp_", "demo", "sjit_src", "demo", "sjit_dst") {
-        @Override
-        public String getUrl(String catalog) {
-            return DbType.POSTGRESQL.getUrl("localhost", 5432, "demo");
-        }
-    },
+    POSTGRESQL(DbType.POSTGRESQL, "sjp_"),
 
-    ORACLE(DbType.ORACLE, "sjo_", null, "FENGY", null, "FENGY") {
-        @Override
-        public String getUrl(String catalog) {
-            return DbType.ORACLE.getUrl("localhost", 1521, "demo");
-        }
-    },
+    ORACLE(DbType.ORACLE, "sjo_"),
 
-    SQLSERVER(DbType.SQLSERVER, "sjs_", "demo", "dbo", "demo", "sjit_dst") {
-        @Override
-        public String getUrl(String catalog) {
-            return DbType.SQLSERVER.getUrl("localhost", 1433, catalog);
-        }
-    },
+    SQLSERVER(DbType.SQLSERVER, "sjs_"),
 
-    H2(DbType.H2, "sjh_", null, "PUBLIC", null, "PUBLIC") {
+    DB2(DbType.DB2, "sji_"),
+
+    H2(DbType.H2, "sjh_") {
         @Override
         public String getUrl(String catalog) {
             return DbType.H2.getUrl(null, 0, new File(DATA_DIR, catalog == null ? "h2-src" : "h2-dst").getAbsolutePath());
         }
     },
 
-    SQLITE(DbType.SQLITE, "sjl_", null, null, null, null) {
+    SQLITE(DbType.SQLITE, "sjl_") {
         @Override
         public String getUrl(String catalog) {
             return DbType.SQLITE.getUrl(null, 0, new File(DATA_DIR, catalog == null ? "src.sqlite" : "dst.sqlite")
@@ -101,19 +80,53 @@ public enum ItDatabase {
         }
     },
 
-    DUCKDB(DbType.DUCKDB, "sjd_", null, "main", null, "main") {
+    DUCKDB(DbType.DUCKDB, "sjd_") {
         @Override
         public String getUrl(String catalog) {
             return DbType.DUCKDB.getUrl(null, 0, getDuckDBFile(catalog == null).getAbsolutePath());
         }
     },
 
-    CLICKHOUSE(DbType.CLICKHOUSE, "sjc_", null, "app", null, "sjit_dst") {
-        @Override
-        public String getUrl(String catalog) {
-            return DbType.CLICKHOUSE.getUrl("localhost", 18123, "app");
+    CLICKHOUSE(DbType.CLICKHOUSE, "sjc_");
+
+    /**
+     * Settings of the environment: it-databases-test.properties (192.168.0.63, the default) or
+     * it-databases-local.properties (-Dit.env=local), system properties of the same names win. A holder class,
+     * because static fields of an enum are not set yet when its constants are created.
+     */
+    static final class Settings {
+
+        /**
+         * Environment of the database servers: test or local
+         */
+        static final String ENVIRONMENT = System.getProperty("it.env", "test");
+        private static final Properties PROPERTIES = new Properties();
+
+        static {
+            String file = "/it-databases-" + ENVIRONMENT + ".properties";
+            try (InputStream in = ItDatabase.class.getResourceAsStream(file)) {
+                if (in == null) {
+                    throw new IllegalStateException("No settings of the environment " + ENVIRONMENT + ": " + file);
+                }
+                PROPERTIES.load(new InputStreamReader(in, StandardCharsets.UTF_8));
+            } catch (java.io.IOException e) {
+                throw new IllegalStateException(e);
+            }
         }
-    };
+
+        static String get(ItDatabase db, String key) {
+            String name = db.name().toLowerCase(Locale.ENGLISH) + "." + key;
+            return StringUtils.trimToNull(System.getProperty(name, PROPERTIES.getProperty(name)));
+        }
+
+        /**
+         * A value which may be empty, e.g. the empty password of H2
+         */
+        static String getRaw(ItDatabase db, String key) {
+            String name = db.name().toLowerCase(Locale.ENGLISH) + "." + key;
+            return System.getProperty(name, PROPERTIES.getProperty(name));
+        }
+    }
 
     static File getDuckDBFile(boolean source) {
         return new File(DATA_DIR, source ? "duck-src.duckdb" : "duck-dst.duckdb");
@@ -142,22 +155,38 @@ public enum ItDatabase {
     private final String targetSchema;
 
     private static final Map<ItDatabase, Boolean> AVAILABLE = new EnumMap<>(ItDatabase.class);
+    // Connections kept open during the tests, a database without connections may be deactivated (Db2)
+    private static final Map<ItDatabase, Connection> KEPT = new EnumMap<>(ItDatabase.class);
     private static final Map<ItDatabase, Boolean> LOADED = new EnumMap<>(ItDatabase.class);
 
-    ItDatabase(DbType dbType, String prefix, String sourceCatalog, String sourceSchema, String targetCatalog,
-               String targetSchema) {
+    ItDatabase(DbType dbType, String prefix) {
         this.dbType = dbType;
         this.prefix = prefix;
-        this.sourceCatalog = sourceCatalog;
-        this.sourceSchema = sourceSchema;
-        this.targetCatalog = targetCatalog;
-        this.targetSchema = targetSchema;
+        this.sourceCatalog = Settings.get(this, "sourceCatalog");
+        this.sourceSchema = Settings.get(this, "sourceSchema");
+        this.targetCatalog = Settings.get(this, "targetCatalog");
+        this.targetSchema = Settings.get(this, "targetSchema");
     }
 
     /**
-     * @param catalog null for source database, otherwise target database
+     * Url of the server and the catalog, the database of the settings when the catalog is not given
+     *
+     * @param catalog null for source database of file databases, otherwise target database
      */
-    public abstract String getUrl(String catalog);
+    public String getUrl(String catalog) {
+        if (!isConfigured()) {
+            throw new IllegalStateException(this + " has no server in the environment " + Settings.ENVIRONMENT);
+        }
+        return dbType.getUrl(Settings.get(this, "host"), Integer.parseInt(Settings.get(this, "port")),
+                catalog != null ? catalog : Settings.get(this, "database"));
+    }
+
+    /**
+     * Whether the environment has the database: files always, servers when their host is set
+     */
+    public boolean isConfigured() {
+        return dbType.isFileBased() || Settings.get(this, "host") != null;
+    }
 
     public String getSourceUrl() {
         return dbType.isFileBased() ? getUrl(null) : getUrl(sourceCatalog);
@@ -199,36 +228,11 @@ public enum ItDatabase {
     }
 
     public String getUsername() {
-        switch (this) {
-            case MYSQL:
-            case POSTGRESQL:
-            case ORACLE:
-            case SQLSERVER:
-            case CLICKHOUSE:
-            case MARIADB:
-                return "fengy";
-            case H2:
-                return "sa";
-            default:
-                return null;
-        }
+        return Settings.get(this, "username");
     }
 
     public String getPassword() {
-        switch (this) {
-            case MYSQL:
-                return "12345678";
-            case POSTGRESQL:
-            case ORACLE:
-            case SQLSERVER:
-            case CLICKHOUSE:
-            case MARIADB:
-                return "123456";
-            case H2:
-                return "";
-            default:
-                return null;
-        }
+        return Settings.getRaw(this, "password");
     }
 
     /**
@@ -252,60 +256,52 @@ public enum ItDatabase {
         profile.setUsername(getUsername());
         profile.setPassword(getPassword());
         switch (this) {
-            case MYSQL:
-                profile.setHostname("localhost");
-                profile.setPort(3306);
-                profile.setDatabase(catalog);
-                break;
-            case POSTGRESQL:
-                profile.setHostname("localhost");
-                profile.setPort(5432);
-                profile.setDatabase("demo");
-                break;
-            case ORACLE:
-                profile.setHostname("localhost");
-                profile.setPort(1521);
-                profile.setDatabase("demo");
-                break;
-            case SQLSERVER:
-                profile.setHostname("localhost");
-                profile.setPort(1433);
-                profile.setDatabase("demo");
-                break;
             case H2:
                 profile.setDatabase(new File(DATA_DIR, fileKey == null ? "h2-src" : "h2-dst").getAbsolutePath());
                 break;
             case DUCKDB:
                 profile.setDatabase(getDuckDBFile(fileKey == null).getAbsolutePath());
                 break;
-            case CLICKHOUSE:
-                profile.setHostname("localhost");
-                profile.setPort(18123);
-                profile.setDatabase("app");
-                break;
-            case MARIADB:
-                profile.setHostname("localhost");
-                profile.setPort(3307);
-                profile.setDatabase("demo");
-                break;
-            default:
+            case SQLITE:
                 profile.setDatabase(new File(DATA_DIR, fileKey == null ? "src.sqlite" : "dst.sqlite")
                         .getAbsolutePath());
+                break;
+            default:
+                profile.setHostname(Settings.get(this, "host"));
+                profile.setPort(Integer.parseInt(Settings.get(this, "port")));
+                profile.setDatabase(catalog != null ? catalog : Settings.get(this, "database"));
                 break;
         }
         return profile;
     }
 
     public Connection getSourceConnection() throws SQLException {
-        return connect(getSourceUrl());
+        Connection connection = connect(getSourceUrl());
+        if (dbType == DbType.DB2) {
+            // The fixture is created in its own schema, which is created first
+            useSchema(connection, sourceSchema);
+        }
+        return connection;
     }
 
     public Connection getTargetConnection() throws SQLException {
         Connection connection = connect(getTargetUrl());
-        if (dbType == DbType.POSTGRESQL || dbType == DbType.ORACLE || dbType == DbType.CLICKHOUSE) {
+        if (dbType == DbType.DB2) {
+            useSchema(connection, targetSchema);
+        } else if (dbType == DbType.POSTGRESQL || dbType == DbType.ORACLE || dbType == DbType.CLICKHOUSE) {
             connection.setSchema(targetSchema);
         }
         return connection;
+    }
+
+    /**
+     * Creates the schema if it is missing and makes it the current schema
+     */
+    private void useSchema(Connection connection, String schema) throws SQLException {
+        try (java.sql.Statement statement = connection.createStatement()) {
+            statement.execute(dbType.createDialect().getCreateSchemaIfNotExistsStatement(schema));
+        }
+        connection.setSchema(schema);
     }
 
     private Connection connect(String url) throws SQLException {
@@ -317,13 +313,28 @@ public enum ItDatabase {
 
     public synchronized boolean isAvailable() {
         return AVAILABLE.computeIfAbsent(this, db -> {
-            DriverManager.setLoginTimeout(5);
-            try (Connection ignored = getSourceConnection()) {
-                return true;
-            } catch (Exception e) {
-                System.err.println("Database is not available: " + this + ", " + e.getMessage());
+            if (!isConfigured()) {
+                System.err.println("Database is not in the environment " + Settings.ENVIRONMENT + ": " + this);
                 return false;
             }
+            // The first connection of an inactive database activates it, which takes some seconds (Db2)
+            DriverManager.setLoginTimeout(20);
+            Exception error = null;
+            for (int attempt = 0; attempt < 3; attempt++) {
+                try {
+                    Connection connection = getSourceConnection();
+                    if (dbType == DbType.DB2) {
+                        KEPT.put(this, connection);
+                    } else {
+                        connection.close();
+                    }
+                    return true;
+                } catch (Exception e) {
+                    error = e;
+                }
+            }
+            System.err.println("Database is not available: " + this + ", " + error.getMessage());
+            return false;
         });
     }
 
@@ -342,7 +353,8 @@ public enum ItDatabase {
         if (StringUtils.isNotBlank(sourceSchema)) {
             configuration.setIncludedSchemaNames(new String[]{sourceSchema});
         }
-        configuration.setIncludedTableNamePattern("(?i)" + prefix + ".*");
+        // Partitioned tables of PartitionIT (prefix + pt_) are not fixture tables of other tests
+        configuration.setIncludedTableNamePattern("(?i)" + prefix + "(?!pt_).*");
     }
 
     public void configureTarget(ImportExportHandler.ImportConfiguration configuration) {

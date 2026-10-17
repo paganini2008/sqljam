@@ -113,7 +113,8 @@ class DdlScripterTest {
     @Test
     void dbTypeLookup() {
         assertEquals(DbType.MYSQL, DbType.forName("mysql"));
-        assertNull(DbType.forName("db2"));
+        assertEquals(DbType.DB2, DbType.forName("db2"));
+        assertNull(DbType.forName("informix"));
         assertEquals(DbType.MYSQL, DbType.forUrl("jdbc:mysql://localhost:3306/test"));
         assertEquals(DbType.MARIADB, DbType.forUrl("jdbc:mariadb://localhost:3306/test"));
         assertEquals(DbType.POSTGRESQL, DbType.forUrl("jdbc:postgresql://localhost/demo"));
@@ -121,7 +122,8 @@ class DdlScripterTest {
         assertEquals(DbType.SQLSERVER, DbType.forUrl("jdbc:sqlserver://localhost:1433;databaseName=demo"));
         assertEquals(DbType.H2, DbType.forUrl("JDBC:H2:mem:test"));
         assertEquals(DbType.SQLITE, DbType.forUrl("jdbc:sqlite:test.db"));
-        assertNull(DbType.forUrl("jdbc:db2://localhost/test"));
+        assertEquals(DbType.DB2, DbType.forUrl("jdbc:db2://localhost:50000/test"));
+        assertNull(DbType.forUrl("jdbc:informix-sqli://localhost:9088/test"));
         assertNull(DbType.forUrl(" "));
     }
 }

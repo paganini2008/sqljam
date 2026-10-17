@@ -19,6 +19,7 @@ import java.math.BigDecimal;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
@@ -679,6 +680,21 @@ public abstract class Dialect {
     }
 
     /**
+     * Foreign key defined in the create table statement, e.g. the foreign key of a table partitioned by reference
+     * (Oracle)
+     */
+    public String getInlineForeignKeyStatement(String catalog, String schema, String fkName, String[] columnNames,
+                                               String refTableName, String[] refColumnNames, String deleteRule) {
+        StringBuilder sql = new StringBuilder(String.format("CONSTRAINT %s FOREIGN KEY (%s) REFERENCES %s (%s)",
+                quoteIdentifier(getLimitedIdentifier(foldIdentifier(fkName))), getIdentifiers(columnNames),
+                getQualifiedTableName(catalog, schema, refTableName), getIdentifiers(refColumnNames)));
+        if (StringUtils.isNotBlank(deleteRule)) {
+            sql.append(" ON DELETE ").append(deleteRule);
+        }
+        return sql.toString();
+    }
+
+    /**
      * Whether empty strings and binaries are stored as NULL (Oracle), empty LOBs are bound as LOB objects then
      */
     public boolean isEmptyValueNull() {
@@ -1144,6 +1160,17 @@ public abstract class Dialect {
         String values = StringUtils.join(columnValues, ",");
         return String.format("INSERT INTO %s(%s) VALUES (%s)", getQualifiedTableName(catalog, schema, tableName), getIdentifiers(columnNames),
                 values);
+    }
+
+    /**
+     * Reads the rows of a statement by a cursor instead of all at once, e.g. rows of a free query which are
+     * exported
+     *
+     * @return whether auto commit was turned off for the cursor, the caller ends the transaction and restores it
+     */
+    public boolean prepareStreaming(Connection connection, Statement statement, int fetchSize) throws SQLException {
+        statement.setFetchSize(fetchSize);
+        return false;
     }
 
     /**

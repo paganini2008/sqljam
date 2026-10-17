@@ -97,6 +97,24 @@
     -fx-font-style: italic;
 }
 
+/* Partitioned tables: badge of the partitioning after the name, accent icon. Partitions have muted icons */
+.partition-badge {
+    -fx-padding: 0 5 0 5;
+    -fx-background-color: -color-accent-subtle;
+    -fx-background-radius: 4;
+    -fx-text-fill: -color-accent-fg;
+    -fx-font-size: 0.8em;
+    -fx-font-weight: bold;
+}
+
+.partitioned-icon {
+    -fx-icon-color: -color-accent-fg;
+}
+
+.partition-icon {
+    -fx-icon-color: -color-fg-muted;
+}
+
 .status-bar {
     -fx-padding: 4 10 4 10;
     -fx-background-color: -color-bg-subtle;
@@ -162,4 +180,59 @@
 
 .repository-mark .ikonli-font-icon {
     -fx-icon-color: -color-fg-muted;
+}
+
+/* SQL editor: theme colors for text, caret, selection, line numbers and syntax highlighting */
+.sql-editor {
+    -fx-background-color: -color-bg-default;
+    -fx-font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+    -fx-font-size: 13px;
+}
+
+.sql-editor .text {
+    -fx-fill: -color-fg-default;
+}
+
+.sql-editor .caret {
+    -fx-stroke: -color-fg-default;
+}
+
+.sql-editor .selection {
+    -fx-fill: -color-accent-subtle;
+}
+
+.sql-editor .lineno {
+    -fx-background-color: -color-bg-subtle;
+    -fx-text-fill: -color-fg-subtle;
+    -fx-padding: 0 8 0 6;
+}
+
+.sql-editor .text.sql-keyword {
+    -fx-fill: -color-accent-fg;
+    -fx-font-weight: bold;
+}
+
+.sql-editor .text.sql-string {
+    -fx-fill: -color-success-fg;
+}
+
+.sql-editor .text.sql-name {
+    -fx-fill: -color-warning-fg;
+}
+
+.sql-editor .text.sql-number {
+    -fx-fill: -color-danger-fg;
+}
+
+.sql-editor .text.sql-comment {
+    -fx-fill: -color-fg-subtle;
+    -fx-font-style: italic;
+}
+
+.sql-tab {
+    -fx-background-color: -color-bg-default;
+}
+
+.sql-status {
+    -fx-padding: 4 8 4 8;
 }

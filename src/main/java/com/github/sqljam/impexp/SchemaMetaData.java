@@ -83,7 +83,11 @@ public class SchemaMetaData implements TiedMetaData {
                 tableMetaDatas.add(new TableMetaData(tableName, tableInfo, this));
             }
         }
-        if (configuration.getDialect() != null && configuration.getDialect().isForeignKeyOrderRequired()) {
+        // Tables partitioned by reference (Oracle) are created after their parent tables
+        boolean partitionReferenced = tableMetaDatas.stream().anyMatch(tableMetaData -> tableMetaData.getDetail()
+                .get("PARTITION_REFERENCE_CONSTRAINT") != null);
+        if (configuration.getDialect() != null && (configuration.getDialect().isForeignKeyOrderRequired()
+                || partitionReferenced)) {
             sortByForeignKeys();
         }
         for (TableMetaData tableMetaData : tableMetaDatas) {

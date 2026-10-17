@@ -15,7 +15,6 @@
  */
 package com.github.sqljam.face.model;
 
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
@@ -29,7 +28,6 @@ import lombok.Setter;
 @Getter
 @Setter
 @NoArgsConstructor
-@AllArgsConstructor
 public class TableInfo {
 
     private String catalog;
@@ -41,6 +39,28 @@ public class TableInfo {
      * Partition of a partitioned table (PostgreSQL)
      */
     private boolean partition;
+    /**
+     * Partitioning of a partitioned table, e.g. RANGE, LIST, HASH, or the partition key of ClickHouse
+     */
+    private String partitionType;
+    /**
+     * Partition key: columns or expression, e.g. sale_year, toYYYYMM(created)
+     */
+    private String partitionKey;
+    /**
+     * Partitioned table of a partition (PostgreSQL)
+     */
+    private String parent;
+
+    public TableInfo(String catalog, String schema, String name, String remarks, boolean partitioned,
+                     boolean partition) {
+        this.catalog = catalog;
+        this.schema = schema;
+        this.name = name;
+        this.remarks = remarks;
+        this.partitioned = partitioned;
+        this.partition = partition;
+    }
 
     @Override
     public String toString() {

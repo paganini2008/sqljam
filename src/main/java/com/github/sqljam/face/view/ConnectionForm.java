@@ -304,9 +304,10 @@ public class ConnectionForm extends VBox {
             return Messages.get("connection.error.dbType");
         }
         DbType dbType = edited.getDbType();
-        // PostgreSQL connects to a database, Oracle to a service, H2/SQLite to a file; the database of MySQL and
-        // SQL Server is the optional default database
-        boolean databaseRequired = dbType == DbType.POSTGRESQL || dbType == DbType.ORACLE || dbType.isFileBased();
+        // PostgreSQL and Db2 connect to a database, Oracle to a service, H2/SQLite to a file; the database of MySQL
+        // and SQL Server is the optional default database
+        boolean databaseRequired = dbType == DbType.POSTGRESQL || dbType == DbType.ORACLE || dbType == DbType.DB2
+                || dbType.isFileBased();
         if (databaseRequired && StringUtils.isBlank(edited.getDatabase()) && StringUtils.isBlank(edited.getUrl())) {
             return Messages.format("connection.error.database", databaseLabel.getText());
         }

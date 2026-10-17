@@ -167,8 +167,10 @@ class ClickHouseDialectTest {
     @Test
     void readsTextOfSpecialTypes() {
         ClickHouseDialect dialect = new ClickHouseDialect();
-        assertEquals("toString(m) AS m", dialect.getSelectColumnExpression("m", "Map(String, Int32)"));
-        assertEquals("toString(v) AS v", dialect.getSelectColumnExpression("v", "Decimal(76, 10)"));
+        assertEquals("if(isNull(m), NULL, toString(m)) AS m", dialect.getSelectColumnExpression("m",
+                "Map(String, Int32)"));
+        assertEquals("if(isNull(v), NULL, toString(v)) AS v", dialect.getSelectColumnExpression("v",
+                "Decimal(76, 10)"));
         assertEquals("d", dialect.getSelectColumnExpression("d", "Decimal(38, 10)"));
         assertEquals("s", dialect.getSelectColumnExpression("s", "String"));
         // Strings are read as bytes for ClickHouse targets
