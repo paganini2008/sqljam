@@ -1,0 +1,13 @@
+# JVM options of SqlJam, one option per line. Lines starting with # are comments.
+# Used by sqljam.sh, sqljam.bat and when the runnable jar is started by double click.
+# JAVA_OPTS (environment variable) is added after these options and wins.
+
+# Heap: large tables are read page by page, 2 GB is plenty for pages of 5000 rows
+-Xms256m
+-Xmx2g
+
+# Shorter pauses for a responsive user interface
+-XX:+UseG1GC
+
+# Scripts in UTF-8 on every platform (the default of Windows is not UTF-8)
+-Dfile.encoding=UTF-8

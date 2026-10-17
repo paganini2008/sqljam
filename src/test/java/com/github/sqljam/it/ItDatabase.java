@@ -323,6 +323,11 @@ public enum ItDatabase {
             for (int attempt = 0; attempt < 3; attempt++) {
                 try {
                     Connection connection = getSourceConnection();
+                    // Some drivers connect lazily (ClickHouse), the connection is verified by the server
+                    if (!connection.isValid(20)) {
+                        connection.close();
+                        throw new SQLException("The connection is not valid");
+                    }
                     if (dbType == DbType.DB2) {
                         KEPT.put(this, connection);
                     } else {
