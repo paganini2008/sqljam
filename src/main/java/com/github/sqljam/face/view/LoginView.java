@@ -90,15 +90,20 @@ public class LoginView extends StackPane {
             }
         });
         VBox.setVgrow(profileList, Priority.ALWAYS);
-        Button newButton = new Button(Messages.get("login.new"), Icons.of(Icons.ADD));
+        // Icons of the list like DBeaver and DataGrip, the names are their tooltips; texts are never cut off
+        Button newButton = new Button(null, Icons.of(Icons.ADD));
         newButton.setId("newButton");
+        newButton.setTooltip(new Tooltip(Messages.get("login.new")));
+        newButton.setAccessibleText(Messages.get("login.new"));
         newButton.setOnAction(event -> {
             profileList.getSelectionModel().clearSelection();
             connectionForm.setProfile(new ConnectionProfile(), true);
             connectionForm.focusFirstField();
         });
-        Button deleteButton = new Button(Messages.get("login.delete"), Icons.of(Icons.DELETE));
+        Button deleteButton = new Button(null, Icons.of(Icons.DELETE));
         deleteButton.setId("deleteButton");
+        deleteButton.setTooltip(new Tooltip(Messages.get("login.delete")));
+        deleteButton.setAccessibleText(Messages.get("login.delete"));
         deleteButton.disableProperty().bind(profileList.getSelectionModel().selectedItemProperty().isNull());
         deleteButton.setOnAction(event -> deleteSelected());
         // The example database comes back after the user removed it
@@ -111,6 +116,7 @@ public class LoginView extends StackPane {
                     .ifPresent(profileList.getSelectionModel()::select);
         }));
         HBox listButtons = new HBox(8, newButton, deleteButton, exampleButton);
+        listButtons.getChildren().forEach(button -> ((Button) button).setMinWidth(Region.USE_PREF_SIZE));
         Label savedLabel = new Label(Messages.get("login.savedConnections"));
         savedLabel.getStyleClass().add("section-title");
         VBox left = new VBox(10, savedLabel, searchField, profileList, listButtons);
