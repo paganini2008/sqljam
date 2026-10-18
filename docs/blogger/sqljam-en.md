@@ -1,5 +1,7 @@
 # SqlJam: Move Tables Across Databases with Schema, Data and All
 
+<p align="center"><img src="https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/logo.png" alt="SqlJam logo" width="240"></p>
+
 > Tables, indexes, constraints, sequences, partitions and rows, in one go.
 
 ## 1. Overview

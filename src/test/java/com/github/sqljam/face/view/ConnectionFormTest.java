@@ -226,6 +226,54 @@ class ConnectionFormTest {
         assertEquals("jdbc:mysql://db.example.com:3307/app", profile.getJdbcUrl());
     }
 
+    /**
+     * The url follows the fields, a pasted url fills the fields, like DBeaver
+     */
+    @Test
+    void syncsUrlAndFields() {
+        fill(DbType.MYSQL, "localhost", "3306", "test");
+        assertEquals(DbType.MYSQL.getUrl("localhost", 3306, "test"), FxTestSupport.call(() -> field("urlField")
+                .getText()));
+        // A url of the fields is not kept by the profile
+        assertNull(FxTestSupport.call(form::getProfile).getUrl());
+        FxTestSupport.run(() -> field("hostField").setText("db.example.com"));
+        assertEquals(DbType.MYSQL.getUrl("db.example.com", 3306, "test"), FxTestSupport.call(() ->
+                field("urlField").getText()));
+
+        FxTestSupport.run(() -> field("urlField").setText("jdbc:oracle:thin:@//192.168.0.63:11521/DEMO"));
+        assertEquals(DbType.ORACLE, FxTestSupport.call(() -> dbTypeCombo().getValue()));
+        assertEquals("192.168.0.63", FxTestSupport.call(() -> field("hostField").getText()));
+        assertEquals("11521", FxTestSupport.call(() -> field("portField").getText()));
+        assertEquals("DEMO", FxTestSupport.call(() -> field("databaseField").getText()));
+        assertEquals("Service name", FxTestSupport.call(() -> ((Label) form.lookup("#databaseLabel")).getText()));
+        assertNull(FxTestSupport.call(form::getProfile).getUrl());
+
+        // Options of the url are kept, the fields still follow it
+        FxTestSupport.run(() -> field("urlField").setText(
+                "jdbc:sqlserver://mssql:11433;databaseName=demo;encrypt=true"));
+        ConnectionProfile profile = FxTestSupport.call(form::getProfile);
+        assertEquals(DbType.SQLSERVER, profile.getDbType());
+        assertEquals("mssql", profile.getHostname());
+        assertEquals(11433, profile.getPort());
+        assertEquals("demo", profile.getDatabase());
+        assertEquals("jdbc:sqlserver://mssql:11433;databaseName=demo;encrypt=true", profile.getUrl());
+        // A url being typed keeps the fields
+        FxTestSupport.run(() -> field("urlField").setText("jdbc:postgresql:"));
+        assertEquals(DbType.POSTGRESQL, FxTestSupport.call(() -> dbTypeCombo().getValue()));
+        assertEquals("mssql", FxTestSupport.call(() -> field("hostField").getText()));
+
+        // A saved profile shows the url of its fields
+        ConnectionProfile saved = new ConnectionProfile();
+        saved.setDbType(DbType.POSTGRESQL);
+        saved.setHostname("pg");
+        saved.setPort(5432);
+        saved.setDatabase("demo");
+        FxTestSupport.run(() -> form.setProfile(saved, true));
+        assertEquals(DbType.POSTGRESQL.getUrl("pg", 5432, "demo"), FxTestSupport.call(() -> field("urlField")
+                .getText()));
+        assertNull(FxTestSupport.call(form::getProfile).getUrl());
+    }
+
     @Test
     void generatesDefaultName() {
         fill(DbType.MYSQL, "localhost", "3306", "test");

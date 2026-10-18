@@ -30,3 +30,6 @@ logs/
 
 # Other
 change_logs
+
+# Local notes, not published
+docs/release-guide.md

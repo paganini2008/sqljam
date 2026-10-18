@@ -31,6 +31,7 @@ import java.util.concurrent.Callable;
 import java.util.function.Supplier;
 
 import org.apache.commons.io.FileUtils;
+import org.fxmisc.richtext.CodeArea;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -39,6 +40,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.service.ExampleDatabase;
+import com.github.sqljam.face.service.JdbcUrls;
 import com.github.sqljam.impexp.DbType;
 import javafx.application.Platform;
 import javafx.event.ActionEvent;
@@ -58,6 +60,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.TabPane;
+import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
@@ -70,16 +73,18 @@ import javafx.stage.Window;
 
 /**
  * @Description: TutorialVideo records the tutorial video of SqlJam with the example database: connect, query rows,
- *               export into CSV files, import the package into PostgreSQL, and export directly into SQL Server
- *               (created in the export dialog) and Oracle. Imports run in one transaction, the package import is
- *               confirmed before its commit. Subtitles are in English, the background music is generated.
+ *               export into CSV files, import the package into PostgreSQL (with a partitioned table in the tree),
+ *               query with the SQL editor and export the result into PostgreSQL, export directly into SQL Server
+ *               (its data source created from a pasted JDBC URL) and Db2 (skipping existing rows and rows with
+ *               errors). Imports run in one transaction, the package import is confirmed before its commit.
+ *               Subtitles are in English, the background music is generated. It runs about 3 minutes.
  *               It is recorded once per major version, it is not a test of the build (the name does not
  *               end with Test), run it by
  *               mvn test -Dtest=TutorialVideo -Dvideo.file=docs/assets/sqljam-tutorial.mp4
  *               The windows are shown on the screen while recording, the target databases are those of the
- *               integration tests (-Dvideo.postgresql.url, -Dvideo.sqlserver.url, -Dvideo.oracle.url, user and
- *               password by -Dvideo.username and -Dvideo.password). Recorded tables are dropped afterwards and an
- *               existing table of the same name stops the recording.
+ *               integration tests (-Dvideo.postgresql.url, -Dvideo.sqlserver.url, -Dvideo.db2.url, user and
+ *               password by -Dvideo.username and -Dvideo.password). Recorded tables are
+ *               dropped afterwards and an existing table of the same name stops the recording.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -97,8 +102,19 @@ class TutorialVideo {
             "jdbc:postgresql://localhost:5432/demo");
     private static final String SQLSERVER_URL = System.getProperty("video.sqlserver.url",
             "jdbc:sqlserver://localhost:1433;databaseName=demo;encrypt=false;trustServerCertificate=true");
-    private static final String ORACLE_URL = System.getProperty("video.oracle.url",
-            "jdbc:oracle:thin:@//localhost:1521/demo");
+    private static final String DB2_URL = System.getProperty("video.db2.url", "jdbc:db2://localhost:50000/demo");
+    /**
+     * Schema of Db2, names of Db2 are upper case
+     */
+    private static final String DB2_SCHEMA = "SHOP";
+    /**
+     * Partitioned table of PostgreSQL shown in the tree with its partitions
+     */
+    private static final String PARTITIONED = "order_archive";
+    /**
+     * Table of the rows of the SQL editor, exported into PostgreSQL
+     */
+    private static final String QUERY_TABLE = "category_revenue";
     private static final double WIDTH = 1280;
     private static final double HEIGHT = 800;
 
@@ -115,6 +131,10 @@ class TutorialVideo {
      * Tables are dropped only after the check found none of them, tables of the user are never touched
      */
     private boolean targetsChecked;
+    /**
+     * Keeps Db2 active while recording, a database without connections is deactivated and started slowly
+     */
+    private Connection db2Connection;
 
     @Start
     void start(Stage stage) throws Exception {
@@ -123,8 +143,8 @@ class TutorialVideo {
         context = FxTestSupport.createContext(dir);
         ConnectionProfile example = context.getExampleDatabase().create();
         context.getProfileRegistry().saveProfile(example, true);
-        saveProfile("PostgreSQL demo", DbType.POSTGRESQL, 5432);
-        saveProfile("Oracle demo", DbType.ORACLE, 1521);
+        saveProfile("PostgreSQL demo", POSTGRESQL_URL);
+        saveProfile("Db2 demo", DB2_URL);
         holder = new StackPane();
         holder.setStyle("-fx-background-color: -color-bg-default;");
         Scene scene = new Scene(holder, WIDTH, HEIGHT);
@@ -136,13 +156,12 @@ class TutorialVideo {
         stage.centerOnScreen();
     }
 
-    private void saveProfile(String name, DbType dbType, int port) throws Exception {
-        ConnectionProfile profile = new ConnectionProfile();
+    /**
+     * Data source of the url: database type, host, port and database read from it
+     */
+    private void saveProfile(String name, String url) throws Exception {
+        ConnectionProfile profile = JdbcUrls.parse(url);
         profile.setName(name);
-        profile.setDbType(dbType);
-        profile.setHostname("localhost");
-        profile.setPort(port);
-        profile.setDatabase("demo");
         profile.setUsername(USERNAME);
         profile.setPassword(PASSWORD);
         context.getProfileRegistry().saveProfile(profile, true);
@@ -152,6 +171,9 @@ class TutorialVideo {
     void close() throws Exception {
         context.getSessionManager().closeAll();
         FxTestSupport.closeAllDialogs();
+        if (db2Connection != null) {
+            db2Connection.close();
+        }
         if (targetsChecked) {
             dropTables();
         }
@@ -162,6 +184,7 @@ class TutorialVideo {
     void record() throws Exception {
         checkTargets();
         targetsChecked = true;
+        db2Connection = DriverManager.getConnection(DB2_URL, USERNAME, PASSWORD);
         File work = new File(System.getProperty("video.work", "target/video"));
         work.mkdirs();
         packageDir = new File(work, "shop-export");
@@ -176,8 +199,9 @@ class TutorialVideo {
         query();
         exportFiles();
         importPackage();
+        sqlQuery();
         exportSqlServer();
-        exportOracle();
+        exportDb2();
         outro();
 
         recorder.stop();
@@ -185,21 +209,22 @@ class TutorialVideo {
         TutorialMusic.write(music, recorder.getDurationSeconds() + 2);
         recorder.finish(output, music, System.getProperty("video.font", "Helvetica Neue"));
         assertTrue(output.length() > 0);
-        assertTrue(recorder.getDurationSeconds() < 180, "The video is longer than 3 minutes");
+        assertTrue(recorder.getDurationSeconds() < 200, "The video is longer than about 3 minutes");
     }
 
     private void intro() throws Exception {
-        FxTestSupport.run(() -> holder.getChildren().setAll(card("Export & Import", "Getting started with the example database",
-                "Example Shop (H2)  →  PostgreSQL · SQL Server · Oracle")));
+        FxTestSupport.run(() -> holder.getChildren().setAll(card("Export & Import",
+                "Getting started with the example database",
+                "Example Shop (H2)  →  PostgreSQL · SQL Server · Db2")));
         recorder.caption("Getting started with the example database");
-        pause(4500);
+        pause(3500);
     }
 
     private void outro() throws Exception {
         FxTestSupport.run(() -> holder.getChildren().setAll(card("Schema, data and all.",
                 "Move tables across databases", Branding.REPOSITORY_URL)));
         recorder.caption("More on GitHub: paganini2008/sqljam");
-        pause(5000);
+        pause(4000);
     }
 
     private static VBox card(String title, String subtitle, String footer) {
@@ -326,7 +351,7 @@ class TutorialVideo {
         type((TextField) node(mainView, "whereField"), "status = 'PAID'");
         press(node(mainView, "applyQueryButton"));
         waitFor(() -> "60 rows".equals(((Label) mainView.lookup("#totalLabel")).getText()) ? true : null);
-        pause(2500);
+        pause(1800);
     }
 
     /**
@@ -359,7 +384,7 @@ class TutorialVideo {
         Node viewer = waitFor(() -> topNode("packageViewer"));
         fitDialog(onFx(() -> viewer.getScene().getWindow()));
         recorder.caption("The package viewer shows every file of the package");
-        pause(3200);
+        pause(2400);
         FxTestSupport.run(() -> viewer.getScene().getWindow().hide());
         pause(500);
         closeProgress(progress);
@@ -404,9 +429,66 @@ class TutorialVideo {
         recorder.caption("The tables are in PostgreSQL now");
         TreeItem<DbNode> postgresql = expand(connection("PostgreSQL demo"));
         TreeItem<DbNode> shop = expand(child(expand(child(postgresql, "demo")), SCHEMA));
-        assertEquals(TABLES.size(), FxTestSupport.call(() -> shop.getChildren().size()).intValue());
-        pause(2400);
+        // The partitioned table of the schema, its partitions are below it
+        assertEquals(TABLES.size() + 1, FxTestSupport.call(() -> shop.getChildren().size()).intValue());
+        pause(1200);
+        recorder.caption("Partitioned tables show their partitioning, their partitions are listed below them");
+        TreeItem<DbNode> partitioned = child(shop, PARTITIONED);
+        moveTo(cell(partitioned));
+        recorder.click();
+        FxTestSupport.run(() -> partitioned.setExpanded(true));
+        pause(2600);
         collapse(postgresql);
+    }
+
+    /**
+     * Revenue of the categories by a join in the SQL editor, its rows go into a new table of PostgreSQL
+     */
+    private void sqlQuery() throws Exception {
+        recorder.caption("SQL Query: write any SELECT, keywords are highlighted");
+        select(examplePublic());
+        press(node(mainView, "action-sqlQuery"));
+        CodeArea editor = waitFor(() -> (CodeArea) mainView.lookup("#sqlEditor"));
+        pause(600);
+        moveTo(editor);
+        recorder.click();
+        FxTestSupport.run(editor::requestFocus);
+        String sql = "SELECT c.name AS category, SUM(i.quantity * i.unit_price) AS revenue\n"
+                + "FROM order_items i\nJOIN products p ON p.id = i.product_id\n"
+                + "JOIN categories c ON c.id = p.category_id\nGROUP BY c.name ORDER BY revenue DESC";
+        for (char c : sql.toCharArray()) {
+            FxTestSupport.run(() -> editor.appendText(String.valueOf(c)));
+            Thread.sleep(16);
+        }
+        pause(500);
+        press(node(mainView, "sqlRunButton"));
+        TableView<?> result = (TableView<?>) node(mainView, "sqlResultTable");
+        waitFor(() -> result.getItems().isEmpty() ? null : true);
+        pause(1500);
+        recorder.caption("Export the rows of the query as a new table of PostgreSQL");
+        press(node(mainView, "sqlExportButton"));
+        TextField table = waitFor(() -> (TextField) topNode("queryTableField"));
+        fitDialog(topWindow());
+        pause(500);
+        type(table, QUERY_TABLE);
+        RadioButton database = (RadioButton) topNode("databaseRadio");
+        scrollDialog(1);
+        press(database, () -> database.setSelected(true));
+        pause(500);
+        scrollDialog(1);
+        ConnectionProfile postgresql = context.getProfileRegistry().getProfiles().stream().filter(profile ->
+                "PostgreSQL demo".equals(profile.getName())).findFirst().orElseThrow();
+        choose(topNode("targetCombo"), postgresql);
+        ComboBox<?> schema = waitFor(() -> {
+            ComboBox<?> combo = (ComboBox<?>) topNode("targetSchemaCombo");
+            return combo.getItems().contains(SCHEMA) ? combo : null;
+        });
+        choose(schema, SCHEMA);
+        pause(500);
+        press(topNode("startButton"));
+        Window progress = waitForProgress();
+        pause(1000);
+        closeProgress(progress);
     }
 
     private void exportSqlServer() throws Exception {
@@ -423,15 +505,14 @@ class TutorialVideo {
         fitDialog(topWindow());
         pause(700);
         type((TextField) form, "SQL Server demo");
-        choose(topNode("dbTypeCombo"), DbType.SQLSERVER);
-        type((TextField) topNode("hostField"), "localhost");
-        type((TextField) topNode("portField"), "1433");
-        type((TextField) topNode("databaseField"), "demo");
+        recorder.caption("Paste a JDBC URL: the type, host, port and database follow it");
+        type((TextField) topNode("urlField"), SQLSERVER_URL);
+        pause(1500);
         type((TextField) topNode("usernameField"), USERNAME);
         type((TextField) topNode("passwordField"), PASSWORD);
         press(buttonOf(topWindow(), "Test"));
         waitFor(() -> ((Labeled) topNode("formStatusLabel")).getText().startsWith("Connected") ? true : null);
-        pause(1500);
+        pause(1200);
         press(buttonOf(topWindow(), "Save"));
         waitFor(() -> topWindow() == export ? true : null);
         recorder.caption("The new data source is the target, a missing schema is created");
@@ -449,35 +530,42 @@ class TutorialVideo {
         Window progress = waitForProgress();
         pause(1500);
         closeProgress(progress);
-        TreeItem<DbNode> sqlServer = expand(waitFor(() -> connection("SQL Server demo")));
-        expand(child(expand(child(sqlServer, "demo")), SCHEMA));
-        pause(2400);
-        collapse(sqlServer);
     }
 
-    private void exportOracle() throws Exception {
-        recorder.caption("The same tables go straight into Oracle");
+    /**
+     * Into Db2 with the write modes: existing rows are skipped by key, rows with errors are skipped and logged
+     */
+    private void exportDb2() throws Exception {
+        recorder.caption("Straight into Db2: types are translated, keys, indexes and comments come along");
         openExport();
         RadioButton database = (RadioButton) topNode("databaseRadio");
         scrollDialog(1);
         press(database, () -> database.setSelected(true));
-        pause(700);
+        pause(500);
         scrollDialog(1);
-        ConnectionProfile oracle = context.getProfileRegistry().getProfiles().stream().filter(profile -> "Oracle demo"
+        ConnectionProfile db2 = context.getProfileRegistry().getProfiles().stream().filter(profile -> "Db2 demo"
                 .equals(profile.getName())).findFirst().orElseThrow();
-        choose(topNode("targetCombo"), oracle);
+        choose(topNode("targetCombo"), db2);
         ComboBox<?> schema = waitFor(() -> {
             ComboBox<?> combo = (ComboBox<?>) topNode("targetSchemaCombo");
-            return USERNAME.equalsIgnoreCase(Objects.toString(combo.getValue(), "")) ? combo : null;
+            return combo.getItems().isEmpty() ? null : combo;
         });
-        moveTo(schema);
-        pause(1200);
+        type(schema.getEditor(), DB2_SCHEMA);
+        recorder.caption("Rows are inserted, updated or skipped by key");
+        RadioButton skipExisting = (RadioButton) topNode("skipExistingRadio");
+        press(skipExisting, () -> skipExisting.setSelected(true));
+        recorder.caption("Rows with errors can be skipped, each of them is logged");
+        CheckBox skipErrors = (CheckBox) topNode("skipErrorsCheck");
+        press(skipErrors, () -> skipErrors.setSelected(true));
+        pause(800);
         press(topNode("startButton"));
         Window progress = waitForProgress();
-        recorder.caption("Types are translated, keys, indexes, comments and identities come along");
-        pause(2200);
+        pause(1500);
         closeProgress(progress);
-        pause(800);
+        TreeItem<DbNode> db2Item = expand(waitFor(() -> connection("Db2 demo")));
+        expand(child(db2Item, DB2_SCHEMA));
+        pause(1800);
+        collapse(db2Item);
     }
 
     /**
@@ -725,18 +813,24 @@ class TutorialVideo {
              Statement statement = connection.createStatement()) {
             assertEquals(0, count(statement, "SELECT COUNT(*) FROM pg_tables WHERE schemaname = '" + SCHEMA + "'"),
                     "Schema shop of PostgreSQL has tables");
-            // The package import uses an existing schema
+            // The package import uses an existing schema, it has a partitioned table
             statement.execute("CREATE SCHEMA IF NOT EXISTS " + SCHEMA);
+            statement.execute("CREATE TABLE " + SCHEMA + "." + PARTITIONED + " (id BIGINT NOT NULL, order_year INT"
+                    + " NOT NULL, total NUMERIC(12,2), PRIMARY KEY (id, order_year)) PARTITION BY RANGE (order_year)");
+            for (int year : new int[]{2024, 2025}) {
+                statement.execute(String.format("CREATE TABLE %s.%s_%d PARTITION OF %s.%s FOR VALUES FROM (%d) TO (%d)",
+                        SCHEMA, PARTITIONED, year, SCHEMA, PARTITIONED, year, year + 1));
+            }
         }
         try (Connection connection = DriverManager.getConnection(SQLSERVER_URL, USERNAME, PASSWORD);
              Statement statement = connection.createStatement()) {
             assertEquals(0, count(statement, "SELECT COUNT(*) FROM sys.schemas WHERE name = '" + SCHEMA + "'"),
                     "Schema shop of SQL Server exists");
         }
-        try (Connection connection = DriverManager.getConnection(ORACLE_URL, USERNAME, PASSWORD);
+        try (Connection connection = DriverManager.getConnection(DB2_URL, USERNAME, PASSWORD);
              Statement statement = connection.createStatement()) {
-            assertEquals(0, count(statement, "SELECT COUNT(*) FROM user_tables WHERE table_name IN ("
-                    + "'CATEGORIES', 'CUSTOMERS', 'PRODUCTS', 'ORDERS', 'ORDER_ITEMS')"), "Oracle has the tables");
+            assertEquals(0, count(statement, "SELECT COUNT(*) FROM SYSCAT.TABLES WHERE TABSCHEMA = '" + DB2_SCHEMA
+                    + "'"), "Schema SHOP of Db2 has tables");
         }
     }
 
@@ -760,12 +854,13 @@ class TutorialVideo {
         }
         sqlServer.add("IF SCHEMA_ID('" + SCHEMA + "') IS NOT NULL DROP SCHEMA " + SCHEMA);
         execute(SQLSERVER_URL, sqlServer);
-        List<String> oracle = new ArrayList<>();
-        for (String table : TABLES) {
-            oracle.add("BEGIN EXECUTE IMMEDIATE 'DROP TABLE " + table.toUpperCase() + " CASCADE CONSTRAINTS PURGE'; "
-                    + "EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;");
+        List<String> db2 = new ArrayList<>();
+        for (String table : List.of("order_items", "orders", "products", "customers", "categories")) {
+            db2.add("DROP TABLE IF EXISTS " + DB2_SCHEMA + "." + table.toUpperCase());
         }
-        execute(ORACLE_URL, oracle);
+        db2.add("BEGIN DECLARE CONTINUE HANDLER FOR SQLSTATE '42704' BEGIN END; "
+                + "EXECUTE IMMEDIATE 'DROP SCHEMA " + DB2_SCHEMA + " RESTRICT'; END");
+        execute(DB2_URL, db2);
     }
 
     private static void execute(String url, List<String> sqls) {

@@ -1,5 +1,7 @@
 # SqlJam：跨数据库，一键搬表
 
+<p align="center"><img src="https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/logo.png" alt="SqlJam logo" width="240"></p>
+
 > 结构、索引、约束、序列、分区、数据，一起搬走。
 
 ## 1. Overview

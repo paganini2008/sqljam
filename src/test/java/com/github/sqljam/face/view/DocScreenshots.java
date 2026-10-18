@@ -164,6 +164,15 @@ class DocScreenshots {
         }
     }
 
+    /**
+     * Splash screen while starting, with the logo and the slogan
+     */
+    @Test
+    void splash() throws IOException {
+        SplashView splash = FxTestSupport.call(SplashView::new);
+        render(splash, SplashView.WIDTH, SplashView.HEIGHT, "splash.png");
+    }
+
     @Test
     void login() throws IOException {
         LoginView loginView = FxTestSupport.call(() -> new LoginView(context, profile -> {
