@@ -2,13 +2,15 @@
 # SQLite and DuckDB only, the others are skipped.
 #
 #   check      pull requests and master: one Linux build with all tests, the check of merging
-#   platforms  master and manual runs: Windows, macOS and Linux build, start the runnable jar and take screenshots,
-#              it does not hold up pull requests
+#   platforms  master, tags and manual runs: Windows, macOS and Linux build, start the runnable jar and take
+#              screenshots, packages for download (src/packaging/package.sh); it does not hold up pull requests
+#   release    tags v*: a GitHub release with the packages of every platform
 name: build
 
 on:
   push:
     branches: [master]
+    tags: ['v*']
     paths-ignore: ['docs/**', '**/*.md', 'change_logs/**']
   pull_request:
     paths-ignore: ['docs/**', '**/*.md', 'change_logs/**']
@@ -45,6 +47,9 @@ jobs:
             platform: win
           - os: macos-latest
             platform: mac-aarch64
+          # Intel Macs, jpackage builds for the architecture it runs on
+          - os: macos-15-intel
+            platform: mac
           - os: ubuntu-latest
             platform: linux
     runs-on: ${{ matrix.os }}
@@ -97,6 +102,10 @@ jobs:
           grep -q ":: SqlJam ::" run.log
           if grep -E "Exception|ERROR" run.log; then exit 1; fi
 
+      - name: Package for download
+        shell: bash
+        run: sh src/packaging/package.sh ${{ matrix.platform }}
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -104,4 +113,23 @@ jobs:
           path: |
             screenshots/
             run.log
-            bin/sqljam-*-${{ matrix.platform }}.jar
+            bin/SqlJam-*
+            bin/sqljam_*.deb
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: platforms
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create the release with the packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "SqlJam $GITHUB_REF_NAME" \
+            --generate-notes $(find artifacts -name 'SqlJam-*' -o -name 'sqljam_*.deb')

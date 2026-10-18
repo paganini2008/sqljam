@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/logo.png" alt="SqlJam logo" width="240">
+
 # SqlJam
 
 **Move tables across databases. Schema, data and all.**

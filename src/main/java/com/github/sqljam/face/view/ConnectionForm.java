@@ -22,6 +22,7 @@ import java.util.function.Consumer;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.service.DatabaseSession;
+import com.github.sqljam.face.service.JdbcUrls;
 import com.github.sqljam.impexp.DbType;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -73,6 +74,10 @@ public class ConnectionForm extends VBox {
     private final HBox hostBox;
 
     private ConnectionProfile profile = new ConnectionProfile();
+    /**
+     * The url and the fields are being updated by each other
+     */
+    private boolean syncing;
 
     public ConnectionForm() {
         setSpacing(10);
@@ -139,6 +144,13 @@ public class ConnectionForm extends VBox {
         grid.add(rememberPasswordCheck, 1, row++);
         grid.addRow(row, new Label(Messages.get("connection.url")), urlField);
 
+        // The url follows the fields, a pasted or edited url fills the fields, like DBeaver
+        hostField.textProperty().addListener((obs, oldText, text) -> updateUrl());
+        portField.textProperty().addListener((obs, oldText, text) -> updateUrl());
+        databaseField.textProperty().addListener((obs, oldText, text) -> updateUrl());
+        dbTypeCombo.valueProperty().addListener((obs, oldType, newType) -> updateUrl());
+        urlField.textProperty().addListener((obs, oldText, text) -> updateFields(text));
+
         HBox statusBox = new HBox(8, progressIndicator, statusLabel);
         statusBox.setPadding(new Insets(4, 0, 0, 0));
         getChildren().addAll(grid, statusBox);
@@ -174,6 +186,52 @@ public class ConnectionForm extends VBox {
             databaseLabel.setText(Messages.get("connection.file"));
         } else {
             databaseLabel.setText(Messages.get("connection.database"));
+        }
+    }
+
+    /**
+     * Url of the fields
+     */
+    private String buildUrl() {
+        return JdbcUrls.build(dbTypeCombo.getValue(), hostField.getText(), StringUtils.isNumeric(portField.getText())
+                ? Integer.parseInt(portField.getText()) : 0, databaseField.getText());
+    }
+
+    private void updateUrl() {
+        if (syncing) {
+            return;
+        }
+        syncing = true;
+        try {
+            urlField.setText(buildUrl());
+        } finally {
+            syncing = false;
+        }
+    }
+
+    /**
+     * Database type, host, port and database of an entered url, other urls leave the fields as they are
+     */
+    private void updateFields(String url) {
+        if (syncing) {
+            return;
+        }
+        ConnectionProfile parsed = JdbcUrls.parse(url);
+        if (parsed == null) {
+            return;
+        }
+        syncing = true;
+        try {
+            dbTypeCombo.setValue(parsed.getDbType());
+            // A url being typed (e.g. jdbc:mysql:) has no host or database yet, the fields are kept
+            if (parsed.getHostname() == null && parsed.getDatabase() == null) {
+                return;
+            }
+            hostField.setText(StringUtils.defaultString(parsed.getHostname()));
+            portField.setText(parsed.getPort() > 0 ? String.valueOf(parsed.getPort()) : "");
+            databaseField.setText(StringUtils.defaultString(parsed.getDatabase()));
+        } finally {
+            syncing = false;
         }
     }
 
@@ -248,7 +306,12 @@ public class ConnectionForm extends VBox {
         usernameField.setText(StringUtils.defaultString(profile.getUsername()));
         passwordField.setText(StringUtils.defaultString(profile.getPassword()));
         rememberPasswordCheck.setSelected(passwordRemembered);
-        urlField.setText(StringUtils.defaultString(profile.getUrl()));
+        syncing = true;
+        try {
+            urlField.setText(StringUtils.isNotBlank(profile.getUrl()) ? profile.getUrl() : buildUrl());
+        } finally {
+            syncing = false;
+        }
         clearStatus();
     }
 
@@ -264,7 +327,9 @@ public class ConnectionForm extends VBox {
         result.setDatabase(StringUtils.trimToNull(databaseField.getText()));
         result.setUsername(StringUtils.trimToNull(usernameField.getText()));
         result.setPassword(passwordField.getText());
-        result.setUrl(StringUtils.trimToNull(urlField.getText()));
+        // The url of the fields is not kept, a url with its own options is
+        String url = StringUtils.trimToNull(urlField.getText());
+        result.setUrl(url == null || url.equals(buildUrl()) ? null : url);
         String name = StringUtils.trimToNull(nameField.getText());
         if (name == null) {
             name = buildDefaultName(result);

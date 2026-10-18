@@ -652,5 +652,39 @@
                 </plugins>
             </build>
         </profile>
+        <profile>
+            <!-- Packages for download of this system (jpackage), see src/packaging/package.sh:
+                 mvn package -Papp -DskipTests -Dapp.platform=mac-aarch64 (mac, win, linux) -->
+            <id>app</id>
+            <properties>
+                <app.platform>mac-aarch64</app.platform>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-antrun-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>app</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>run</goal>
+                                </goals>
+                                <configuration>
+                                    <target>
+                                        <exec executable="sh" dir="${project.basedir}" failonerror="true">
+                                            <arg value="src/packaging/package.sh"/>
+                                            <arg value="${app.platform}"/>
+                                            <arg value="${project.version}"/>
+                                        </exec>
+                                    </target>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
     </profiles>
 </project>
