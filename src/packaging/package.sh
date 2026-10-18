@@ -35,18 +35,20 @@ if [ ! -f "$OUT/$JAR" ]; then
 fi
 
 rm -rf "$WORK"
-mkdir -p "$WORK/input" "$WORK/portable"
+# The portable files are prepared in a directory of their own: sqljam and SqlJam (jpackage) are the same
+# directory on Windows, its file names ignore the case
+mkdir -p "$WORK/input" "$WORK/portable/sqljam"
 # sqljam.properties is read next to the jar
 cp "$OUT/$JAR" "$OUT/sqljam.properties" "$WORK/input/"
 
 # The runnable jar with its launch scripts, for a Java runtime of the user
-cp "$OUT/$JAR" "$OUT/sqljam.properties" "$OUT/sqljam.vmoptions" "$OUT/sqljam.png" "$WORK/portable/"
+cp "$OUT/$JAR" "$OUT/sqljam.properties" "$OUT/sqljam.vmoptions" "$OUT/sqljam.png" "$WORK/portable/sqljam/"
 case "$PLATFORM" in
-    win) cp "$OUT/sqljam.bat" "$WORK/portable/" ;;
-    *) cp "$OUT/sqljam.sh" "$WORK/portable/" ;;
+    win) cp "$OUT/sqljam.bat" "$WORK/portable/sqljam/" ;;
+    *) cp "$OUT/sqljam.sh" "$WORK/portable/sqljam/" ;;
 esac
 rm -f "$OUT/SqlJam-$VERSION-$PLATFORM-jar.zip"
-(cd "$WORK" && mv portable sqljam && jar --create --no-manifest --file "$OUT/SqlJam-$VERSION-$PLATFORM-jar.zip" sqljam)
+(cd "$WORK/portable" && jar --create --no-manifest --file "$OUT/SqlJam-$VERSION-$PLATFORM-jar.zip" sqljam)
 
 # JVM options of the launcher; they are applied already, SqlJam does not start another java process
 set --
