@@ -8,7 +8,8 @@
 # The version names the packages, e.g. 1.0.0-rc1 of the tag v1.0.0-rc1; the version of pom.xml by default.
 #
 #   mac-aarch64, mac   SqlJam.app in SqlJam-<version>-<platform>.dmg
-#   win                SqlJam-<version>-win.zip, SqlJam\SqlJam.exe without installing
+#   win                SqlJam-<version>-win.zip, SqlJam\SqlJam.exe without installing, and SqlJam-<version>-win.msi
+#                      of releases (not of pre-releases like 1.0.0-rc1) when the WiX Toolset 3 is on the path
 #   linux              SqlJam-<version>-linux.tar.gz (SqlJam/bin/SqlJam) and sqljam_<version>_amd64.deb
 #   every platform     SqlJam-<version>-<platform>-jar.zip, the runnable jar with its launch scripts (Java 17+)
 #
@@ -103,6 +104,28 @@ case "$PLATFORM" in
     win)
         rm -f "$OUT/SqlJam-$VERSION-win.zip"
         (cd "$WORK" && jar --create --no-manifest --file "$OUT/SqlJam-$VERSION-win.zip" SqlJam)
+        # An installer with a directory chooser, Start menu and desktop shortcuts. The upgrade code is the same
+        # for every version, a newer version replaces the installed one. Versions of msi are numbers only, a
+        # pre-release (1.0.0-rc1, 1.0.0-SNAPSHOT) would be the same version as its release and would not be
+        # replaced by it, pre-releases have the zip only.
+        case "$VERSION" in
+            *-*)
+                echo "Pre-release $VERSION, the msi installer is skipped" >&2
+                ;;
+            *)
+                if command -v candle >/dev/null 2>&1 || command -v candle.exe >/dev/null 2>&1; then
+                    jpackage --type msi --dest "$WORK" --app-image "$WORK/SqlJam" --name SqlJam \
+                        --app-version "$APP_VERSION" --vendor "Fred Feng" \
+                        --description "Import and export tool for relational and OLAP databases" \
+                        --win-dir-chooser --win-menu --win-menu-group SqlJam --win-shortcut \
+                        --win-upgrade-uuid 494b38a3-8f4d-457f-bd03-4b48948608e5
+                    rm -f "$OUT/SqlJam-$VERSION-win.msi"
+                    mv "$WORK"/SqlJam-*.msi "$OUT/SqlJam-$VERSION-win.msi"
+                else
+                    echo "WiX Toolset 3 not found, the msi installer is skipped" >&2
+                fi
+                ;;
+        esac
         ;;
     linux)
         rm -f "$OUT/SqlJam-$VERSION-linux.tar.gz"
