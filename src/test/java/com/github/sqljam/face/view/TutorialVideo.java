@@ -38,6 +38,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
+import com.github.sqljam.face.Banner;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.service.ExampleDatabase;
 import com.github.sqljam.face.service.JdbcUrls;
@@ -77,7 +78,8 @@ import javafx.stage.Window;
  *               query with the SQL editor and export the result into PostgreSQL, export directly into SQL Server
  *               (its data source created from a pasted JDBC URL) and Db2 (skipping existing rows and rows with
  *               errors). Imports run in one transaction, the package import is confirmed before its commit.
- *               Subtitles are in English, the background music is generated. It runs about 3 minutes.
+ *               It starts with the name, the version (-Dvideo.version) and what SqlJam is for. Subtitles are in
+ *               English, the background music is generated. It runs about 3 minutes.
  *               It is recorded once per major version, it is not a test of the build (the name does not
  *               end with Test), run it by
  *               mvn test -Dtest=TutorialVideo -Dvideo.file=docs/assets/sqljam-tutorial.mp4
@@ -115,6 +117,11 @@ class TutorialVideo {
      * Table of the rows of the SQL editor, exported into PostgreSQL
      */
     private static final String QUERY_TABLE = "category_revenue";
+    /**
+     * Version shown by the title, the version of the build without -SNAPSHOT by default
+     */
+    private static final String VERSION = System.getProperty("video.version",
+            Banner.getVersion().replace("-SNAPSHOT", ""));
     private static final double WIDTH = 1280;
     private static final double HEIGHT = 800;
 
@@ -194,7 +201,7 @@ class TutorialVideo {
                 24, 100));
         recorder.start(new File(work, "raw.mp4"));
 
-        intro();
+        title();
         connect();
         query();
         exportFiles();
@@ -209,15 +216,30 @@ class TutorialVideo {
         TutorialMusic.write(music, recorder.getDurationSeconds() + 2);
         recorder.finish(output, music, System.getProperty("video.font", "Helvetica Neue"));
         assertTrue(output.length() > 0);
-        assertTrue(recorder.getDurationSeconds() < 200, "The video is longer than about 3 minutes");
+        assertTrue(recorder.getDurationSeconds() < 210, "The video is longer than about 3 minutes");
     }
 
-    private void intro() throws Exception {
-        FxTestSupport.run(() -> holder.getChildren().setAll(card("Export & Import",
-                "Getting started with the example database",
-                "Example Shop (H2)  →  PostgreSQL · SQL Server · Db2")));
-        recorder.caption("Getting started with the example database");
-        pause(3500);
+    /**
+     * The name, the version and what SqlJam is for, before the tutorial starts
+     */
+    private void title() throws Exception {
+        FxTestSupport.run(() -> {
+            ImageView logo = Branding.logoView(190);
+            Label name = new Label("SqlJam");
+            name.setStyle("-fx-font-size: 46px; -fx-font-weight: bold;");
+            Label version = new Label("v" + VERSION);
+            version.getStyleClass().add("muted");
+            version.setStyle("-fx-font-size: 18px;");
+            Label tagline = new Label("Import and export tool for relational and OLAP databases");
+            tagline.getStyleClass().add("muted");
+            tagline.setStyle("-fx-font-size: 18px;");
+            VBox card = new VBox(12, logo, name, version, tagline);
+            card.setAlignment(Pos.CENTER);
+            holder.getChildren().setAll(card);
+        });
+        // The pointer starts at the centre, it would cover the logo
+        recorder.movePointer(WIDTH * 0.82, HEIGHT * 0.78, 1);
+        pause(5500);
     }
 
     private void outro() throws Exception {
@@ -251,7 +273,7 @@ class TutorialVideo {
             holder.getChildren().setAll(view);
             return view;
         });
-        recorder.caption("The first start brings the Example Shop (H2) database, connect to it");
+        recorder.caption("Getting started: the first start brings the Example Shop (H2) database, connect to it");
         @SuppressWarnings("unchecked")
         ListView<ConnectionProfile> list = (ListView<ConnectionProfile>) node(loginView, "profileList");
         pause(1200);
