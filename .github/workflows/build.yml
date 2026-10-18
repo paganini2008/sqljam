@@ -102,9 +102,13 @@ jobs:
           grep -q ":: SqlJam ::" run.log
           if grep -E "Exception|ERROR" run.log; then exit 1; fi
 
+      # Packages of a tag are named by it (v1.0.0-rc1: SqlJam-1.0.0-rc1-...), others by the version of pom.xml
       - name: Package for download
         shell: bash
-        run: sh src/packaging/package.sh ${{ matrix.platform }}
+        run: |
+          VERSION=""
+          case "$GITHUB_REF" in refs/tags/v*) VERSION="${GITHUB_REF_NAME#v}" ;; esac
+          sh src/packaging/package.sh ${{ matrix.platform }} $VERSION
 
       - uses: actions/upload-artifact@v4
         if: always()
@@ -130,6 +134,9 @@ jobs:
       - name: Create the release with the packages
         env:
           GH_TOKEN: ${{ github.token }}
+        # A tag with a suffix, e.g. v1.0.0-rc1 or v1.0.0-beta, is a pre-release, it is not the latest release
         run: |
+          PRERELEASE=""
+          case "$GITHUB_REF_NAME" in *-*) PRERELEASE="--prerelease" ;; esac
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "SqlJam $GITHUB_REF_NAME" \
-            --generate-notes $(find artifacts -name 'SqlJam-*' -o -name 'sqljam_*.deb')
+            $PRERELEASE --generate-notes $(find artifacts -name 'SqlJam-*' -o -name 'sqljam_*.deb')

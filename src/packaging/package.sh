@@ -5,6 +5,8 @@
 #
 #   sh src/packaging/package.sh <platform> [version]      platform: mac-aarch64, mac, win or linux
 #
+# The version names the packages, e.g. 1.0.0-rc1 of the tag v1.0.0-rc1; the version of pom.xml by default.
+#
 #   mac-aarch64, mac   SqlJam.app in SqlJam-<version>-<platform>.dmg
 #   win                SqlJam-<version>-win.zip, SqlJam\SqlJam.exe without installing
 #   linux              SqlJam-<version>-linux.tar.gz (SqlJam/bin/SqlJam) and sqljam_<version>_amd64.deb
@@ -18,8 +20,10 @@ set -e
 
 PLATFORM=${1:?platform: mac-aarch64, mac, win or linux}
 DIR=$(cd "$(dirname "$0")/../.." && pwd)
-VERSION=${2:-$(sed -n 's:^    <version>\(.*\)</version>:\1:p' "$DIR/pom.xml" | head -1)}
-JAR="sqljam-$VERSION-$PLATFORM.jar"
+# The runnable jar is named by the version of pom.xml, the packages by the given version
+POM_VERSION=$(sed -n 's:^    <version>\(.*\)</version>:\1:p' "$DIR/pom.xml" | head -1)
+VERSION=${2:-$POM_VERSION}
+JAR="sqljam-$POM_VERSION-$PLATFORM.jar"
 # jpackage takes numbers only, e.g. 1.0.0 of 1.0.0-SNAPSHOT
 APP_VERSION=$(echo "$VERSION" | sed 's/[^0-9.].*$//')
 WORK="$DIR/target/package-$PLATFORM"
