@@ -28,6 +28,7 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
+import com.github.sqljam.impexp.VectorType;
 import com.github.sqljam.jdbc.JdbcUtils;
 
 /**
@@ -123,6 +124,8 @@ public class MySQLMetaDataOperations extends MetaDataOperations {
                 // Vectors are text of other databases, e.g. [1.00000e+00,2.50000e+00]
                 columnInfo.put("DATA_TYPE", Types.VARCHAR);
                 columnInfo.put("COLUMN_SIZE", dimensions * 16 + 2);
+                columnInfo.put(VectorType.DETAIL_KEY, VectorType.dense(VectorType.Element.FLOAT32, dimensions)
+                        .toString());
             }
             String extra = StringUtils.defaultString((String) columnDetail.get("EXTRA"));
             String expression = (String) columnDetail.get("GENERATION_EXPRESSION");

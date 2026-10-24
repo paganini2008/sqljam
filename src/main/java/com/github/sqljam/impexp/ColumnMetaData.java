@@ -68,6 +68,9 @@ public class ColumnMetaData implements TiedMetaData {
         int dataType = TableMetaData.getInt(detail, "DATA_TYPE");
         String typeName = getUserTypeName(dialect);
         if (typeName == null) {
+            typeName = getVectorTypeName(dialect);
+        }
+        if (typeName == null) {
             typeName = (String) detail.get("TYPE_NAME");
         }
         int columnSize = TableMetaData.getInt(detail, "COLUMN_SIZE");
@@ -130,6 +133,24 @@ public class ColumnMetaData implements TiedMetaData {
      * User defined type (enum, domain) of the column for the same database type, null otherwise
      */
     @SuppressWarnings("unchecked")
+    /**
+     * Vector type of the target database for a vector column, null if the target keeps the vectors as text
+     */
+    private String getVectorTypeName(Dialect dialect) {
+        String typeName = getTargetVectorTypeName(dialect, detail);
+        return typeName != null ? Dialect.VERBATIM_TYPE_PREFIX + typeName : null;
+    }
+
+    /**
+     * Vector type of the target for the column of the details, null if the column is not a vector or the target
+     * keeps it as text
+     */
+    public static String getTargetVectorTypeName(Dialect dialect, Map<String, Object> detail) {
+        VectorType vectorType = VectorType.of(detail);
+        return vectorType != null ? dialect.getVectorTypeName(vectorType, !"NO".equalsIgnoreCase(
+                (String) detail.get("IS_NULLABLE"))) : null;
+    }
+
     private String getUserTypeName(Dialect dialect) {
         Map<String, Object> userType = (Map<String, Object>) detail.get("USER_TYPE");
         if (userType == null || dialect.isCrossDatabase()) {

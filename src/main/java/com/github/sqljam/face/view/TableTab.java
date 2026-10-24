@@ -96,6 +96,11 @@ public class TableTab extends Tab {
         Tab foreignKeysTab = new Tab(Messages.get("table.foreignKeys"), foreignKeyTable);
         Tab ddlTab = new Tab(Messages.get("table.ddl"), createDdlPane());
         Tab dataTab = new Tab(Messages.get("table.data"), dataPane);
+        columnsTab.setGraphic(Icons.of(Icons.COLUMNS));
+        indexesTab.setGraphic(Icons.of(Icons.INDEXES));
+        foreignKeysTab.setGraphic(Icons.of(Icons.FOREIGN_KEYS));
+        ddlTab.setGraphic(Icons.of(Icons.DDL));
+        dataTab.setGraphic(Icons.of(Icons.DATA));
         tabs.getTabs().addAll(columnsTab, indexesTab, foreignKeysTab, ddlTab, dataTab);
         tabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, tab) -> {
             if (tab == ddlTab && !ddlLoaded) {

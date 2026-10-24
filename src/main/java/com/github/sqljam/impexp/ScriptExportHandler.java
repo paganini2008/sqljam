@@ -673,6 +673,15 @@ public class ScriptExportHandler implements ExportHandler {
             return dialect.getJdbcValue(value);
         }
         Map<String, Object> detail = columnMetaData.getDetail();
+        VectorType vectorType = VectorType.of(detail);
+        if (vectorType != null && value instanceof CharSequence
+                && ColumnMetaData.getTargetVectorTypeName(dialect, detail) != null) {
+            // Vectors pass as text, in the format of the vectors of the target
+            VectorType.Values values = VectorType.parseValues(value.toString());
+            if (values != null) {
+                return dialect.getVectorValue(values, vectorType);
+            }
+        }
         return dialect.getJdbcValue(value, TableMetaData.getInt(detail, "DATA_TYPE"), (String) detail.get("TYPE_NAME"),
                 TableMetaData.getInt(detail, "COLUMN_SIZE"));
     }

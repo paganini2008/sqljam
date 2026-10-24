@@ -19,14 +19,22 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
+import org.apache.commons.lang3.math.NumberUtils;
+import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 
 /**
  * @Description: MariaDBDialect generates ddl/dml of MariaDB, which is compatible with MySQL. Differences of MariaDB:
  *               sequences (CREATE SEQUENCE, nextval defaults), native UUID, INET4 and INET6 types, JSON stored as
  *               LONGTEXT with a json_valid check, system versioned tables.
+ *               MariaDB 10.3 and later are supported. VECTOR and VECTOR INDEX (HNSW) of MariaDB 11.7 and later,
+ *               detected on the connection.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -73,6 +81,55 @@ public class MariaDBDialect extends MySQLDialect {
     protected String getVectorTextFunction() {
         return "VEC_ToText";
     }
+
+    @Override
+    protected String getTextVectorFunction() {
+        return "VEC_FromText";
+    }
+
+    /**
+     * VECTOR of MariaDB 11.7 and later
+     */
+    @Override
+    protected boolean isVectorTypeSupported() {
+        return isVersionAtLeast(11, 7);
+    }
+
+    /**
+     * VECTOR and VECTOR INDEX (HNSW) come together in MariaDB
+     */
+    @Override
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+        super.detectDatabaseFeatures(connection, features);
+        if (features.contains(DatabaseFeature.VECTOR)) {
+            features.add(DatabaseFeature.HNSW_INDEX);
+        }
+    }
+
+    /**
+     * VECTOR INDEX (HNSW) of a NOT NULL column for the euclidean or cosine distance, M is the number of neighbors
+     */
+    @Override
+    public String getCreateVectorIndexStatement(String catalog, String schema, String tableName, String indexName,
+                                                String columnName, String columnTypeName, VectorType vectorType,
+                                                boolean nullable, VectorIndex vectorIndex) {
+        VectorIndex.Distance distance = vectorIndex.getDistance();
+        if (!hasDatabaseFeature(DatabaseFeature.HNSW_INDEX, isVectorTypeSupported()) || nullable
+                || (distance != VectorIndex.Distance.EUCLIDEAN && distance != VectorIndex.Distance.COSINE)) {
+            return null;
+        }
+        int neighbors = NumberUtils.toInt(vectorIndex.getOption("m"), 0);
+        return String.format("CREATE VECTOR INDEX %s ON %s (%s)%s DISTANCE=%s", quoteIdentifier(indexName),
+                getQualifiedTableName(catalog, schema, tableName), getIdentifier(columnName),
+                neighbors >= MIN_VECTOR_NEIGHBORS && neighbors <= MAX_VECTOR_NEIGHBORS ? " M=" + neighbors : "",
+                distance.name().toLowerCase(Locale.ENGLISH));
+    }
+
+    /**
+     * Neighbors (M) of a VECTOR INDEX
+     */
+    static final int MIN_VECTOR_NEIGHBORS = 3;
+    static final int MAX_VECTOR_NEIGHBORS = 200;
 
     @Override
     public boolean isSequenceSupported() {

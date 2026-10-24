@@ -16,8 +16,15 @@
 package com.github.sqljam.face.view;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.List;
 import java.util.function.Consumer;
+import com.github.sqljam.impexp.DbCategory;
+import javafx.application.Platform;
+import javafx.scene.Node;
+import javafx.scene.control.ListCell;
+import javafx.stage.Window;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
@@ -52,13 +59,36 @@ import javafx.scene.layout.VBox;
 public class LoginView extends StackPane {
 
     private final AppContext context;
-    private final ObservableList<ConnectionProfile> profiles = FXCollections.observableArrayList();
-    private final FilteredList<ConnectionProfile> filteredProfiles = new FilteredList<>(profiles, profile -> true);
-    // Profiles are grouped by category: relational databases, OLAP databases
-    private final SortedList<ConnectionProfile> sortedProfiles = new SortedList<>(filteredProfiles,
-            Comparator.comparing(DbTypeCells::categoryOf));
-    private final ListView<ConnectionProfile> profileList = new ListView<>(sortedProfiles);
-    private final ConnectionForm connectionForm = new ConnectionForm();
+    /**
+     * A source of an extension in the list, e.g. a vector database
+     */
+    static final class SourceEntry {
+
+        final DataSourceExtension extension;
+        final DataSourceExtension.Source source;
+
+        SourceEntry(DataSourceExtension extension, DataSourceExtension.Source source) {
+            this.extension = extension;
+            this.source = source;
+        }
+
+        @Override
+        public String toString() {
+            return source.getName();
+        }
+    }
+
+    private final List<DataSourceExtension> extensions;
+    /**
+     * Data sources (ConnectionProfile) and sources of extensions (SourceEntry)
+     */
+    private final ObservableList<Object> profiles = FXCollections.observableArrayList();
+    private final FilteredList<Object> filteredProfiles = new FilteredList<>(profiles, profile -> true);
+    // Grouped by category: relational databases, OLAP databases, then the kinds of the extensions
+    private final SortedList<Object> sortedProfiles = new SortedList<>(filteredProfiles,
+            Comparator.comparingInt(this::groupIndex));
+    private final ListView<Object> profileList = new ListView<>(sortedProfiles);
+    private final ConnectionForm connectionForm;
     private final Button loginButton = new Button(Messages.get("login.login"), Icons.of(Icons.CONNECT));
     private final Button testButton = new Button(Messages.get("connection.test"));
     private final Button skipButton = new Button(Messages.get("login.skip"));
@@ -68,6 +98,8 @@ public class LoginView extends StackPane {
      */
     public LoginView(AppContext context, Consumer<ConnectionProfile> onLogin) {
         this.context = context;
+        this.extensions = DataSourceExtension.load(context.getSettingsStore().getConfig());
+        this.connectionForm = new ConnectionForm(extensions);
         getStyleClass().add("login-view");
 
         TextField searchField = new TextField();
@@ -77,16 +109,25 @@ public class LoginView extends StackPane {
         testButton.setId("testButton");
         skipButton.setId("skipButton");
         searchField.setPromptText(Messages.get("login.search"));
-        searchField.textProperty().addListener((obs, oldText, text) -> filteredProfiles.setPredicate(profile ->
-                StringUtils.isBlank(text) || StringUtils.containsIgnoreCase(profile.getName(), text)
-                        || (profile.getDbType() != null && StringUtils.containsIgnoreCase(
-                        profile.getDbType().getDisplayName(), text))));
-        DbTypeCells.setupProfileList(profileList);
+        searchField.textProperty().addListener((obs, oldText, text) -> filteredProfiles.setPredicate(item ->
+                StringUtils.isBlank(text) || StringUtils.containsIgnoreCase(nameOf(item), text)
+                        || StringUtils.containsIgnoreCase(typeOf(item), text)));
+        setupList();
+        // Another category chosen in the form is a new data source, the selection of the list is cleared
+        connectionForm.categoryProperty().addListener((obs, oldCategory, category) -> {
+            Object selected = profileList.getSelectionModel().getSelectedItem();
+            if (selected != null && !groupOf(selected).equals(categoryName(category))) {
+                profileList.getSelectionModel().clearSelection();
+            }
+        });
         profileList.setPlaceholder(new Label(Messages.get("login.noConnections")));
-        profileList.getSelectionModel().selectedItemProperty().addListener((obs, oldProfile, profile) -> {
-            if (profile != null) {
+        profileList.getSelectionModel().selectedItemProperty().addListener((obs, oldItem, item) -> {
+            if (item instanceof ConnectionProfile) {
+                ConnectionProfile profile = (ConnectionProfile) item;
                 connectionForm.setProfile(profile, context.getProfileRegistry().isPasswordRemembered(
                         profile.getId()));
+            } else if (item instanceof SourceEntry) {
+                connectionForm.setSource(((SourceEntry) item).extension, ((SourceEntry) item).source);
             }
         });
         VBox.setVgrow(profileList, Priority.ALWAYS);
@@ -112,7 +153,8 @@ public class LoginView extends StackPane {
         exampleButton.setTooltip(new Tooltip(Messages.get("example.button.tooltip")));
         exampleButton.setOnAction(event -> ExampleActions.restore(getScene().getWindow(), context, profile -> {
             reloadProfiles();
-            profileList.getItems().stream().filter(ExampleDatabase::isExample).findFirst()
+            profileList.getItems().stream().filter(item -> item instanceof ConnectionProfile && ExampleDatabase
+                    .isExample((ConnectionProfile) item)).findFirst()
                     .ifPresent(profileList.getSelectionModel()::select);
         }));
         HBox listButtons = new HBox(8, newButton, deleteButton, exampleButton);
@@ -175,12 +217,88 @@ public class LoginView extends StackPane {
     }
 
     private void reloadProfiles() {
-        profiles.setAll(context.getProfileRegistry().getProfiles());
-        profiles.sort((a, b) -> StringUtils.compareIgnoreCase(a.getName(), b.getName()));
+        List<Object> items = new ArrayList<>(context.getProfileRegistry().getProfiles());
+        for (DataSourceExtension extension : extensions) {
+            extension.getSources().forEach(source -> items.add(new SourceEntry(extension, source)));
+        }
+        items.sort((a, b) -> StringUtils.compareIgnoreCase(nameOf(a), nameOf(b)));
+        profiles.setAll(items);
+    }
+
+    /**
+     * Order of the group of an item: the categories, then the extensions
+     */
+    private int groupIndex(Object item) {
+        if (item instanceof SourceEntry) {
+            return DbCategory.values().length + extensions.indexOf(((SourceEntry) item).extension);
+        }
+        return DbTypeCells.categoryOf((ConnectionProfile) item).ordinal();
+    }
+
+    private static String categoryName(Object category) {
+        return category instanceof DataSourceExtension ? ((DataSourceExtension) category).getGroupName()
+                : category instanceof DbCategory ? ((DbCategory) category).getDisplayName() : "";
+    }
+
+    private static String groupOf(Object item) {
+        return item instanceof SourceEntry ? ((SourceEntry) item).extension.getGroupName()
+                : DbTypeCells.categoryOf((ConnectionProfile) item).getDisplayName();
+    }
+
+    public static String nameOf(Object item) {
+        return item instanceof SourceEntry ? ((SourceEntry) item).source.getName()
+                : ((ConnectionProfile) item).getName();
+    }
+
+    static String typeOf(Object item) {
+        if (item instanceof SourceEntry) {
+            return ((SourceEntry) item).source.getTypeName();
+        }
+        ConnectionProfile profile = (ConnectionProfile) item;
+        return profile.getDbType() != null ? profile.getDbType().getDisplayName() : "";
+    }
+
+    /**
+     * Items with the colored icons of their databases and a header before the first item of each group
+     */
+    private void setupList() {
+        profileList.getStyleClass().add("profile-list");
+        profileList.setCellFactory(view -> new ListCell<>() {
+            @Override
+            protected void updateItem(Object item, boolean empty) {
+                super.updateItem(item, empty);
+                DbTypeCells.setCategoryStart(this, false);
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                    return;
+                }
+                String text = nameOf(item) + "\n" + typeOf(item);
+                Node icon = item instanceof SourceEntry ? DbIcons.of(typeOf(item))
+                        : DbTypeCells.iconOf((ConnectionProfile) item);
+                if (DbTypeCells.isCategoryStart(view.getItems(), getIndex(), LoginView::groupOf)) {
+                    DbTypeCells.setCategoryStart(this, true);
+                    setText(null);
+                    setGraphic(DbTypeCells.withHeader(groupOf(item), new HBox(getGraphicTextGap(), icon,
+                            new Label(text))));
+                } else {
+                    setText(text);
+                    setGraphic(icon);
+                }
+            }
+        });
     }
 
     private void deleteSelected() {
-        ConnectionProfile profile = profileList.getSelectionModel().getSelectedItem();
+        Object selected = profileList.getSelectionModel().getSelectedItem();
+        if (selected instanceof SourceEntry) {
+            if (((SourceEntry) selected).source.delete(getScene().getWindow(), context)) {
+                reloadProfiles();
+                connectionForm.setProfile(new ConnectionProfile(), true);
+            }
+            return;
+        }
+        ConnectionProfile profile = (ConnectionProfile) selected;
         if (profile == null || !Dialogs.confirm(getScene().getWindow(), Messages.get("connection.delete.title"),
                 Messages.format("connection.delete.message", profile.getName()))) {
             return;
@@ -195,6 +313,23 @@ public class LoginView extends StackPane {
     }
 
     private void login(Consumer<ConnectionProfile> onLogin) {
+        if (connectionForm.getSelectedExtension() != null) {
+            // A source of an extension is saved, the main window opens with its action, e.g. the import of a
+            // vector database
+            connectionForm.testConnection(message -> {
+                DataSourceExtension.Source source;
+                try {
+                    source = connectionForm.saveSource();
+                } catch (IOException e) {
+                    Dialogs.showError(getScene().getWindow(), Messages.get("connection.save.error"), e);
+                    return;
+                }
+                Window window = getScene().getWindow();
+                onLogin.accept(null);
+                Platform.runLater(() -> source.open(window, context));
+            });
+            return;
+        }
         connectionForm.testConnection(product -> {
             ConnectionProfile profile = connectionForm.getProfile();
             try {

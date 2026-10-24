@@ -215,6 +215,8 @@
       <div class="card pain"><h3>Keys and indexes go missing</h3><p>Data arrives, but primary keys, foreign keys, sequences and comments do not.</p><p class="fix"><b>→</b> Table-level objects move together.</p></div>
       <div class="card pain"><h3>Scripts become monsters</h3><p>Gigabyte data.sql files and BLOB literals that break 4000-byte limits.</p><p class="fix"><b>→</b> 10 MB parts and LOB files.</p></div>
       <div class="card pain"><h3>Values get corrupted</h3><p>Shifted timestamps, overflowing unsigned numbers, garbled bits and money.</p><p class="fix"><b>→</b> A portable value pipeline.</p></div>
+      <div class="card pain"><h3>Embeddings are locked in a vector database</h3><p>Collections of Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch or Chroma never meet the SQL of the business data.</p><p class="fix"><b>→</b> Collections go straight into a database with vectors.</p></div>
+      <div class="card pain"><h3>The database hides behind a bastion</h3><p>Production servers answer only through an SSH jump host.</p><p class="fix"><b>→</b> An SSH tunnel per data source.</p></div>
     </div>
   </div>
 </section>
@@ -226,7 +228,7 @@
     <h2>Everything a table needs on the other side</h2>
     <div class="grid c4">
       <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M7 7h10M7 12h10M7 17h6"/><rect x="3" y="3" width="18" height="18" rx="3"/></svg></div><h3>Any-to-any</h3><p>Every source/target combination, verified by tests.</p></div>
-      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg></div><h3>Version-aware</h3><p>Dialects picked by detected or selected server version.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M12 3v18M3 12h18"/><circle cx="12" cy="12" r="9"/></svg></div><h3>Version-aware</h3><p>Dialects picked by detected or selected server version, vector types and indexes by the features detected on the target.</p></div>
       <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></div><h3>Keys &amp; constraints</h3><p>Primary keys, indexes, foreign keys, comments and sequences.</p></div>
       <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></svg></div><h3>Partitions</h3><p>Range, list, hash, interval, composite, reference and nested partitions kept for the same database type, partitioned tables marked in the tree.</p></div>
       <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></div><h3>Export packages</h3><p>SQL, Parquet or CSV files, LOB files and manifest.json, split by size and imported in order.</p></div>
@@ -237,6 +239,11 @@
       <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div><h3>OLAP sources</h3><p>DuckDB and ClickHouse next to the relational databases.</p></div>
       <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg></div><h3>Query &amp; export</h3><p>A highlighted SQL Query editor or the data viewer shapes the rows, then every exit exports all of them.</p></div>
       <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></div><h3>Copies in place</h3><p>Copy tables inside the same schema with names like {table}_copy.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="18" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="19" cy="14" r="2"/><path d="M6.5 16.5 10.5 7.5M13.7 7.2l3.7 5.4"/></svg></div><h3>Vectors &amp; embeddings</h3><p>pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse vectors keep their dimensions, HNSW and IVF indexes keep their distances.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 11v6c0 1.7 3.6 3 8 3"/><path d="M16 17h6M19 14l3 3-3 3"/></svg></div><h3>From vector databases</h3><p>Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma in the tree: databases, collections, partitions and tenants, records page by page, imported into tables of ids, vectors, fields and the payload as JSON.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><rect x="3" y="11" width="18" height="10" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div><h3>SSH tunnels</h3><p>Reach a database behind a bastion host with a password or a private key, host keys trusted on first use.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div><h3>Info &amp; health</h3><p>Server, driver, session and the health of a data source or a vector database, refreshed when you ask.</p></div>
+      <div class="card"><div class="icon"><svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg></div><h3>Values &amp; rows</h3><p>Double click a cell for its whole value, copy selected rows as CSV, TSV, JSON or Markdown, filter the data sources of the tree.</p></div>
     </div>
   </div>
 </section>
@@ -252,6 +259,7 @@
       <div class="step"><span class="n">1</span><p><b>Metadata</b>: per-database operations read tables, keys, indexes, comments, partitions and sequences.</p></div>
       <div class="step"><span class="n">2</span><p><b>Dialect</b>: <code>DbType.createDialect(major, minor)</code> picks e.g. <code>Oracle11gDialect</code>.</p></div>
       <div class="step"><span class="n">3</span><p><b>Rows</b>: counted, paged by primary key, normalized and written in batches, or written to Parquet or CSV by an embedded DuckDB.</p></div>
+      <div class="step"><span class="n">4</span><p><b>Vector databases</b>: a line of its own. REST clients read the collections, a visitor builds the tables and the pages go into a target whose vector features are probed first.</p></div>
     </div>
   </div>
 </section>
@@ -304,6 +312,7 @@ exporter.exportDdlAndData();</code></pre></div>
       <button class="tab" role="tab" aria-selected="false" data-panel="p3">Import a package</button>
       <button class="tab" role="tab" aria-selected="false" data-panel="p4">Query &amp; export</button>
       <button class="tab" role="tab" aria-selected="false" data-panel="p5">Parquet &amp; CSV</button>
+      <button class="tab" role="tab" aria-selected="false" data-panel="p6">Vector databases</button>
     </div>
     <div id="p1" class="panel active" role="tabpanel">
       <img src="assets/export-wizard.png" alt="Export wizard" loading="lazy">
@@ -340,6 +349,13 @@ parquet.exportDdlAndData();   <span class="tok-c">// data/&lt;table&gt;.parquet<
 csv.setDelimiter(<span class="tok-s">";"</span>);
 csv.exportDdlAndData();       <span class="tok-c">// data/&lt;table&gt;.csv, &lt;table&gt;_2.csv ...</span>
 importer.importFiles(files, <span class="tok-s">"sales"</span>, ParquetImporter.Mode.CREATE);</code></pre></div></div>
+    </div>
+    <div id="p6" class="panel" role="tabpanel">
+      <img src="assets/import-vdb.png" alt="Import from Vector Database dialog with collections, fields, a previewed query and a target with vectors" loading="lazy">
+      <div><p class="desc">Add a vector database as a data source, expand it in the tree to its databases, collections and partitions, page through the records of conditions, a native filter or a nearest neighbor search, and import the collections into a data source with vectors. Only such data sources are offered as targets.</p>
+        <div class="code"><pre><code>configuration.addCollection(<span class="tok-s">"docs"</span>, <span class="tok-s">"docs"</span>);
+configuration.setQuery(VdbQuery.all().where(<span class="tok-s">"lang = 'en'"</span>));
+<span class="tok-k">new</span> VdbExporter(client, dataSource, configuration).export();   <span class="tok-c">// id, embedding vector(1024), payload jsonb</span></code></pre></div></div>
     </div>
   </div>
 </section>

@@ -54,7 +54,19 @@ import com.github.sqljam.impexp.db.SQLiteMetaDataOperations;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 
 /**
- * @Description: DbType is a supported database type, it creates dialects (by versions) and metadata operations
+ * @Description: DbType is a supported database type, it creates dialects (by versions) and metadata operations.
+ *               Supported versions, and the versions of vectors (detected on the connection of a target):
+ *               <ul>
+ *               <li>MySQL 5.5 and later, VECTOR of 9.0</li>
+ *               <li>MariaDB 10.3 and later, VECTOR and VECTOR INDEX of 11.7</li>
+ *               <li>PostgreSQL 9.x and later, pgvector 0.4 and later (HNSW of 0.5.0, halfvec, sparsevec of 0.7.0)</li>
+ *               <li>Oracle 11g and later, VECTOR of 23ai (sparse of 23.7, HNSW with vector memory)</li>
+ *               <li>SQL Server 2008 and later, VECTOR of 2025</li>
+ *               <li>Db2 for Linux, UNIX and Windows 11.1 and later, VECTOR and vector indexes of 12.1.2</li>
+ *               <li>H2 2.x, SQLite 3, Access 2000 files and later (.mdb, .accdb), no vectors</li>
+ *               <li>DuckDB 1.x, vectors are FLOAT[n]</li>
+ *               <li>ClickHouse 24.x and later, vectors are Array(Float32), vector similarity indexes of 25.x</li>
+ *               </ul>
  * @Author: Fred Feng
  * @Date: 25/03/2023
  * @Version 1.0.0

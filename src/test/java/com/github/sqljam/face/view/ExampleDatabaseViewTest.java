@@ -113,7 +113,7 @@ class ExampleDatabaseViewTest {
             return view;
         });
         ConnectionTree tree = FxTestSupport.call(() -> (ConnectionTree) mainView.lookup("#connectionTree"));
-        TreeItem<DbNode> connection = FxTestSupport.call(() -> tree.getRoot().getChildren().get(0));
+        TreeItem<DbNode> connection = FxTestSupport.call(() -> tree.getConnectionItems().get(0));
         TreeItem<DbNode> schema = expand(expand(connection).getChildren().get(0));
         TreeItem<DbNode> publicSchema = FxTestSupport.call(() -> schema.getChildren().stream()
                 .filter(item -> "PUBLIC".equals(item.getValue().getLabel())).findFirst().orElse(schema));

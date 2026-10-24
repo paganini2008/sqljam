@@ -15,6 +15,10 @@
  */
 package com.github.sqljam.impexp.db;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.time.LocalDate;
@@ -22,15 +26,21 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.StringHelper;
+import com.github.sqljam.impexp.VectorType;
 
 /**
- * @Description: SQLServerDialect for SQL Server 2012 and later versions
+ * @Description: SQLServerDialect for SQL Server 2012 and later versions.
+ *               SQL Server 2008 and later are supported, SQL Server 2008 and 2008 R2 by SQLServer2008Dialect.
+ *               VECTOR of SQL Server 2025 (17.x), of 16-bit floats too, detected on the connection. Vector indexes
+ *               are a preview feature of SQL Server 2025 which makes a table read only, they are not created.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -545,5 +555,94 @@ public class SQLServerDialect extends Dialect {
     public boolean isAlreadyExistsError(SQLException e) {
         int code = e.getErrorCode();
         return code == 2714 || code == 1913 || code == 1779 || code == 1781 || super.isAlreadyExistsError(e);
+    }
+
+    // ------------------------------------------------------------------
+    // Vectors of SQL Server 2025
+    // ------------------------------------------------------------------
+
+    static final int MAX_VECTOR_DIMENSIONS = 1998;
+    static final int MAX_HALF_VECTOR_DIMENSIONS = 3996;
+    /**
+     * Header of the binary of a vector: 0xA9, version, dimensions (2 bytes), base type, 3 reserved bytes
+     */
+    static final int VECTOR_HEADER_SIZE = 8;
+
+    /**
+     * VECTOR(n) of 32-bit floats (also of bytes) and VECTOR(n, float16) of SQL Server 2025, dense and of fixed
+     * dimensions
+     */
+    @Override
+    public String getVectorTypeName(VectorType vectorType) {
+        int dimensions = vectorType.getDimensions();
+        if (!hasDatabaseFeature(DatabaseFeature.VECTOR, isVersionAtLeast(17, 0)) || vectorType.isSparse()
+                || !vectorType.isFloat32Compatible() || dimensions < 1) {
+            return null;
+        }
+        if (vectorType.getElement() == VectorType.Element.FLOAT16 && hasDatabaseFeature(DatabaseFeature.HALF_VECTOR,
+                isVersionAtLeast(17, 0)) && dimensions <= MAX_HALF_VECTOR_DIMENSIONS) {
+            return "VECTOR(" + dimensions + ", float16)";
+        }
+        // 16-bit floats are kept by 32-bit floats
+        return dimensions <= MAX_VECTOR_DIMENSIONS ? "VECTOR(" + dimensions + ")" : null;
+    }
+
+    /**
+     * VECTOR of SQL Server 2025, of 16-bit floats too
+     */
+    @Override
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+        if (probe(connection, "SELECT CAST(CAST('[1]' AS VECTOR(1)) AS NVARCHAR(MAX))")) {
+            features.add(DatabaseFeature.VECTOR);
+            if (probe(connection, "SELECT CAST(CAST('[1]' AS VECTOR(1, float16)) AS NVARCHAR(MAX))")) {
+                features.add(DatabaseFeature.HALF_VECTOR);
+            }
+        }
+    }
+
+    /**
+     * Vectors are read as text, the driver reads them as binary
+     */
+    @Override
+    public String getSelectColumnExpression(String columnName, String typeName) {
+        if ("vector".equalsIgnoreCase(StringUtils.trim(typeName))) {
+            String column = quoteIdentifier(columnName);
+            return String.format("CAST(%s AS NVARCHAR(MAX)) AS %s", column, column);
+        }
+        return super.getSelectColumnExpression(columnName, typeName);
+    }
+
+    /**
+     * Vectors of free queries are binary: the header and little endian floats, they are read as text like the
+     * vectors of a table export
+     */
+    @Override
+    public Object getColumnValue(ResultSet rs, int columnIndex, int columnType, String columnTypeName)
+            throws SQLException {
+        Object value = super.getColumnValue(rs, columnIndex, columnType, columnTypeName);
+        if (value instanceof byte[] && "vector".equalsIgnoreCase(columnTypeName)) {
+            return toVectorText((byte[]) value);
+        }
+        return value;
+    }
+
+    /**
+     * Text of the binary of a vector of 32-bit floats, e.g. [1.0,2.5,-3.0], the bytes as they are if they are not
+     * a vector
+     */
+    static Object toVectorText(byte[] bytes) {
+        if (bytes.length < VECTOR_HEADER_SIZE || (bytes[0] & 0xFF) != 0xA9 || bytes[4] != 0) {
+            return bytes;
+        }
+        ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        int dimensions = buffer.getShort(2) & 0xFFFF;
+        if (bytes.length != VECTOR_HEADER_SIZE + dimensions * Float.BYTES) {
+            return bytes;
+        }
+        StringBuilder text = new StringBuilder("[");
+        for (int i = 0; i < dimensions; i++) {
+            text.append(i > 0 ? "," : "").append(buffer.getFloat(VECTOR_HEADER_SIZE + i * Float.BYTES));
+        }
+        return text.append(']').toString();
     }
 }

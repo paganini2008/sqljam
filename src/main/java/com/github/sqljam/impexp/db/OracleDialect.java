@@ -16,23 +16,35 @@
 package com.github.sqljam.impexp.db;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.sql.Types;
 import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.math.NumberUtils;
+import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.StringHelper;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 
 /**
- * @Description: OracleDialect for Oracle 12.2 and later versions
+ * @Description: OracleDialect for Oracle 12.2 and later versions.
+ *               Oracle 11g and later are supported, older versions by Oracle11gDialect and Oracle12cDialect.
+ *               VECTOR of Oracle 23ai, sparse vectors of 23.7, detected on the connection. HNSW indexes need vector
+ *               memory (vector_memory_size), IVF indexes do not.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -519,6 +531,102 @@ public class OracleDialect extends Dialect {
         int code = e.getErrorCode();
         return code == 955 || code == 2260 || code == 2261 || code == 2264 || code == 2275 || code == 1408
                 || super.isAlreadyExistsError(e);
+    }
+
+    // ------------------------------------------------------------------
+    // Vectors of Oracle 23ai
+    // ------------------------------------------------------------------
+
+    static final int MAX_VECTOR_DIMENSIONS = 65535;
+
+    /**
+     * Vectors of Oracle 23ai (sparse ones of 23.7 and later) and their IVF indexes, HNSW indexes if the database
+     * has vector memory (vector_memory_size): they are kept in it. A setting which is not granted (v$parameter) is
+     * taken as no vector memory.
+     */
+    @Override
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+        if (!probe(connection, "SELECT TO_VECTOR('[1]') FROM dual")) {
+            return;
+        }
+        features.add(DatabaseFeature.VECTOR);
+        features.add(DatabaseFeature.IVF_INDEX);
+        if (probe(connection, "SELECT TO_VECTOR('[1,[0],[1]]', 1, FLOAT32, SPARSE) FROM dual")) {
+            features.add(DatabaseFeature.SPARSE_VECTOR);
+        }
+        try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(
+                "SELECT value FROM v$parameter WHERE name = 'vector_memory_size'")) {
+            if (rs.next() && NumberUtils.toLong(rs.getString(1), 0) > 0) {
+                features.add(DatabaseFeature.HNSW_INDEX);
+            }
+        } catch (SQLException e) {
+            // Without vector memory HNSW indexes are created as IVF indexes
+        }
+    }
+
+    /**
+     * VECTOR(n, format[, SPARSE]) of Oracle 23ai: FLOAT32 (also for 16-bit floats), FLOAT64, INT8 and BINARY
+     * (dimensions of whole bytes)
+     */
+    @Override
+    public String getVectorTypeName(VectorType vectorType) {
+        int dimensions = vectorType.getDimensions();
+        if (!hasDatabaseFeature(DatabaseFeature.VECTOR, isVersionAtLeast(23, 0)) || dimensions > MAX_VECTOR_DIMENSIONS
+                || (vectorType.isSparse() && !hasDatabaseFeature(DatabaseFeature.SPARSE_VECTOR, true))) {
+            return null;
+        }
+        VectorType.Element element = vectorType.getElement() == VectorType.Element.FLOAT16
+                ? VectorType.Element.FLOAT32 : vectorType.getElement();
+        if (element == VectorType.Element.BINARY && (vectorType.isSparse() || dimensions % 8 != 0)) {
+            return null;
+        }
+        return String.format("VECTOR(%s, %s%s)", dimensions > 0 ? String.valueOf(dimensions) : "*", element,
+                vectorType.isSparse() ? ", SPARSE" : "");
+    }
+
+    @Override
+    public Object getVectorValue(VectorType.Values values, VectorType vectorType) {
+        return vectorType.isSparse() ? values.toOracleSparseText() : values.toDenseText();
+    }
+
+    /**
+     * HNSW (in memory neighbor graph) if the database has vector memory, IVF (neighbor partitions) otherwise:
+     * an approximate search uses either. Sparse vectors have no index.
+     */
+    @Override
+    public String getCreateVectorIndexStatement(String catalog, String schema, String tableName, String indexName,
+                                                String columnName, String columnTypeName, VectorType vectorType,
+                                                boolean nullable, VectorIndex vectorIndex) {
+        if (StringUtils.containsIgnoreCase(columnTypeName, "SPARSE")) {
+            return null;
+        }
+        // HNSW needs vector memory, it is not known for a script
+        boolean hnsw = vectorIndex.getKind() == VectorIndex.Kind.HNSW && hasDatabaseFeature(
+                DatabaseFeature.HNSW_INDEX, false);
+        if (!hnsw && !hasDatabaseFeature(DatabaseFeature.IVF_INDEX, true)) {
+            return null;
+        }
+        List<String> parameters = new ArrayList<>();
+        if (hnsw) {
+            addParameter(parameters, "NEIGHBORS", vectorIndex.getOption("m"));
+            addParameter(parameters, "EFCONSTRUCTION", vectorIndex.getOption("ef_construction"));
+        } else {
+            addParameter(parameters, "NEIGHBOR PARTITIONS", vectorIndex.getOption("lists"));
+        }
+        if (!parameters.isEmpty()) {
+            parameters.add(0, hnsw ? "TYPE HNSW" : "TYPE IVF");
+        }
+        return String.format("CREATE VECTOR INDEX %s ON %s (%s) ORGANIZATION %s DISTANCE %s%s",
+                quoteIdentifier(indexName), getQualifiedTableName(catalog, schema, tableName),
+                getIdentifier(columnName), hnsw ? "INMEMORY NEIGHBOR GRAPH" : "NEIGHBOR PARTITIONS",
+                vectorIndex.getDistance(), parameters.isEmpty() ? "" : " PARAMETERS (" + String.join(", ",
+                        parameters) + ")");
+    }
+
+    private static void addParameter(List<String> parameters, String name, String value) {
+        if (NumberUtils.isDigits(value)) {
+            parameters.add(name + " " + value);
+        }
     }
 
     /**

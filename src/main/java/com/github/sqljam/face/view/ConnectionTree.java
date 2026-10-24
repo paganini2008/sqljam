@@ -17,19 +17,25 @@ package com.github.sqljam.face.view;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import org.kordamp.ikonli.javafx.FontIcon;
+import lombok.Setter;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.service.DatabaseSession;
+import com.github.sqljam.impexp.DbCategory;
 import com.github.sqljam.impexp.DbType;
 import javafx.application.Platform;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.StringProperty;
 import javafx.geometry.Pos;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Label;
@@ -41,7 +47,6 @@ import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.HBox;
-import lombok.Setter;
 
 /**
  * @Description: ConnectionTree shows connections, catalogs, schemas and tables, children are loaded lazily in
@@ -54,9 +59,27 @@ public class ConnectionTree extends TreeView<DbNode> {
 
     private final AppContext context;
     private final TreeItem<DbNode> rootItem = new TreeItem<>(DbNode.root());
+    private final List<DataSourceExtension> extensions;
+    /**
+     * Items of all data sources and of the sources of the extensions, the tree shows those of the filter
+     */
+    private final List<TreeItem<DbNode>> connectionItems = new ArrayList<>();
+    private final Map<DataSourceExtension, List<TreeItem<DbNode>>> sourceItems = new LinkedHashMap<>();
+    private final Map<Object, TreeItem<DbNode>> groupItems = new HashMap<>();
+    private final StringProperty filter = new SimpleStringProperty("");
 
     @Setter
     private Consumer<DbNode> onOpenTable;
+    /**
+     * Opens an item of a source of an extension, e.g. the tab of a collection
+     */
+    @Setter
+    private Consumer<DbNode> onOpenSourceItem;
+    /**
+     * Opens the info of a data source or of a source of an extension
+     */
+    @Setter
+    private Consumer<DbNode> onInfo;
     /**
      * Opens a SQL editor on the data source, catalog, schema or table of the node
      */
@@ -78,23 +101,158 @@ public class ConnectionTree extends TreeView<DbNode> {
     private Consumer<ConnectionProfile> onDisconnect;
 
     public ConnectionTree(AppContext context) {
+        this(context, DataSourceExtension.load(context.getSettingsStore().getConfig()));
+    }
+
+    public ConnectionTree(AppContext context, List<DataSourceExtension> extensions) {
         this.context = context;
+        this.extensions = extensions;
         setRoot(rootItem);
         setShowRoot(false);
         getStyleClass().add("connection-tree");
         setId("connectionTree");
         setCellFactory(view -> new DbNodeCell());
+        filter.addListener((obs, oldText, text) -> applyFilter());
         reloadConnections();
     }
 
     /**
-     * Reloads saved connections, expanded connections are collapsed
+     * Reloads saved connections in the groups of their categories (relational, OLAP), then the groups of the
+     * extensions (vector databases). Expanded connections are collapsed.
      */
     public void reloadConnections() {
-        rootItem.getChildren().clear();
+        connectionItems.clear();
         for (ConnectionProfile profile : context.getProfileRegistry().getProfiles()) {
-            rootItem.getChildren().add(new LazyItem(DbNode.connection(profile)));
+            connectionItems.add(new LazyItem(DbNode.connection(profile)));
         }
+        reloadSources();
+    }
+
+    /**
+     * Shows the data sources whose names or types contain the text, all for a blank text. The items are kept, a
+     * connection which is opened stays opened. Groups without data sources are not shown.
+     */
+    public void setFilter(String text) {
+        filter.set(text);
+    }
+
+    public String getFilter() {
+        return StringUtils.defaultString(filter.get());
+    }
+
+    public StringProperty filterProperty() {
+        return filter;
+    }
+
+    private boolean matches(DbNode node) {
+        String text = StringUtils.trimToEmpty(filter.get()).toLowerCase(Locale.ENGLISH);
+        if (text.isEmpty()) {
+            return true;
+        }
+        String type = node.getProfile() != null ? (node.getProfile().getDbType() != null ? node.getProfile()
+                .getDbType().getDisplayName() : "") : node.getSource().getTypeName();
+        return node.getLabel().toLowerCase(Locale.ENGLISH).contains(text) || type.toLowerCase(Locale.ENGLISH)
+                .contains(text);
+    }
+
+    /**
+     * Groups of the matching data sources and sources, in the order of the categories and of the extensions
+     */
+    private void applyFilter() {
+        TreeItem<DbNode> selected = getSelectionModel().getSelectedItem();
+        List<TreeItem<DbNode>> groups = new ArrayList<>();
+        for (DbCategory category : DbCategory.values()) {
+            List<TreeItem<DbNode>> members = connectionItems.stream().filter(item -> DbTypeCells.categoryOf(item
+                    .getValue().getProfile()) == category && matches(item.getValue())).collect(Collectors.toList());
+            if (!members.isEmpty()) {
+                TreeItem<DbNode> group = groupItems.computeIfAbsent(category, key -> {
+                    TreeItem<DbNode> created = new TreeItem<>(DbNode.group(category));
+                    created.setExpanded(true);
+                    return created;
+                });
+                group.getChildren().setAll(members);
+                groups.add(group);
+            }
+        }
+        for (Map.Entry<DataSourceExtension, List<TreeItem<DbNode>>> entry : sourceItems.entrySet()) {
+            List<TreeItem<DbNode>> members = entry.getValue().stream().filter(item -> matches(item.getValue()))
+                    .collect(Collectors.toList());
+            if (!members.isEmpty()) {
+                TreeItem<DbNode> group = groupItems.computeIfAbsent(entry.getKey(), key -> {
+                    TreeItem<DbNode> created = new TreeItem<>(DbNode.group(entry.getKey()));
+                    created.setExpanded(true);
+                    return created;
+                });
+                group.getChildren().setAll(members);
+                groups.add(group);
+            }
+        }
+        rootItem.getChildren().setAll(groups);
+        if (selected != null && getRow(selected) >= 0) {
+            getSelectionModel().select(selected);
+        }
+    }
+
+    /**
+     * Group of the data sources of a category, created in the order of the categories when it is missing: a
+     * category without data sources has no group
+     */
+    TreeItem<DbNode> getGroup(DbCategory category) {
+        return groupItems.get(category);
+    }
+
+    /**
+     * Items of the connections of all categories
+     */
+    public List<TreeItem<DbNode>> getConnectionItems() {
+        List<TreeItem<DbNode>> items = new ArrayList<>();
+        for (TreeItem<DbNode> group : rootItem.getChildren()) {
+            if (group.getValue().getCategory() != null) {
+                items.addAll(group.getChildren());
+            }
+        }
+        return items;
+    }
+
+    /**
+     * Reloads the groups of the sources of extensions (vector databases) after the groups of the categories
+     */
+    public void reloadSources() {
+        sourceItems.clear();
+        for (DataSourceExtension extension : extensions) {
+            List<TreeItem<DbNode>> items = new ArrayList<>();
+            for (DataSourceExtension.Source source : extension.getSources()) {
+                // Its items (collections) are read when it is expanded, like the tables of a connection
+                items.add(new LazyItem(DbNode.source(extension, source)));
+            }
+            sourceItems.put(extension, items);
+        }
+        applyFilter();
+    }
+
+    /**
+     * Selects the source of the id in its group
+     */
+    public void selectSource(String sourceId) {
+        if (sourceItems.values().stream().flatMap(List::stream).noneMatch(item -> item.getValue().getSource()
+                .getId().equals(sourceId) && matches(item.getValue()))) {
+            // A source hidden by the filter is shown
+            setFilter("");
+        }
+        for (TreeItem<DbNode> group : rootItem.getChildren()) {
+            for (TreeItem<DbNode> item : group.getChildren()) {
+                if (item.getValue().getKind() == DbNode.Kind.SOURCE && item.getValue().getSource().getId()
+                        .equals(sourceId)) {
+                    getSelectionModel().select(item);
+                    scrollTo(getRow(item));
+                    return;
+                }
+            }
+        }
+    }
+
+    public List<DataSourceExtension> getExtensions() {
+        return extensions;
     }
 
     /**
@@ -103,12 +261,13 @@ public class ConnectionTree extends TreeView<DbNode> {
      */
     public void addNewConnections() {
         for (ConnectionProfile profile : context.getProfileRegistry().getProfiles()) {
-            boolean exists = rootItem.getChildren().stream().anyMatch(item -> item.getValue().getProfile().getId()
-                    .equals(profile.getId()));
+            boolean exists = connectionItems.stream().anyMatch(item -> item.getValue().getProfile().getId().equals(
+                    profile.getId()));
             if (!exists) {
-                rootItem.getChildren().add(new LazyItem(DbNode.connection(profile)));
+                connectionItems.add(new LazyItem(DbNode.connection(profile)));
             }
         }
+        applyFilter();
     }
 
     /**
@@ -137,16 +296,32 @@ public class ConnectionTree extends TreeView<DbNode> {
         }
     }
 
+    /**
+     * The selected node of the relational data sources, null for a group or a source of an extension
+     */
     public DbNode getSelectedNode() {
         TreeItem<DbNode> item = getSelectionModel().getSelectedItem();
-        return item != null ? item.getValue() : null;
+        return item != null && item.getValue().getKind() != DbNode.Kind.GROUP && item.getValue().getKind()
+                != DbNode.Kind.SOURCE && item.getValue().getKind() != DbNode.Kind.SOURCE_ITEM ? item.getValue() : null;
+    }
+
+    /**
+     * The selected source of an extension, e.g. a vector database
+     */
+    public DbNode getSelectedSource() {
+        TreeItem<DbNode> item = getSelectionModel().getSelectedItem();
+        return item != null && item.getValue().getKind() == DbNode.Kind.SOURCE ? item.getValue() : null;
     }
 
     /**
      * Selects and expands the connection of the profile
      */
     public void selectConnection(String profileId) {
-        for (TreeItem<DbNode> item : rootItem.getChildren()) {
+        if (connectionItems.stream().noneMatch(item -> item.getValue().getProfile().getId().equals(profileId)
+                && matches(item.getValue()))) {
+            setFilter("");
+        }
+        for (TreeItem<DbNode> item : getConnectionItems()) {
             if (item.getValue().getProfile().getId().equals(profileId)) {
                 getSelectionModel().select(item);
                 item.setExpanded(true);
@@ -171,6 +346,18 @@ public class ConnectionTree extends TreeView<DbNode> {
     }
 
     private List<TreeItem<DbNode>> loadChildren(DbNode node) throws Exception {
+        if (node.getKind() == DbNode.Kind.SOURCE || node.getKind() == DbNode.Kind.SOURCE_ITEM) {
+            // Databases, collections and partitions as the source has them
+            List<TreeItem<DbNode>> items = new ArrayList<>();
+            for (SourceItem item : node.getSource().loadItems(node.getItem())) {
+                DbNode child = DbNode.sourceItem(node.getExtension(), node.getSource(), item);
+                items.add(item.isLeaf() ? new TreeItem<>(child) : new LazyItem(child));
+            }
+            if (items.isEmpty()) {
+                items.add(new TreeItem<>(DbNode.message(Messages.get("tree.empty"))));
+            }
+            return items;
+        }
         ConnectionProfile profile = node.getProfile();
         DatabaseSession session = context.getSessionManager().getSession(profile);
         DbType dbType = profile.getDbType();
@@ -289,6 +476,35 @@ public class ConnectionTree extends TreeView<DbNode> {
     /**
      * Tree item loading its children when expanded for the first time
      */
+    /**
+     * Creates a data source of the category, which the form may change, and selects it: a DbCategory, an extension
+     * (vector databases) or null for the relational databases
+     */
+    public void createConnection(Object category) {
+        ConnectionDialog dialog = new ConnectionDialog(getScene().getWindow(), context, null, category, extensions);
+        dialog.showAndWait().ifPresent(profile -> {
+            addNewConnections();
+            selectConnection(profile.getId());
+        });
+        if (dialog.getSavedSource() != null) {
+            reloadSources();
+            selectSource(dialog.getSavedSource().getId());
+        }
+    }
+
+    public void editSource(DbNode node) {
+        if (node.getSource().edit(getScene().getWindow(), context)) {
+            reloadSources();
+            selectSource(node.getSource().getId());
+        }
+    }
+
+    public void deleteSource(DbNode node) {
+        if (node.getSource().delete(getScene().getWindow(), context)) {
+            reloadSources();
+        }
+    }
+
     private class LazyItem extends TreeItem<DbNode> {
 
         private boolean loaded;
@@ -352,6 +568,10 @@ public class ConnectionTree extends TreeView<DbNode> {
                 if (node != null && node.getKind() == DbNode.Kind.TABLE && event.getButton() == MouseButton.PRIMARY
                         && event.getClickCount() == 2 && onOpenTable != null) {
                     onOpenTable.accept(node);
+                } else if (node != null && node.getKind() == DbNode.Kind.SOURCE_ITEM && node.getItem().getKind()
+                        != SourceItem.Kind.DATABASE && event.getButton() == MouseButton.PRIMARY
+                        && event.getClickCount() == 2 && onOpenSourceItem != null) {
+                    onOpenSourceItem.accept(node);
                 }
             });
         }
@@ -359,7 +579,7 @@ public class ConnectionTree extends TreeView<DbNode> {
         @Override
         protected void updateItem(DbNode node, boolean empty) {
             super.updateItem(node, empty);
-            getStyleClass().removeAll("tree-message");
+            getStyleClass().removeAll("tree-message", "tree-group");
             if (empty || node == null) {
                 setText(null);
                 setGraphic(null);
@@ -370,7 +590,7 @@ public class ConnectionTree extends TreeView<DbNode> {
             setText(node.getLabel());
             switch (node.getKind()) {
                 case CONNECTION:
-                    setGraphic(Icons.of(Icons.CONNECTION));
+                    setGraphic(DbTypeCells.iconOf(node.getProfile()));
                     break;
                 case CATALOG:
                     setGraphic(Icons.of(Icons.CATALOG));
@@ -391,6 +611,18 @@ public class ConnectionTree extends TreeView<DbNode> {
                         setGraphic(tableIcon(table));
                     }
                     break;
+                case GROUP:
+                    setGraphic(DbIcons.of(node.getLabel()));
+                    getStyleClass().add("tree-group");
+                    break;
+                case SOURCE:
+                    setGraphic(DbIcons.of(node.getSource().getTypeName()));
+                    break;
+                case SOURCE_ITEM:
+                    SourceItem.Kind itemKind = node.getItem().getKind();
+                    setGraphic(Icons.of(itemKind == SourceItem.Kind.DATABASE ? Icons.CATALOG
+                            : itemKind == SourceItem.Kind.PARTITION ? Icons.PARTITION : Icons.TABLE));
+                    break;
                 case LOADING:
                     setGraphic(Icons.of(Icons.LOADING));
                     getStyleClass().add("tree-message");
@@ -400,7 +632,9 @@ public class ConnectionTree extends TreeView<DbNode> {
                     getStyleClass().add("tree-message");
                     break;
             }
-            String tooltip = node.getKind() == DbNode.Kind.TABLE ? tableTooltip(node.getTable()) : null;
+            String tooltip = node.getKind() == DbNode.Kind.TABLE ? tableTooltip(node.getTable())
+                    : node.getKind() == DbNode.Kind.SOURCE ? node.getSource().getTypeName()
+                    : node.getKind() == DbNode.Kind.SOURCE_ITEM ? node.getItem().getKindName() : null;
             if (tooltip != null) {
                 setTooltip(new Tooltip(tooltip));
             } else {
@@ -426,6 +660,7 @@ public class ConnectionTree extends TreeView<DbNode> {
                     });
                     menu.getItems().addAll(connect, disconnect,
                             menuItem("action.refresh", Icons.REFRESH, ConnectionTree.this::refreshSelected),
+                            menuItem("action.info", Icons.INFO, () -> fire(onInfo, node)),
                             new SeparatorMenuItem(),
                             menuItem("action.sqlQuery", Icons.SQL, () -> fire(onSqlQuery, node)),
                             menuItem("action.export", Icons.EXPORT, () -> fire(onExport, node)),
@@ -450,6 +685,43 @@ public class ConnectionTree extends TreeView<DbNode> {
                             menuItem("tree.openTable", Icons.TABLE, () -> fire(onOpenTable, node)),
                             menuItem("action.sqlQuery", Icons.SQL, () -> fire(onSqlQuery, node)),
                             menuItem("action.export", Icons.EXPORT, () -> fire(onExport, node)));
+                    break;
+                case GROUP:
+                    if (node.getExtension() != null) {
+                        menu.getItems().addAll(
+                                menuItem("connection.kind.new", Icons.ADD, () -> createConnection(node.getExtension())),
+                                menuItem("action.refresh", Icons.REFRESH, ConnectionTree.this::reloadSources));
+                    } else {
+                        menu.getItems().addAll(
+                                menuItem("connection.kind.new", Icons.ADD, () -> createConnection(node.getCategory())),
+                                menuItem("action.refresh", Icons.REFRESH, ConnectionTree.this::reloadConnections));
+                    }
+                    break;
+                case SOURCE:
+                    MenuItem open = new MenuItem(node.getExtension().getOpenText(), Icons.of(Icons.IMPORT));
+                    open.setId("openSourceMenuItem");
+                    open.setOnAction(event -> node.getSource().open(getScene().getWindow(), context));
+                    menu.getItems().addAll(open, menuItem("action.refresh", Icons.REFRESH,
+                            ConnectionTree.this::refreshSelected), menuItem("action.info", Icons.INFO,
+                            () -> fire(onInfo, node)), new SeparatorMenuItem(),
+                            menuItem("action.editConnection", Icons.EDIT, () -> editSource(node)),
+                            menuItem("action.deleteConnection", Icons.DELETE, () -> deleteSource(node)));
+                    break;
+                case SOURCE_ITEM:
+                    MenuItem importItem = new MenuItem(node.getExtension().getOpenText(), Icons.of(Icons.IMPORT));
+                    importItem.setId("importSourceItemMenuItem");
+                    importItem.setOnAction(event -> node.getSource().open(List.of(node.getItem()),
+                            getScene().getWindow(), context));
+                    if (node.getItem().getKind() == SourceItem.Kind.DATABASE) {
+                        menu.getItems().addAll(importItem, menuItem("action.refresh", Icons.REFRESH,
+                                ConnectionTree.this::refreshSelected));
+                    } else {
+                        MenuItem openItem = new MenuItem(node.getExtension().getOpenItemText(),
+                                Icons.of(Icons.TABLE));
+                        openItem.setId("openSourceItemMenuItem");
+                        openItem.setOnAction(event -> fire(onOpenSourceItem, node));
+                        menu.getItems().addAll(openItem, importItem);
+                    }
                     break;
                 default:
                     return null;

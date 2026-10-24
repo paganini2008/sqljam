@@ -117,6 +117,9 @@ public abstract class AbstractFileImporter {
      * Imports an export directory. Files are imported in the order of manifest.json if it exists.
      */
     public void importDirectory(File dir) throws IOException, SQLException {
+        if (dbType != null) {
+            dbType.createDialect().prepareSession(connection);
+        }
         ExportManifest manifest = ExportManifest.read(dir);
         if (manifest == null) {
             importDirectoryWithoutManifest(dir);

@@ -18,12 +18,14 @@ package com.github.sqljam.face.view;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.impexp.DbCategory;
 import com.github.sqljam.impexp.DbType;
+import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -67,13 +69,14 @@ public final class DbTypeCells {
     }
 
     /**
-     * Whether the item at the index starts a category of the list
+     * Whether the item at the index starts a category (or a group) of the list
      */
-    static <T> boolean isCategoryStart(List<T> items, int index, Function<T, DbCategory> category) {
+    static <T> boolean isCategoryStart(List<T> items, int index, Function<T, ?> category) {
         if (index < 0 || index >= items.size()) {
             return false;
         }
-        return index == 0 || category.apply(items.get(index - 1)) != category.apply(items.get(index));
+        return index == 0 || !Objects.equals(category.apply(items.get(index - 1)), category.apply(items.get(
+                index)));
     }
 
     /**
@@ -93,11 +96,26 @@ public final class DbTypeCells {
      * Content with the category header above it
      */
     static Node withHeader(DbCategory category, Node content) {
-        Label header = new Label(category.getDisplayName());
+        return withHeader(category.getDisplayName(), content);
+    }
+
+    /**
+     * Content with the header of a group above it, e.g. Vector databases
+     */
+    static Node withHeader(String group, Node content) {
+        Label header = new Label(group, DbIcons.of(group));
         header.getStyleClass().add("category-header");
         header.setStyle("-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: -color-fg-muted;"
                 + " -fx-padding: 4 0 2 0;");
         return new VBox(2, header, content);
+    }
+
+    /**
+     * Colored icon of the database of a profile, the icon of a connection if its type is unknown
+     */
+    public static Node iconOf(ConnectionProfile profile) {
+        return profile != null && profile.getDbType() != null ? DbIcons.of(profile.getDbType().getDisplayName())
+                : Icons.of(Icons.CONNECTION);
     }
 
     public static ListCell<ConnectionProfile> profileCell() {
@@ -110,7 +128,7 @@ public final class DbTypeCells {
                     setGraphic(null);
                 } else {
                     setText(item.getName());
-                    setGraphic(Icons.of(Icons.CONNECTION));
+                    setGraphic(iconOf(item));
                 }
             }
         };
@@ -153,11 +171,11 @@ public final class DbTypeCells {
                     setCategoryStart(this, true);
                     setText(null);
                     // The gap of the icon and text of a cell
-                    setGraphic(withHeader(categoryOf(item), new HBox(getGraphicTextGap(), Icons.of(Icons.CONNECTION),
+                    setGraphic(withHeader(categoryOf(item), new HBox(getGraphicTextGap(), iconOf(item),
                             new Label(text))));
                 } else {
                     setText(text);
-                    setGraphic(Icons.of(Icons.CONNECTION));
+                    setGraphic(iconOf(item));
                 }
             }
         });
@@ -176,14 +194,27 @@ public final class DbTypeCells {
                 if (empty || item == null) {
                     setText(null);
                     setGraphic(null);
-                } else if (isCategoryStart(view.getItems(), getIndex(), DbType::getCategory)) {
+                } else if (isCategoryStart(view.getItems(), getIndex(), DbType::getCategory) && view.getItems()
+                        .stream().map(DbType::getCategory).distinct().count() > 1) {
                     setCategoryStart(this, true);
                     setText(null);
-                    setGraphic(withHeader(item.getCategory(), new Label(item.getDisplayName())));
+                    HBox type = new HBox(getGraphicTextGap(), DbIcons.of(item.getDisplayName()),
+                            new Label(item.getDisplayName()));
+                    type.setAlignment(Pos.CENTER_LEFT);
+                    setGraphic(withHeader(item.getCategory(), type));
                 } else {
                     setText(item.getDisplayName());
-                    setGraphic(null);
+                    setGraphic(DbIcons.of(item.getDisplayName()));
                 }
+            }
+        });
+        // The selected type shows its icon too
+        combo.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(DbType item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getDisplayName());
+                setGraphic(empty || item == null ? null : DbIcons.of(item.getDisplayName()));
             }
         });
         combo.setConverter(new StringConverter<>() {

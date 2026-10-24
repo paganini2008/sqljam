@@ -24,17 +24,23 @@ import java.sql.Types;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.StringHelper;
+import com.github.sqljam.impexp.VectorType;
 
 /**
- * @Description: MySQLDialect for MySQL 8.0 and later versions
+ * @Description: MySQLDialect for MySQL 8.0 and later versions.
+ *               MySQL 5.5 and later are supported, older versions by MySQL55Dialect, MySQL56Dialect and MySQL57Dialect.
+ *               VECTOR of MySQL 9.0 and later, detected on the connection. MySQL has no vector indexes (searches are
+ *               of HeatWave).
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -276,6 +282,61 @@ public class MySQLDialect extends Dialect {
      */
     protected String getVectorTextFunction() {
         return "VECTOR_TO_STRING";
+    }
+
+    /**
+     * Function converting text to a vector
+     */
+    protected String getTextVectorFunction() {
+        return "STRING_TO_VECTOR";
+    }
+
+    /**
+     * Dimensions of a VECTOR column
+     */
+    static final int MAX_VECTOR_DIMENSIONS = 16383;
+
+    /**
+     * VECTOR of MySQL 9.0 and later, by the version if the features of the database are not known
+     */
+    protected boolean isVectorTypeSupported() {
+        return isVersionAtLeast(9, 0);
+    }
+
+    /**
+     * VECTOR of the database: its function converting text to a vector is found
+     */
+    @Override
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+        if (probe(connection, "SELECT " + getVectorTextFunction() + "(" + getTextVectorFunction() + "('[1]'))")) {
+            features.add(DatabaseFeature.VECTOR);
+        }
+    }
+
+    /**
+     * VECTOR(n) holds dense vectors of 32-bit floats of a fixed number of dimensions
+     */
+    @Override
+    public String getVectorTypeName(VectorType vectorType) {
+        int dimensions = vectorType.getDimensions();
+        if (!hasDatabaseFeature(DatabaseFeature.VECTOR, isVectorTypeSupported()) || vectorType.isSparse()
+                || !vectorType.isFloat32Compatible() || dimensions < 1 || dimensions > MAX_VECTOR_DIMENSIONS) {
+            return null;
+        }
+        return "VECTOR(" + dimensions + ")";
+    }
+
+    /**
+     * Text of a vector for a VECTOR column of a script is converted by the function of the database
+     */
+    @Override
+    public String getStringValue(String catalog, String schema, String tableName, String columnName,
+                                 Object columnValue) {
+        if (columnValue instanceof CharSequence
+                && getRegisteredColumnTypeName(tableName, columnName).startsWith("vector")) {
+            return String.format("%s(%s)", getTextVectorFunction(), getStringLiteral(columnValue.toString()));
+        }
+        return super.getStringValue(catalog, schema, tableName, columnName, columnValue);
     }
 
     @Override

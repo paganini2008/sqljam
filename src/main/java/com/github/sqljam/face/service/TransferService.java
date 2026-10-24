@@ -44,6 +44,7 @@ import com.github.sqljam.impexp.ParquetExporter;
 import com.github.sqljam.impexp.ParquetImporter;
 import com.github.sqljam.impexp.ScriptExporter;
 import com.github.sqljam.impexp.SqlScriptRunner;
+import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.jdbc.ManualTransaction;
 import com.github.sqljam.jdbc.SharedConnectionFactory;
 
@@ -101,7 +102,7 @@ public class TransferService {
                 : DriverManager.getConnection(url, target.getUsername(), target.getPassword());
         try {
             if (StringUtils.isNotBlank(schema) && target.getDbType().isCanSetSchema()) {
-                connection.setSchema(schema);
+                JdbcUtils.setSchema(connection, schema);
             }
             if (StringUtils.isNotBlank(catalog) && (target.getDbType() == DbType.MYSQL
                     || target.getDbType() == DbType.MARIADB)) {

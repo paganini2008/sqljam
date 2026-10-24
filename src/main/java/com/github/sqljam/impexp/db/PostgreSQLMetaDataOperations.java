@@ -19,6 +19,7 @@ import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -30,10 +31,15 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.math.NumberUtils;
 import com.github.sqljam.impexp.ImpExpException;
+import com.github.sqljam.impexp.IndexMetaData;
 import com.github.sqljam.impexp.MetaDataOperations;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.utils.MapUtils;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * @Description: PostgreSQLMetaDataOperations reads partitions, comments and sequences of PostgreSQL
@@ -41,6 +47,7 @@ import com.github.sqljam.utils.MapUtils;
  * @Date: 29/03/2023
  * @Version 1.0.0
  */
+@Slf4j
 public class PostgreSQLMetaDataOperations extends MetaDataOperations {
 
     private static final String PARTITION_SQL = "SELECT c.relname, c.relkind, c.relispartition,"
@@ -128,8 +135,10 @@ public class PostgreSQLMetaDataOperations extends MetaDataOperations {
         if (CollectionUtils.isEmpty(columnInfos)) {
             throw new ImpExpException("No columns found in table: " + tableName);
         }
-        String sql = "SELECT a.attname, b.description FROM pg_attribute a"
+        String sql = "SELECT a.attname, b.description, t.typname, format_type(a.atttypid, a.atttypmod) AS column_type"
+                + " FROM pg_attribute a"
                 + " JOIN pg_class c ON a.attrelid = c.oid JOIN pg_namespace n ON n.oid = c.relnamespace"
+                + " JOIN pg_type t ON t.oid = a.atttypid"
                 + " LEFT OUTER JOIN pg_description b ON a.attrelid = b.objoid AND a.attnum = b.objsubid"
                 + " WHERE n.nspname = ? AND c.relname = ? AND a.attnum > 0 AND NOT a.attisdropped";
         List<Map<String, Object>> columnDetails = JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql,
@@ -145,6 +154,12 @@ public class PostgreSQLMetaDataOperations extends MetaDataOperations {
             }
             if (partitionTable) {
                 columnInfo.put("TABLE_NAME", tableName);
+            }
+            Map<String, Object> columnDetail = mutableColumnInfos.get(columnInfo.get("COLUMN_NAME"));
+            VectorType vectorType = columnDetail != null ? getVectorType((String) columnDetail.get("typname"),
+                    (String) columnDetail.get("column_type")) : null;
+            if (vectorType != null) {
+                columnInfo.put(VectorType.DETAIL_KEY, vectorType.toString());
             }
             if ("YES".equalsIgnoreCase((String) columnInfo.get("IS_GENERATEDCOLUMN"))) {
                 // Generation expression is reported as default value
@@ -274,9 +289,105 @@ public class PostgreSQLMetaDataOperations extends MetaDataOperations {
         columnInfo.put("DECIMAL_DIGITS", scale);
     }
 
+    /**
+     * Vectors of a result set have no dimensions there, e.g. of an expression
+     */
+    @Override
+    public void normalizeQueryColumnInfo(Map<String, Object> columnInfo) {
+        VectorType vectorType = getVectorType((String) columnInfo.get("TYPE_NAME"), null);
+        if (vectorType != null) {
+            columnInfo.put(VectorType.DETAIL_KEY, vectorType.toString());
+        }
+    }
+
+    /**
+     * Vector type of a column of pgvector: vector(1024), halfvec(1024), sparsevec(30000), null for other types
+     */
+    static VectorType getVectorType(String typeName, String columnType) {
+        String name = StringUtils.defaultString(typeName).toLowerCase(Locale.ENGLISH);
+        int dimensions = NumberUtils.toInt(StringUtils.substringBetween(columnType, "(", ")"), 0);
+        switch (name) {
+            case "vector":
+                return VectorType.dense(VectorType.Element.FLOAT32, dimensions);
+            case "halfvec":
+                return VectorType.dense(VectorType.Element.FLOAT16, dimensions);
+            case "sparsevec":
+                return new VectorType(VectorType.Element.FLOAT32, dimensions, true);
+            default:
+                return null;
+        }
+    }
+
+    /**
+     * Indexes with their access methods, operator classes and options: other methods than btree (gin, gist, hnsw,
+     * ivfflat) are created alike by PostgreSQL targets, hnsw and ivfflat of pgvector are vector indexes of others
+     */
     @Override
     public List<Map<String, Object>> getIndexInfos(DatabaseMetaData databaseMetaData, String catalogName, String schemaName,
                                                    String tableName) throws SQLException {
+        List<Map<String, Object>> indexInfos = getIndexInfosOfTable(databaseMetaData, catalogName, schemaName,
+                tableName);
+        if (CollectionUtils.isEmpty(indexInfos)) {
+            return indexInfos;
+        }
+        String sql = "SELECT ic.relname AS index_name, am.amname, array_to_string(ic.reloptions, ', ') AS options,"
+                + " a.attname, oc.opcname, oc.opcdefault"
+                + " FROM pg_index x JOIN pg_class ic ON ic.oid = x.indexrelid JOIN pg_class t ON t.oid = x.indrelid"
+                + " JOIN pg_namespace n ON n.oid = t.relnamespace JOIN pg_am am ON am.oid = ic.relam"
+                + " CROSS JOIN LATERAL unnest(x.indkey::int2[], x.indclass::oid[]) AS k(attnum, opclass)"
+                + " JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum"
+                + " LEFT JOIN pg_opclass oc ON oc.oid = k.opclass"
+                + " WHERE n.nspname = ? AND t.relname = ?";
+        Map<String, Map<String, Object>> methods = new HashMap<>();
+        String table = (String) indexInfos.get(0).get("TABLE_NAME");
+        try {
+            for (Map<String, Object> row : JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql,
+                    new Object[]{schemaName, StringUtils.defaultIfBlank(table, tableName)})) {
+                methods.put(row.get("index_name") + "." + row.get("attname"), row);
+            }
+        } catch (SQLException e) {
+            // Indexes are created as ordinary ones, vector columns have none then
+            log.warn("Access methods of the indexes of {}.{} are not readable: {}", schemaName, tableName,
+                    e.getMessage());
+            return indexInfos;
+        }
+        for (Map<String, Object> indexInfo : indexInfos) {
+            Map<String, Object> method = methods.get(indexInfo.get("INDEX_NAME") + "." + indexInfo.get("COLUMN_NAME"));
+            if (method != null) {
+                applyIndexMethod(indexInfo, method);
+            }
+        }
+        return indexInfos;
+    }
+
+    /**
+     * Access method, operator class (null for the default one) and options of an index column, and the vector
+     * index of hnsw and ivfflat
+     */
+    static void applyIndexMethod(Map<String, Object> indexInfo, Map<String, Object> method) {
+        String amName = (String) method.get("amname");
+        String operatorClass = (String) method.get("opcname");
+        String options = StringUtils.trimToNull((String) method.get("options"));
+        indexInfo.put(IndexMetaData.INDEX_METHOD, amName);
+        indexInfo.put(IndexMetaData.OPERATOR_CLASS, Boolean.TRUE.equals(method.get("opcdefault")) ? null
+                : operatorClass);
+        indexInfo.put(IndexMetaData.INDEX_OPTIONS, options);
+        VectorIndex.Distance distance = PostgreSQLDialect.getVectorDistance(operatorClass);
+        if (distance != null && ("hnsw".equals(amName) || "ivfflat".equals(amName))) {
+            Map<String, String> vectorOptions = new LinkedHashMap<>();
+            for (String option : StringUtils.defaultString(options).split(",")) {
+                String[] pair = option.split("=", 2);
+                if (pair.length == 2) {
+                    vectorOptions.put(pair[0].trim().toLowerCase(Locale.ENGLISH), pair[1].trim());
+                }
+            }
+            indexInfo.put(VectorIndex.DETAIL_KEY, new VectorIndex("hnsw".equals(amName) ? VectorIndex.Kind.HNSW
+                    : VectorIndex.Kind.IVF, distance, vectorOptions).toString());
+        }
+    }
+
+    private List<Map<String, Object>> getIndexInfosOfTable(DatabaseMetaData databaseMetaData, String catalogName,
+                                                           String schemaName, String tableName) throws SQLException {
         List<Map<String, Object>> indexInfos = super.getIndexInfos(databaseMetaData, catalogName, schemaName, tableName);
         if (CollectionUtils.isNotEmpty(indexInfos)) {
             return indexInfos;

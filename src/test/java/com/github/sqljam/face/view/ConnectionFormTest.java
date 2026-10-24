@@ -23,6 +23,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.nio.file.Files;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.Test;
@@ -32,7 +35,9 @@ import org.testfx.api.FxRobot;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.impexp.DbCategory;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.utils.SshSettings;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
@@ -91,9 +96,21 @@ class ConnectionFormTest {
         return FxTestSupport.call(form::validate);
     }
 
+    /**
+     * The types follow the category, the categories offer every type
+     */
     @Test
     void listsOnlySupportedDatabaseTypes() {
-        assertEquals(DbType.values().length, FxTestSupport.call(() -> dbTypeCombo().getItems().size()));
+        Set<DbType> types = EnumSet.noneOf(DbType.class);
+        for (DbCategory category : DbCategory.values()) {
+            FxTestSupport.run(() -> form.setCategory(category));
+            List<DbType> items = FxTestSupport.call(() -> List.copyOf(dbTypeCombo().getItems()));
+            assertTrue(items.stream().allMatch(type -> type.getCategory() == category), items.toString());
+            types.addAll(items);
+        }
+        assertEquals(EnumSet.allOf(DbType.class), types);
+        assertEquals(DbCategory.OLAP, FxTestSupport.call(form::getCategory));
+        assertNull(form.getSelectedExtension());
     }
 
     @Test
@@ -381,5 +398,94 @@ class ConnectionFormTest {
         assertNotNull(FxTestSupport.call(() -> ((Label) dialog.getDialogPane().lookup("#formStatusLabel"))
                 .getText()));
         FxTestSupport.run(dialog::close);
+    }
+    @Test
+    @SuppressWarnings("unchecked")
+    void editsSshTunnel() throws Exception {
+        fill(DbType.MYSQL, "localhost", "3306", "shop");
+        CheckBox enabled = (CheckBox) form.lookup("#sshEnabledCheck");
+        assertFalse(FxTestSupport.call(() -> form.lookup("#sshGrid").isVisible()));
+        assertNull(FxTestSupport.call(form::getProfile).getSsh());
+        FxTestSupport.run(() -> enabled.setSelected(true));
+        assertTrue(FxTestSupport.call(() -> form.lookup("#sshGrid").isVisible()));
+        // An enabled tunnel needs its host, user and key
+        assertEquals("Please enter the SSH host", FxTestSupport.call(form::validate));
+        FxTestSupport.run(() -> field("sshHostField").setText("bastion"));
+        FxTestSupport.run(() -> field("sshPortField").setText("0"));
+        assertEquals("Please enter an SSH port from 1 to 65535", FxTestSupport.call(form::validate));
+        FxTestSupport.run(() -> field("sshPortField").setText("2222"));
+        assertEquals("Please enter the SSH username", FxTestSupport.call(form::validate));
+        FxTestSupport.run(() -> {
+            field("sshUsernameField").setText("fred");
+            field("sshPasswordField").setText("ssh-pw");
+        });
+        assertNull(FxTestSupport.call(form::validate));
+        SshSettings settings = FxTestSupport.call(form::getProfile).getSsh();
+        assertTrue(settings.isEnabled());
+        assertEquals("bastion", settings.getHost());
+        assertEquals(2222, settings.getPort());
+        assertEquals("ssh-pw", settings.getPassword());
+
+        // The key and its passphrase instead of the password
+        ComboBox<SshSettings.Authentication> authentication = (ComboBox<SshSettings.Authentication>) form.lookup(
+                "#sshAuthenticationCombo");
+        FxTestSupport.run(() -> authentication.setValue(SshSettings.Authentication.KEY));
+        assertFalse(FxTestSupport.call(() -> form.lookup("#sshPasswordField").isVisible()));
+        assertTrue(FxTestSupport.call(() -> form.lookup("#sshKeyFileField").isVisible()));
+        assertEquals("Please choose the private key file", FxTestSupport.call(form::validate));
+        FxTestSupport.run(() -> {
+            field("sshKeyFileField").setText("~/.ssh/id_ed25519");
+            field("sshPassphraseField").setText("phrase");
+        });
+        settings = FxTestSupport.call(form::getProfile).getSsh();
+        assertNull(settings.getPassword());
+        assertEquals("phrase", settings.getPassphrase());
+        assertEquals("~/.ssh/id_ed25519", settings.getPrivateKeyFile());
+        assertEquals("Private key", FxTestSupport.call(() -> authentication.getButtonCell().getText()));
+
+        // Shown again with the profile, hidden for a database file
+        ConnectionProfile profile = FxTestSupport.call(form::getProfile);
+        FxTestSupport.run(() -> form.setProfile(new ConnectionProfile(), true));
+        assertFalse(FxTestSupport.call(enabled::isSelected));
+        FxTestSupport.run(() -> form.setProfile(profile, true));
+        assertTrue(FxTestSupport.call(enabled::isSelected));
+        assertEquals("phrase", FxTestSupport.call(() -> field("sshPassphraseField").getText()));
+        FxTestSupport.run(() -> dbTypeCombo().setValue(DbType.SQLITE));
+        assertFalse(FxTestSupport.call(() -> form.lookup("#sshForm").isVisible()));
+        assertNull(FxTestSupport.call(form::getProfile).getSsh());
+    }
+
+    /**
+     * The secret of the tunnel follows Remember password, like the password of the database
+     */
+    @Test
+    void keepsSshSecretsOfSession() throws Exception {
+        ConnectionProfile profile = new ConnectionProfile();
+        profile.setName("tunneled");
+        profile.setDbType(DbType.MYSQL);
+        profile.setHostname("localhost");
+        profile.setPort(3306);
+        profile.setPassword("db-pw");
+        SshSettings ssh = new SshSettings();
+        ssh.setEnabled(true);
+        ssh.setHost("bastion");
+        ssh.setUsername("fred");
+        ssh.setPassword("ssh-pw");
+        profile.setSsh(ssh);
+        context.getProfileRegistry().saveProfile(profile, false);
+        String json = Files.readString(new File(dir, "connections.json").toPath());
+        assertTrue(json.contains("bastion"), json);
+        assertFalse(json.contains("ssh-pw") || json.contains("db-pw"), json);
+        assertFalse(json.contains("sshEnabled") || json.contains("jdbcUrl"), json);
+        ConnectionProfile loaded = context.getProfileRegistry().findProfile(profile.getId()).orElseThrow();
+        assertEquals("ssh-pw", loaded.getSsh().getPassword());
+        assertTrue(loaded.isSshEnabled());
+        // The settings are copied, not shared
+        loaded.getSsh().setHost("other");
+        assertEquals("bastion", context.getProfileRegistry().findProfile(profile.getId()).orElseThrow().getSsh()
+                .getHost());
+        context.getProfileRegistry().saveProfile(loaded, true);
+        assertTrue(Files.readString(new File(dir, "connections.json").toPath()).contains("ssh-pw"));
+        context.getProfileRegistry().removeProfile(profile.getId());
     }
 }
