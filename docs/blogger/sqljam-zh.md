@@ -8,7 +8,7 @@
 
 **SqlJam**：*Move tables across databases. Schema, data and all.*
 
-一个 Java 17 + JavaFX 的桌面导入导出工具，支持关系型与 OLAP 数据库（**MySQL、MariaDB、PostgreSQL、Oracle、SQL Server、Db2、H2、SQLite、DuckDB、ClickHouse** 等）任意互导：
+一个 Java 17 + JavaFX 的桌面导入导出工具，支持关系型与 OLAP 数据库（**MySQL、MariaDB、PostgreSQL、Oracle、SQL Server、Db2、H2、SQLite、Microsoft Access、DuckDB、ClickHouse** 等）任意互导：
 可以**直接导入目标库**，也可以在同一个 schema 里复制表，或者导出为带描述文件的 **SQL / Parquet / CSV 导出包**，之后再成对导入。导入目标库默认在**一个事务**里完成，出错整体回滚，数据可以**按主键更新、插入或跳过**。
 
 ![SqlJam 主界面](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
@@ -101,6 +101,7 @@ bin/
 | SQL Server | 2008 ~ 2022 |
 | MariaDB | 10.3 ~ 11.x |
 | H2 / SQLite | 2.x / 3.x |
+| Microsoft Access（.accdb、.mdb） | 2000 ~ 2019 |
 | DuckDB（OLAP） | 1.x |
 | ClickHouse（OLAP） | 24.x ~ 26.x |
 

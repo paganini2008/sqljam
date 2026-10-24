@@ -17,6 +17,7 @@ package com.github.sqljam.impexp;
 
 import java.math.BigDecimal;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -345,6 +346,14 @@ public abstract class Dialect {
     }
 
     /**
+     * Major and minor version of the connected database by its metadata, versions of other kinds (e.g. the file
+     * format of Access) are read by the dialect of the database
+     */
+    public int[] readDatabaseVersion(DatabaseMetaData databaseMetaData) throws SQLException {
+        return new int[]{databaseMetaData.getDatabaseMajorVersion(), databaseMetaData.getDatabaseMinorVersion()};
+    }
+
+    /**
      * Whether the database version is greater than or equal to the given version. Unknown version is treated as the
      * latest version.
      */
@@ -523,6 +532,14 @@ public abstract class Dialect {
     }
 
     public String getDefaultSchemaName(String catalog) {
+        return null;
+    }
+
+    /**
+     * Statement deleting the rows of a table before the tables are dropped, null if a drop does it (default).
+     * Access fails to drop a table with rows whose related table was dropped before.
+     */
+    public String getEmptyTableStatement(String catalog, String schema, String tableName) {
         return null;
     }
 
@@ -1210,6 +1227,15 @@ public abstract class Dialect {
     }
 
     /**
+     * Parameter of a value of the target column in an upsert statement, e.g. a cast which types the parameter
+     *
+     * @param targetTypeName type of the target column of the database, null if it is not known
+     */
+    public String getParameterMarker(String targetTypeName) {
+        return "?";
+    }
+
+    /**
      * Whether upserts may update indexed columns, an update of an indexed column of DuckDB is a delete and an
      * insert which fails for keys and foreign keys
      */
@@ -1245,6 +1271,14 @@ public abstract class Dialect {
             }
         }
         return columns;
+    }
+
+    /**
+     * Whether the error of a drop statement only means that the object does not exist, for databases whose drops
+     * are written without IF EXISTS (Access). The statement is skipped then.
+     */
+    public boolean isMissingDropError(String sql, SQLException e) {
+        return false;
     }
 
     /**

@@ -244,6 +244,10 @@ public class ConnectionForm extends VBox {
                 chooser.setInitialDirectory(current.getParentFile());
             }
         }
+        if (dbTypeCombo.getValue() == DbType.ACCESS) {
+            chooser.getExtensionFilters().addAll(new FileChooser.ExtensionFilter(DbType.ACCESS.getDisplayName(),
+                    "*.accdb", "*.mdb"), new FileChooser.ExtensionFilter("*", "*.*"));
+        }
         File file = chooser.showOpenDialog(getScene() != null ? getScene().getWindow() : null);
         if (file != null) {
             String path = file.getAbsolutePath();

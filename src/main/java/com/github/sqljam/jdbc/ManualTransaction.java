@@ -23,8 +23,11 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import lombok.extern.slf4j.Slf4j;
@@ -55,11 +58,20 @@ public class ManualTransaction implements AutoCloseable {
     private static final Pattern PLSQL_DML = Pattern.compile("^(BEGIN|DECLARE)\\b.*\\b(INSERT|UPDATE|DELETE|MERGE)\\b.*",
             Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
+    /**
+     * DELETE of all rows of a table, which is emptied before it is dropped (Access)
+     */
+    private static final Pattern EMPTY_TABLE = Pattern.compile("^DELETE\\s+FROM\\s+(\\S+)\\s*$",
+            Pattern.CASE_INSENSITIVE);
+    private static final Pattern DROP_TABLE = Pattern.compile("^DROP\\s+TABLE\\s+(\\S+)\\s*$",
+            Pattern.CASE_INSENSITIVE);
+
     private final Connection connection;
     private final boolean transactionalDdl;
     private final Connection proxy;
     private final List<String> deferredStatements = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean rowsWritten;
+    private final Set<String> emptiedTables = Collections.synchronizedSet(new HashSet<>());
     private volatile boolean rolledBack;
     private volatile boolean finished;
 
@@ -247,6 +259,10 @@ public class ManualTransaction implements AutoCloseable {
                 case "executeLargeUpdate":
                 case "addBatch":
                     if (isDdl(sql)) {
+                        if (!emptiedTables.isEmpty() && !emptiedTables.remove(getTableName(DROP_TABLE, sql))) {
+                            // DDL commits the rows deleted from a table which is not dropped
+                            rowsWritten = true;
+                        }
                         if (shouldDefer()) {
                             deferredStatements.add(sql);
                             if (log.isInfoEnabled()) {
@@ -254,6 +270,9 @@ public class ManualTransaction implements AutoCloseable {
                             }
                             return defaultResult(method.getReturnType());
                         }
+                    } else if (getTableName(EMPTY_TABLE, sql) != null) {
+                        // The rows are discarded with the table if it is dropped next
+                        emptiedTables.add(getTableName(EMPTY_TABLE, sql));
                     } else if (isDml(sql)) {
                         rowsWritten = true;
                     }
@@ -267,6 +286,15 @@ public class ManualTransaction implements AutoCloseable {
 
     private boolean shouldDefer() {
         return !transactionalDdl && rowsWritten;
+    }
+
+    /**
+     * Table of a statement of the pattern, unquoted and in lower case, null if the statement does not match
+     */
+    static String getTableName(Pattern pattern, String sql) {
+        Matcher matcher = pattern.matcher(sql.trim());
+        return matcher.matches() ? matcher.group(1).replaceAll("[`\"\\[\\]]", "").toLowerCase(Locale.ENGLISH)
+                : null;
     }
 
     static boolean isDdl(String sql) {

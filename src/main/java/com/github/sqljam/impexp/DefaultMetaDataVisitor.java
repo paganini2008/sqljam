@@ -16,7 +16,9 @@
 package com.github.sqljam.impexp;
 
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.apache.commons.lang3.ArrayUtils;
@@ -36,6 +38,10 @@ public class DefaultMetaDataVisitor implements MetaDataVisitor {
 
     private final Exporter.ExportConfiguration configuration;
     private final DdlScripter ddlScripter;
+    /**
+     * Tables of a schema whose rows are deleted before the drops, the drops follow these deletes
+     */
+    private final Map<Schema, Integer> emptiedTables = new HashMap<>();
 
     public DefaultMetaDataVisitor(Exporter.ExportConfiguration configuration, DdlScripter ddlScripter) {
         this.configuration = configuration;
@@ -104,10 +110,18 @@ public class DefaultMetaDataVisitor implements MetaDataVisitor {
                 String dropStatement = configuration.getDialect().getDropTableStatement(metaData.getCatalogName(),
                         metaData.getSchemaName(),
                         configuration.getDialect().getTargetTableName(metaData.getTableName()));
+                String emptyStatement = configuration.getDialect().getEmptyTableStatement(metaData.getCatalogName(),
+                        metaData.getSchemaName(), configuration.getDialect().getTargetTableName(metaData.getTableName()));
                 if (configuration.getDialect().isForeignKeyOrderRequired()) {
-                    // Tables are visited with referenced tables first, they are dropped in the reverse order
+                    // Tables are visited with referenced tables first, they are dropped in the reverse order. Rows of
+                    // all tables are deleted before the first drop (Access).
                     Schema schema = getDdlScripter().getSchema(metaData.getCatalogName(), metaData.getSchemaName());
-                    schema.getBeforeStatements().add(0, dropStatement);
+                    int emptied = emptiedTables.getOrDefault(schema, 0);
+                    if (emptyStatement != null) {
+                        schema.getBeforeStatements().add(0, emptyStatement);
+                        emptiedTables.put(schema, ++emptied);
+                    }
+                    schema.getBeforeStatements().add(emptied, dropStatement);
                 } else {
                     table.getBeforeStatements().add(0, dropStatement);
                 }

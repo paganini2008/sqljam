@@ -20,6 +20,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.sql.Connection;
 import java.sql.Date;
 import java.sql.DriverManager;
@@ -80,6 +81,13 @@ public enum ItDatabase {
         }
     },
 
+    ACCESS(DbType.ACCESS, "sja_") {
+        @Override
+        public String getUrl(String catalog) {
+            return DbType.ACCESS.getUrl(null, 0, getAccessFile(catalog == null).getAbsolutePath());
+        }
+    },
+
     DUCKDB(DbType.DUCKDB, "sjd_") {
         @Override
         public String getUrl(String catalog) {
@@ -126,6 +134,10 @@ public enum ItDatabase {
             String name = db.name().toLowerCase(Locale.ENGLISH) + "." + key;
             return System.getProperty(name, PROPERTIES.getProperty(name));
         }
+    }
+
+    static File getAccessFile(boolean source) {
+        return new File(DATA_DIR, source ? "src.accdb" : "dst.accdb");
     }
 
     static File getDuckDBFile(boolean source) {
@@ -266,6 +278,9 @@ public enum ItDatabase {
                 profile.setDatabase(new File(DATA_DIR, fileKey == null ? "src.sqlite" : "dst.sqlite")
                         .getAbsolutePath());
                 break;
+            case ACCESS:
+                profile.setDatabase(getAccessFile(fileKey == null).getAbsolutePath());
+                break;
             default:
                 profile.setHostname(Settings.get(this, "host"));
                 profile.setPort(Integer.parseInt(Settings.get(this, "port")));
@@ -316,6 +331,15 @@ public enum ItDatabase {
             if (!isConfigured()) {
                 System.err.println("Database is not in the environment " + Settings.ENVIRONMENT + ": " + this);
                 return false;
+            }
+            if (this == ACCESS) {
+                // The fixture of Access is created in a new file, UCanAccess has no DROP TABLE IF EXISTS of the
+                // file. It is deleted before any connection: UCanAccess keeps a closed file open for a while.
+                try {
+                    Files.deleteIfExists(getAccessFile(true).toPath());
+                } catch (java.io.IOException e) {
+                    throw new IllegalStateException(e);
+                }
             }
             // The first connection of an inactive database activates it, which takes some seconds (Db2)
             DriverManager.setLoginTimeout(20);

@@ -25,6 +25,7 @@ import java.io.File;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -149,6 +150,20 @@ public abstract class AbstractImportIT {
         dialect.setTargetSchemaName(source.getSourceSchema());
         try (Connection connection = source.getSourceConnection();
              Statement statement = connection.createStatement()) {
+            // Rows of related Access tables are deleted before the first drop, like the imports do
+            for (String table : FIXTURE_TABLES) {
+                String sql = dialect.getEmptyTableStatement(source.getSourceCatalog(), source.getSourceSchema(),
+                        source.getPrefix() + table + COPY_SUFFIX);
+                if (sql != null) {
+                    try {
+                        statement.execute(sql);
+                    } catch (SQLException e) {
+                        if (!dialect.isMissingDropError(sql, e)) {
+                            throw e;
+                        }
+                    }
+                }
+            }
             for (String table : FIXTURE_TABLES) {
                 // Names of copies follow the case of the source tables, e.g. SJH_EMP_CP of H2
                 String copyName = source.getPrefix() + table + COPY_SUFFIX;
@@ -162,7 +177,14 @@ public abstract class AbstractImportIT {
                             + "WHEN OTHERS THEN NULL; END;", (source.getPrefix() + table + COPY_SUFFIX)
                             .toUpperCase(Locale.ENGLISH));
                 }
-                statement.execute(sql);
+                try {
+                    statement.execute(sql);
+                } catch (SQLException e) {
+                    // Drops of Access have no IF EXISTS
+                    if (!dialect.isMissingDropError(sql, e)) {
+                        throw e;
+                    }
+                }
             }
         }
     }

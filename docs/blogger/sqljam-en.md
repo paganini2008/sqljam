@@ -8,7 +8,7 @@
 
 **SqlJam**: *Move tables across databases. Schema, data and all.*
 
-A Java 17 + JavaFX desktop tool that copies tables between relational and OLAP databases (**MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, DuckDB, ClickHouse** and more) in any direction:
+A Java 17 + JavaFX desktop tool that copies tables between relational and OLAP databases (**MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, Microsoft Access, DuckDB, ClickHouse** and more) in any direction:
 **import directly** into a target database or into the same schema as copies, or save a self-describing **export package** of SQL, **Parquet** or **CSV** files and import it later. Imports into a database run in **one transaction** which an error rolls back, and rows are **inserted, updated or skipped by key**.
 
 ![SqlJam main window](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
@@ -101,6 +101,7 @@ Only **Java 17+** is needed to run SqlJam. JavaFX and the JDBC drivers are insid
 | SQL Server | 2008 to 2022 |
 | MariaDB | 10.3 to 11.x |
 | H2 / SQLite | 2.x / 3.x |
+| Microsoft Access (.accdb, .mdb) | 2000 to 2019 |
 | DuckDB (OLAP) | 1.x |
 | ClickHouse (OLAP) | 24.x to 26.x |
 

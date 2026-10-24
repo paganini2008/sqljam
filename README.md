@@ -6,7 +6,7 @@
 
 **Move tables across databases. Schema, data and all.**
 
-SqlJam is a desktop import/export tool for relational and OLAP databases: MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, DuckDB, ClickHouse and more.
+SqlJam is a desktop import/export tool for relational and OLAP databases: MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, Microsoft Access, DuckDB, ClickHouse and more.
 It copies tables (with indexes, constraints, sequences and partitions) **directly into another database** or into the same schema as copies, or saves them as a **self-describing export package** of SQL, **Parquet** or **CSV** files that can be imported later. Imports into a database run in **one transaction** which an error rolls back as a whole, and rows are **inserted, updated or skipped by key**.
 
 ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
@@ -101,6 +101,7 @@ Only **Java 17+** is needed to run SqlJam. JavaFX and all JDBC drivers are insid
 | MariaDB | 11.8 | 10.3 |
 | H2 | 2.3 | 2.x |
 | SQLite | 3.46 | 3.x |
+| Microsoft Access (`.accdb`, `.mdb`) | 2016 | 2000 |
 | DuckDB (OLAP) | 1.5 | 1.x |
 | ClickHouse (OLAP) | 26.9 | 24.x |
 
@@ -309,6 +310,7 @@ try (ManualTransaction transaction = new ManualTransaction(connection, DbType.PO
 | MySQL / Oracle `VECTOR` | `text` | same | `nvarchar(max)` | same |
 | ClickHouse `Nullable(String)` / `Array(T)` | `text` | `CLOB` | `nvarchar(max)` | `longtext` |
 | DuckDB `HUGEINT` / `UNION` | `numeric(38, 0)` / `text` | `NUMBER(38,0)` / `CLOB` | `decimal(38,0)` / `nvarchar(max)` | `decimal(38,0)` / `longtext` |
+| Access `CURRENCY` / `YESNO` / `OLE` | `numeric(19, 4)` / `boolean` / `bytea` | `NUMBER(19,4)` / `NUMBER(1)` / `BLOB` | `decimal(19,4)` / `bit` / `varbinary(max)` | `decimal(19,4)` / `tinyint(1)` / `longblob` |
 
 ### Best practices
 
@@ -438,7 +440,7 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | Why does Db2 refuse a wide table? | Rows wider than a 4K page need a table space of larger pages. Create one once, e.g. `CREATE BUFFERPOOL BP32K PAGESIZE 32K` and `CREATE TABLESPACE TS32K PAGESIZE 32K BUFFERPOOL BP32K`, Db2 then places wide tables there by itself |
 | Do names have to match in case? | No. An existing target table and its columns are matched without case, e.g. `OrderId` of the source writes the column `orderid` of PostgreSQL or `ORDERID` of Oracle |
 | Which rows were skipped? | Each skipped row is in the log of the import with its key and its error. **Errors only** shows them, **Save Log** writes the whole log to a file |
-| What does a roll back undo? | Everything on PostgreSQL, SQL Server, Db2, SQLite and DuckDB, tables included. MySQL, MariaDB, Oracle and H2 commit DDL at once, there the created tables stay empty and keys and identity values are set after the commit |
+| What does a roll back undo? | Everything on PostgreSQL, SQL Server, Db2, SQLite and DuckDB, tables included. MySQL, MariaDB, Oracle, H2 and Access commit DDL at once, there the created tables stay empty and keys and identity values are set after the commit |
 | Can I export only the structure? | Yes. Rows are optional. Pick content **Structure** (`ExportMode.DDL`) for a package or a direct import. Tables, keys, indexes, comments, sequences and partitions are created without rows |
 | Are partitioned tables kept? | Yes. The same database type creates the partitioning again with its partitions, bounds and rows: range, list, hash, key and subpartitions of MySQL and MariaDB (system time too), range, list, hash, default and nested partitions of PostgreSQL, range, list, hash, interval, automatic list, composite and reference partitions of Oracle, partition functions of SQL Server, range partitions of Db2 and partition keys of ClickHouse. Other databases get the tables with all rows. In the tree a partitioned table shows its partitioning next to its name and PostgreSQL partitions are listed under their table |
 | Can I generate scripts for an older server? | Yes, choose the target version (e.g. Oracle `11.2`, SQL Server `2008`) and a compatible dialect is used |

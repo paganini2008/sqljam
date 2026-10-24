@@ -101,6 +101,8 @@ public class ExportDialog extends Dialog<TransferRequest> {
         VERSION_PRESETS.put(DbType.DB2, List.of("", "11.1", "11.5", "12.1"));
         VERSION_PRESETS.put(DbType.H2, List.of("", "2.2"));
         VERSION_PRESETS.put(DbType.SQLITE, List.of("", "3"));
+        // Access 2007, 2010 and 2016
+        VERSION_PRESETS.put(DbType.ACCESS, List.of("", "12", "14", "16"));
     }
 
     private final AppContext context;

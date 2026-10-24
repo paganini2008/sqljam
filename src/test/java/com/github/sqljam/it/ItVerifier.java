@@ -47,7 +47,6 @@ import java.util.stream.Collectors;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.MetaDataOperations;
-import com.github.sqljam.jdbc.JdbcUtils;
 
 /**
  * @Description: ItVerifier verifies tables imported from a fixture database
@@ -85,7 +84,8 @@ public class ItVerifier {
         this.operations = target.getDbType().createMetaDataOperations();
         this.dialect = target.getDbType().createDialect();
         DbType dbType = target.getDbType();
-        this.catalog = dbType == DbType.ORACLE || dbType == DbType.SQLITE || dbType == DbType.DB2 ? null
+        this.catalog = dbType == DbType.ORACLE || dbType == DbType.SQLITE || dbType == DbType.DB2
+                || dbType == DbType.ACCESS ? null
                 : connection.getCatalog();
         this.schema = schema;
         for (Map<String, Object> info : operations.getTableInfos(connection.getMetaData(), catalog, schema)) {
@@ -149,7 +149,7 @@ public class ItVerifier {
             ps.setLong(1, id);
             try (ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next(), "Row not found: " + id);
-                return JdbcUtils.getColumnValue(rs, 1, rs.getMetaData().getColumnType(1),
+                return dialect.getColumnValue(rs, 1, rs.getMetaData().getColumnType(1),
                         rs.getMetaData().getColumnTypeName(1));
             }
         }
@@ -259,7 +259,9 @@ public class ItVerifier {
     }
 
     public void verifyComments() throws SQLException {
-        if (source == ItDatabase.SQLITE || target == ItDatabase.SQLITE) {
+        // SQLite has no comments, Access descriptions are not written by UCanAccess
+        if (source == ItDatabase.SQLITE || target == ItDatabase.SQLITE || source == ItDatabase.ACCESS
+                || target == ItDatabase.ACCESS) {
             return;
         }
         Map<String, Object> nameColumn = operations.getColumnInfos(metaData(), catalog, schema, table("emp")).stream()
@@ -274,6 +276,12 @@ public class ItVerifier {
         if (!isConstraintSupported()) {
             return;
         }
+        // Autonumbers of Access are 32-bit, a 64-bit identity is a BIGINT column which keeps its values
+        if (target == ItDatabase.ACCESS && operations.getColumnInfos(metaData(), catalog, schema, table("dept"))
+                .stream().filter(info -> "id".equalsIgnoreCase((String) info.get("COLUMN_NAME")))
+                .noneMatch(info -> "YES".equals(info.get("IS_AUTOINCREMENT")))) {
+            return;
+        }
         Map<String, String> columns = columns("dept");
         String insert = String.format("INSERT INTO %s (%s) VALUES ('New Dept')", ref("dept"),
                 column(columns, "name"));
@@ -284,7 +292,12 @@ public class ItVerifier {
                 column(columns, "name"));
         try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(query)) {
             assertTrue(rs.next());
-            assertEquals(4L, rs.getLong(1), "Identity value after import");
+            if (target == ItDatabase.ACCESS) {
+                // An autonumber of Access never reuses the numbers of deleted rows, e.g. of an earlier verification
+                assertTrue(rs.getLong(1) >= 4L, "Identity value after import: " + rs.getLong(1));
+            } else {
+                assertEquals(4L, rs.getLong(1), "Identity value after import");
+            }
         }
     }
 
@@ -329,6 +342,7 @@ public class ItVerifier {
         try (Connection sourceConnection = source.getSourceConnection()) {
             MetaDataOperations sourceOperations = source.getDbType().createMetaDataOperations();
             String sourceCatalog = source.getDbType() == DbType.ORACLE || source.getDbType() == DbType.SQLITE
+                    || source.getDbType() == DbType.ACCESS
                     || source.getDbType() == DbType.DB2 ? null : sourceConnection.getCatalog();
             String typesTable = sourceOperations.getTableInfos(sourceConnection.getMetaData(), sourceCatalog,
                     source.getSourceSchema()).stream().map(info -> (String) info.get("TABLE_NAME"))
@@ -390,7 +404,7 @@ public class ItVerifier {
             while (rs.next()) {
                 Map<String, Object> row = new HashMap<>();
                 for (int i = 1; i <= rsmd.getColumnCount(); i++) {
-                    row.put(rsmd.getColumnLabel(i).toLowerCase(Locale.ENGLISH), JdbcUtils.getColumnValue(rs, i,
+                    row.put(rsmd.getColumnLabel(i).toLowerCase(Locale.ENGLISH), dialect.getColumnValue(rs, i,
                             rsmd.getColumnType(i), rsmd.getColumnTypeName(i)));
                 }
                 rows.add(row);

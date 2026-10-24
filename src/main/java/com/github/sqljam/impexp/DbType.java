@@ -15,11 +15,14 @@
  */
 package com.github.sqljam.impexp;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Supplier;
 
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
+import com.github.sqljam.impexp.db.AccessDialect;
+import com.github.sqljam.impexp.db.AccessMetaDataOperations;
 import com.github.sqljam.impexp.db.ClickHouseDialect;
 import com.github.sqljam.impexp.db.ClickHouseMetaDataOperations;
 import com.github.sqljam.impexp.db.Db2Dialect;
@@ -226,6 +229,44 @@ public enum DbType {
         @Override
         public boolean isFileBased() {
             return true;
+        }
+    },
+
+    ACCESS("Access", "net.ucanaccess.jdbc.UcanaccessDriver", 0, false, false, false, AccessDialect::new,
+            AccessMetaDataOperations::new) {
+        /**
+         * Database file of Microsoft Access (.accdb or .mdb), a missing file is created: .accdb in the format of
+         * Access 2016 (64-bit integers), .mdb in the format of Access 2002-2003
+         */
+        @Override
+        public String getUrl(String hostname, int port, String catalogName) {
+            Validate.notBlank(catalogName, "Database file must be required while connecting to Access database.");
+            return normalizeUrl("jdbc:ucanaccess://" + catalogName);
+        }
+
+        @Override
+        public String normalizeUrl(String url) {
+            if (StringUtils.isBlank(url) || StringUtils.containsIgnoreCase(url, "newdatabaseversion=")) {
+                return url;
+            }
+            String file = StringUtils.substringBefore(url, ";");
+            return url + ";newdatabaseversion=" + (file.toLowerCase(Locale.ENGLISH).endsWith(".mdb") ? "V2003"
+                    : "V2016");
+        }
+
+        @Override
+        public boolean isCatalogSupported() {
+            return false;
+        }
+
+        @Override
+        public boolean isFileBased() {
+            return true;
+        }
+
+        @Override
+        public String getValidationQuery() {
+            return "SELECT 1 FROM (VALUES (0))";
         }
     },
 
@@ -451,6 +492,8 @@ public enum DbType {
             return H2;
         } else if (url.startsWith("jdbc:sqlite:")) {
             return SQLITE;
+        } else if (url.startsWith("jdbc:ucanaccess:")) {
+            return ACCESS;
         } else if (url.startsWith("jdbc:duckdb:")) {
             return DUCKDB;
         } else if (url.startsWith("jdbc:clickhouse:") || url.startsWith("jdbc:ch:")) {
