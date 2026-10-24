@@ -46,7 +46,7 @@ mvn -DskipTests install
 </dependency>
 ```
 
-The JDBC drivers of MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, DuckDB and ClickHouse come with it.
+The JDBC drivers of MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, Microsoft Access (UCanAccess), DuckDB and ClickHouse come with it.
 
 ---
 
@@ -331,7 +331,7 @@ The key is the primary key of the table, or the chosen columns: columns of a uni
 |---|---|---|
 | PostgreSQL, SQLite, DuckDB | `ON CONFLICT … DO UPDATE` | `ON CONFLICT … DO NOTHING` |
 | MySQL, MariaDB | `ON DUPLICATE KEY UPDATE` | `ON DUPLICATE KEY UPDATE` without changes |
-| Oracle, SQL Server, Db2 | `MERGE … WHEN MATCHED … WHEN NOT MATCHED` | `MERGE … WHEN NOT MATCHED` |
+| Oracle, SQL Server, Db2, Access | `MERGE … WHEN MATCHED … WHEN NOT MATCHED` | `MERGE … WHEN NOT MATCHED` |
 | H2 | `MERGE INTO … KEY` | `MERGE … WHEN NOT MATCHED` |
 
 Names of an existing target table are matched without case, `OrderId` of the source writes `orderid` of PostgreSQL or `ORDERID` of Oracle.
@@ -426,6 +426,8 @@ copier.setExportListener(new ExportListener() {
 | Dialect: types, literals, DDL, paging, upserts | `impexp.db.XxxDialect extends Dialect` |
 | Metadata: catalogs, schemas, tables, columns, keys | `impexp.db.XxxMetaDataOperations extends MetaDataOperations` |
 | Older versions | `XxxNNDialect extends XxxDialect`, chosen by `Dialect.forVersion` |
+| Versions other than the server version, e.g. the file format of Access | `Dialect.readDatabaseVersion` |
+| Tables which are emptied before they are dropped, drops of missing tables | `Dialect.getEmptyTableStatement`, `Dialect.isMissingDropError` |
 | Registration | A constant of `DbType` with driver, URL template and category |
 | Fixture and tests | `src/test/resources/<db>/fixture.sql`, a value of `ItDatabase`, the cross-database matrix runs it |
 

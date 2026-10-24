@@ -341,8 +341,8 @@ public class DatabaseSession implements Closeable {
             totalRows = count != null ? count : 0;
         }
         try (Connection connection = getConnection(catalog)) {
-            Dialect dialect = this.dialect.forVersion(connection.getMetaData().getDatabaseMajorVersion(),
-                    connection.getMetaData().getDatabaseMinorVersion());
+            int[] version = this.dialect.readDatabaseVersion(connection.getMetaData());
+            Dialect dialect = this.dialect.forVersion(version[0], version[1]);
             List<String> primaryKeys = metaDataOperations.getPrimaryKeyInfos(connection.getMetaData(),
                     getMetaCatalog(catalog), schema, table).stream()
                     .sorted(Comparator.comparingInt(info -> TableMetaData.getInt(info, "KEY_SEQ")))
@@ -370,7 +370,7 @@ public class DatabaseSession implements Closeable {
                 while (rs.next()) {
                     List<String> row = new ArrayList<>(indexes.size());
                     for (int i : indexes) {
-                        row.add(formatValue(JdbcUtils.getColumnValue(rs, i, rsmd.getColumnType(i),
+                        row.add(formatValue(dialect.getColumnValue(rs, i, rsmd.getColumnType(i),
                                 rsmd.getColumnTypeName(i))));
                     }
                     rows.add(row);

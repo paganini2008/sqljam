@@ -29,6 +29,7 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
@@ -82,6 +83,10 @@ public class SqlScriptRunner {
      * Errors of statements which create existing objects, they are skipped, e.g. tables which are not dropped
      */
     private Predicate<SQLException> skippedError;
+    /**
+     * Errors of drop statements of missing objects, they are skipped (drops without IF EXISTS of Access)
+     */
+    private BiPredicate<String, SQLException> missingDropError;
     private ExportListener exportListener = ExportListener.NONE;
     private Statement statement;
     /**
@@ -103,6 +108,13 @@ public class SqlScriptRunner {
      */
     public void setSkippedError(Predicate<SQLException> skippedError) {
         this.skippedError = skippedError;
+    }
+
+    /**
+     * Drop statements failing with these errors are skipped, the dropped object does not exist
+     */
+    public void setMissingDropError(BiPredicate<String, SQLException> missingDropError) {
+        this.missingDropError = missingDropError;
     }
 
     public void setStopOnError(boolean stopOnError) {
@@ -277,14 +289,21 @@ public class SqlScriptRunner {
      * keeps the transaction usable after a failure (PostgreSQL aborts the whole transaction otherwise)
      */
     private boolean execute(String sql) throws SQLException {
-        Savepoint savepoint = (stopOnError && skippedError == null) || !transactional ? null
-                : setSavepointQuietly();
+        Savepoint savepoint = (stopOnError && skippedError == null && missingDropError == null) || !transactional
+                ? null : setSavepointQuietly();
         try {
             statement().execute(sql);
             executedCount++;
             releaseSavepoint(savepoint);
             return true;
         } catch (SQLException e) {
+            if (missingDropError != null && missingDropError.test(sql, e)) {
+                rollbackQuietly(savepoint);
+                if (log.isInfoEnabled()) {
+                    log.info("Does not exist, skipped: {}", StringUtils.abbreviate(sql, 200));
+                }
+                return false;
+            }
             if (skippedError != null && skippedError.test(e)) {
                 // The object exists, the transaction goes on from the savepoint
                 rollbackQuietly(savepoint);

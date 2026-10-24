@@ -123,6 +123,7 @@ class DdlScripterTest {
         assertEquals(DbType.H2, DbType.forUrl("JDBC:H2:mem:test"));
         assertEquals(DbType.SQLITE, DbType.forUrl("jdbc:sqlite:test.db"));
         assertEquals(DbType.DB2, DbType.forUrl("jdbc:db2://localhost:50000/test"));
+        assertEquals(DbType.ACCESS, DbType.forUrl("jdbc:ucanaccess:///data/shop.accdb"));
         assertNull(DbType.forUrl("jdbc:informix-sqli://localhost:9088/test"));
         assertNull(DbType.forUrl(" "));
     }

@@ -345,8 +345,9 @@ public class Exporter {
     }
 
     private void configureSourceDialect(DatabaseMetaData databaseMetaData) throws SQLException {
-        int majorVersion = databaseMetaData.getDatabaseMajorVersion();
-        int minorVersion = databaseMetaData.getDatabaseMinorVersion();
+        int[] version = configuration.getSourceDialect().readDatabaseVersion(databaseMetaData);
+        int majorVersion = version[0];
+        int minorVersion = version[1];
         // A version specified explicitly is kept
         if (configuration.getSourceDialect().getDatabaseMajorVersion() < 0) {
             configuration.setSourceDialect(configuration.getSourceDialect().forVersion(majorVersion, minorVersion));

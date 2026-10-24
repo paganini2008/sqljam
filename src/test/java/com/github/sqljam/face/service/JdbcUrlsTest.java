@@ -68,6 +68,8 @@ class JdbcUrlsTest {
         assertEquals("H2 h2 9093 ~/shop", parts("jdbc:h2:tcp://h2:9093/~/shop"));
         assertEquals("SQLITE null 0 /data/app.sqlite", parts("jdbc:sqlite:/data/app.sqlite?date_class=TEXT"));
         assertEquals("DUCKDB null 0 /data/lake.duckdb", parts("jdbc:duckdb:/data/lake.duckdb"));
+        assertEquals("ACCESS null 0 /data/shop.accdb", parts("jdbc:ucanaccess:///data/shop.accdb;memory=false"));
+        assertEquals("ACCESS null 0 C:/data/old.mdb", parts("jdbc:ucanaccess://C:/data/old.mdb"));
         assertNull(parts("jdbc:informix-sqli://host:9088/db"));
         assertNull(parts(null));
         // Being typed
@@ -84,6 +86,10 @@ class JdbcUrlsTest {
         assertEquals("jdbc:h2:file:/data/shop", JdbcUrls.build(DbType.H2, "", 0, "/data/shop"));
         assertEquals("jdbc:h2:tcp://h2:9092//data/shop", JdbcUrls.build(DbType.H2, "h2", 9092, "/data/shop"));
         assertEquals("", JdbcUrls.build(DbType.SQLITE, null, 0, ""));
+        assertEquals("jdbc:ucanaccess:///data/shop.accdb;newdatabaseversion=V2016", JdbcUrls.build(DbType.ACCESS,
+                null, 0, "/data/shop.accdb"));
+        assertEquals("jdbc:ucanaccess:///data/old.mdb;newdatabaseversion=V2003", JdbcUrls.build(DbType.ACCESS,
+                null, 0, "/data/old.mdb"));
         assertEquals("", JdbcUrls.build(null, "host", 1, "db"));
         // Read back
         assertEquals("ORACLE ora 1521 DEMO", parts(JdbcUrls.build(DbType.ORACLE, "ora", 1521, "DEMO")));

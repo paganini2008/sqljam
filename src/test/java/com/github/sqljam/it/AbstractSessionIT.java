@@ -99,7 +99,7 @@ public abstract class AbstractSessionIT {
             assertTrue(columns.size() >= 11);
             assertTrue(columns.get(0).isPrimaryKey(), "id is primary key");
             assertTrue(columns.stream().anyMatch(column -> "employee name".equalsIgnoreCase(
-                    column.getRemarks())) || source == ItDatabase.SQLITE);
+                    column.getRemarks())) || source == ItDatabase.SQLITE || source == ItDatabase.ACCESS);
             List<IndexInfo> indexes = session.getIndexes(catalog, schema, emp);
             List<ForeignKeyInfo> foreignKeys = session.getForeignKeys(catalog, schema, emp);
             if (source == ItDatabase.CLICKHOUSE) {

@@ -318,6 +318,7 @@ class DialectTest {
         assertEquals("SQLServerDialect", DbType.SQLSERVER.createDialect(16, 0).getClass().getSimpleName());
         assertEquals("H2Dialect", DbType.H2.createDialect(2, 3).getClass().getSimpleName());
         assertEquals("SQLiteDialect", DbType.SQLITE.createDialect(3, 46).getClass().getSimpleName());
+        assertEquals("AccessDialect", DbType.ACCESS.createDialect(16, 0).getClass().getSimpleName());
         assertEquals(11, DbType.ORACLE.createDialect(11, 2).getDatabaseMajorVersion());
 
         // Settings are copied to the dialect of the version

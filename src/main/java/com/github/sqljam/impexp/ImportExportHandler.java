@@ -153,8 +153,8 @@ public class ImportExportHandler implements ExportHandler {
             DatabaseMetaData databaseMetaData = connection.getMetaData();
             // A version specified explicitly is kept
             if (dialect.getDatabaseMajorVersion() < 0) {
-                dialect = dialect.forVersion(databaseMetaData.getDatabaseMajorVersion(),
-                        databaseMetaData.getDatabaseMinorVersion());
+                int[] version = dialect.readDatabaseVersion(databaseMetaData);
+                dialect = dialect.forVersion(version[0], version[1]);
             }
             this.dialect = dialect;
             exportListener.onMessage(String.format("Target database: %s %s",
@@ -302,6 +302,13 @@ public class ImportExportHandler implements ExportHandler {
                         log.info("Execute ddl: {}", sql);
                     }
                 } catch (Exception e) {
+                    // A drop without IF EXISTS of a missing table (Access)
+                    if (e instanceof SQLException && dialect.isMissingDropError(sql, (SQLException) e)) {
+                        if (log.isInfoEnabled()) {
+                            log.info("Does not exist, skipped: {}", sql);
+                        }
+                        continue;
+                    }
                     if (log.isErrorEnabled()) {
                         log.error("Unable to execute sql: {}", sql, e);
                     }
@@ -380,13 +387,17 @@ public class ImportExportHandler implements ExportHandler {
                 .filter(md -> tableMetaData.isInsertableColumn(md.getColumnName(), tableMetaData.getDialect()))
                 .collect(LinkedHashMap::new, (m, e) -> m.put(e.getColumnName(), null), LinkedHashMap::putAll);
 
+        // Labels of a query may differ in case from its metadata, e.g. ID and id of UCanAccess
+        Map<String, String> columnsInLowerCase = new HashMap<>();
+        template.keySet().forEach(name -> columnsInLowerCase.putIfAbsent(name.toLowerCase(Locale.ENGLISH), name));
         for (Map<String, Object> data : dataList) {
             Map<String, Object> row = new LinkedHashMap<>(template);
             for (Map.Entry<String, Object> entry : data.entrySet()) {
-                if (row.containsKey(entry.getKey())) {
-                    ColumnMetaData columnMetaData = tableMetaData.findColumnMetaData(entry.getKey()).orElse(null);
-                    row.put(entry.getKey(), ScriptExportHandler.getJdbcValue(dialect, columnMetaData,
-                            entry.getValue()));
+                String column = row.containsKey(entry.getKey()) ? entry.getKey()
+                        : columnsInLowerCase.get(entry.getKey().toLowerCase(Locale.ENGLISH));
+                if (column != null) {
+                    ColumnMetaData columnMetaData = tableMetaData.findColumnMetaData(column).orElse(null);
+                    row.put(column, ScriptExportHandler.getJdbcValue(dialect, columnMetaData, entry.getValue()));
                 }
             }
             rowList.add(row);
@@ -462,8 +473,10 @@ public class ImportExportHandler implements ExportHandler {
                 String[] updates = configuration.getWriteMode() == WriteMode.SKIP_EXISTING ? new String[0]
                         : Arrays.stream(columns).filter(name -> !fixed.contains(name.toLowerCase(Locale.ENGLISH)))
                         .toArray(String[]::new);
+                Map<String, String> columnTypes = targetTypes;
                 insertSql = dialect.getUpsertStatement(catalogName, schemaName, targetTableName, columns, keys,
-                        updates);
+                        updates, Arrays.stream(columns).map(name -> dialect.getParameterMarker(columnTypes.get(
+                                name.toLowerCase(Locale.ENGLISH)))).toArray());
             }
             executeQuietly(connection, dialect.getStatementBeforeInsert(catalogName, schemaName, targetTableName,
                     identityIncluded));

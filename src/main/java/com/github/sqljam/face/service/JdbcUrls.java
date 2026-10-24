@@ -99,6 +99,10 @@ public final class JdbcUrls {
             case DUCKDB:
                 return fill(profile, null, null, StringUtils.substringBefore(text.substring("jdbc:duckdb:".length()),
                         "?"));
+            case ACCESS:
+                // jdbc:ucanaccess://path;option=value
+                return fill(profile, null, null, StringUtils.substringBefore(StringUtils.removeStartIgnoreCase(
+                        text.substring("jdbc:ucanaccess:".length()), "//"), ";"));
             default:
                 matcher = SERVER.matcher(text);
                 if (!matcher.matches()) {

@@ -223,6 +223,9 @@ public abstract class AbstractFileImporter {
         if (existingSkipped) {
             runner.setSkippedError(dbType.createDialect()::isAlreadyExistsError);
         }
+        if (dbType != null) {
+            runner.setMissingDropError(dbType.createDialect()::isMissingDropError);
+        }
         runner.setBatchSize(batchSize);
         long fileBytes = file.length();
         runner.setExportListener(new ForwardingListener(exportListener) {

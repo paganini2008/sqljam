@@ -17,6 +17,7 @@ package com.github.sqljam.jdbc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -29,6 +30,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.List;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -124,6 +126,32 @@ class ManualTransactionTest {
 
     private static void assertSame(Connection expected, Connection actual) {
         assertTrue(expected == actual, "Statements return the transaction connection");
+    }
+
+    @Test
+    void emptiedTablesWhichAreDroppedWriteNoRows() throws Exception {
+        String url = url();
+        try (Connection setup = DriverManager.getConnection(url); Statement statement = setup.createStatement()) {
+            statement.execute("CREATE TABLE old_t (id INT PRIMARY KEY)");
+            statement.execute("CREATE TABLE kept (id INT PRIMARY KEY)");
+        }
+        try (ManualTransaction transaction = new ManualTransaction(DriverManager.getConnection(url), false)) {
+            try (Statement statement = transaction.getConnection().createStatement()) {
+                // Access empties the tables before it drops them
+                statement.executeUpdate("DELETE FROM old_t");
+                statement.execute("DROP TABLE old_t");
+                statement.execute("CREATE TABLE new_t (id INT PRIMARY KEY)");
+                assertEquals(List.of(), transaction.getDeferredStatements());
+                // Rows deleted from a table which is kept would be committed by DDL
+                statement.executeUpdate("DELETE FROM kept");
+                statement.execute("CREATE INDEX idx_kept ON kept (id)");
+            }
+            assertEquals(List.of("CREATE INDEX idx_kept ON kept (id)"), transaction.getDeferredStatements());
+            transaction.rollback();
+        }
+        assertEquals("old_t", ManualTransaction.getTableName(Pattern.compile("^DELETE\\s+FROM\\s+(\\S+)$"),
+                "DELETE FROM [OLD_T]"));
+        assertNull(ManualTransaction.getTableName(Pattern.compile("^DROP\\s+TABLE\\s+(\\S+)$"), "DROP VIEW v"));
     }
 
     @Test
