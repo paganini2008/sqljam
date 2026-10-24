@@ -16,10 +16,12 @@
 package com.github.sqljam.face.view;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.Optional;
 import java.util.function.Consumer;
 
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.impexp.DbCategory;
 import javafx.event.ActionEvent;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -40,16 +42,35 @@ import javafx.stage.Window;
  */
 public class ConnectionDialog extends Dialog<ConnectionProfile> {
 
+    private DataSourceExtension.Source savedSource;
+
     public ConnectionDialog(Window owner, AppContext context, ConnectionProfile profile) {
+        this(owner, context, profile, null, List.of());
+    }
+
+    public ConnectionDialog(Window owner, AppContext context, ConnectionProfile profile, DbCategory category) {
+        this(owner, context, profile, category, List.of());
+    }
+
+    /**
+     * @param category   category of a new data source: a DbCategory or one of the extensions, null for the
+     *                   relational databases
+     * @param extensions kinds of data sources other than JDBC which the category may choose, e.g. vector databases
+     */
+    public ConnectionDialog(Window owner, AppContext context, ConnectionProfile profile, Object category,
+                            List<DataSourceExtension> extensions) {
         Dialogs.initOwner(this, owner);
         Branding.applyIcons(this);
         boolean editing = profile != null;
         setTitle(Messages.get(editing ? "connection.edit.title" : "connection.new.title"));
         setHeaderText(getTitle());
         setResizable(true);
-        ConnectionForm form = new ConnectionForm();
+        ConnectionForm form = new ConnectionForm(editing ? List.of() : extensions);
         if (editing) {
             form.setProfile(profile, context.getProfileRegistry().isPasswordRemembered(profile.getId()));
+            form.setCategoryEditable(false);
+        } else if (category != null) {
+            form.setCategory(category);
         }
         form.setPrefWidth(520);
         getDialogPane().setContent(form);
@@ -71,13 +92,18 @@ public class ConnectionDialog extends Dialog<ConnectionProfile> {
                 return;
             }
             try {
-                context.getProfileRegistry().saveProfile(form.getProfile(), form.isPasswordRemembered());
+                if (form.getSelectedExtension() != null) {
+                    savedSource = form.saveSource();
+                } else {
+                    context.getProfileRegistry().saveProfile(form.getProfile(), form.isPasswordRemembered());
+                }
             } catch (IOException e) {
                 event.consume();
                 Dialogs.showError(getOwner(), Messages.get("connection.save.error"), e);
             }
         });
-        setResultConverter(buttonType -> buttonType == ButtonType.OK ? form.getProfile() : null);
+        setResultConverter(buttonType -> buttonType == ButtonType.OK && form.getSelectedExtension() == null
+                ? form.getProfile() : null);
     }
 
     /**
@@ -108,5 +134,19 @@ public class ConnectionDialog extends Dialog<ConnectionProfile> {
 
     public static Optional<ConnectionProfile> show(Window owner, AppContext context, ConnectionProfile profile) {
         return new ConnectionDialog(owner, context, profile).showAndWait();
+    }
+
+    /**
+     * The source of an extension which was saved, e.g. a vector database, null for a relational data source
+     */
+    public DataSourceExtension.Source getSavedSource() {
+        return savedSource;
+    }
+
+    /**
+     * A new data source of the types of the category
+     */
+    public static Optional<ConnectionProfile> create(Window owner, AppContext context, DbCategory category) {
+        return new ConnectionDialog(owner, context, null, category).showAndWait();
     }
 }

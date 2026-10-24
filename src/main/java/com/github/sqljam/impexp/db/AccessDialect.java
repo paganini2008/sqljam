@@ -40,12 +40,13 @@ import com.github.sqljam.impexp.StringHelper;
 
 /**
  * @Description: AccessDialect generates ddl/dml of Microsoft Access files (.accdb, .mdb) through UCanAccess. Access
- *               has no schemas, sequences, partitions or comments. Type names are the ones of Access (INTEGER is 16-bit,
- *               LONG 32-bit, BYTE unsigned). Text columns hold 255 characters (MEMO beyond),
+ *               has no schemas, sequences, partitions or comments. Type names are the ones of Access (INTEGER is
+ *               16-bit, LONG 32-bit, BYTE unsigned). Text columns hold 255 characters (MEMO beyond),
  *               decimals 28 digits, date and time columns are DATETIME. 64-bit integers (BIGINT) are kept by files of
  *               Access 2016 and later, older files get DECIMAL(28,1): UCanAccess stores BIGINT of them as 32-bit and
  *               limits DECIMAL of scale 0 to 18 digits. Names are quoted by backticks, explicit autonumbers are
  *               inserted with DISABLE AUTOINCREMENT.
+ *               Files of Access 2000 and later are supported, .accdb and .mdb. Access has no vectors.
  * @Author: Fred Feng
  * @Date: 24/10/2026
  * @Version 1.0.0

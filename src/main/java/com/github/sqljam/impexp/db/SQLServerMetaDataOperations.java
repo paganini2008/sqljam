@@ -18,6 +18,7 @@ package com.github.sqljam.impexp.db;
 import java.sql.Connection;
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -27,7 +28,10 @@ import java.util.stream.Collectors;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
+import com.github.sqljam.impexp.TableMetaData;
+import com.github.sqljam.impexp.VectorType;
 import com.github.sqljam.jdbc.JdbcUtils;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * @Description: SQLServerMetaDataOperations reads comments, computed/rowversion columns, partitions and sequences of SQL Server
@@ -35,6 +39,7 @@ import com.github.sqljam.jdbc.JdbcUtils;
  * @Date: 26/03/2023
  * @Version 1.0.0
  */
+@Slf4j
 public class SQLServerMetaDataOperations extends MetaDataOperations {
 
     private static final String[] SYSTEM_SCHEMAS = {"sys", "INFORMATION_SCHEMA", "guest", "db_owner",
@@ -192,10 +197,19 @@ public class SQLServerMetaDataOperations extends MetaDataOperations {
         Map<String, Map<String, Object>> computedColumns = new HashMap<>();
         JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql, new Object[]{schemaName, tableName})
                 .forEach(info -> computedColumns.put((String) info.get("column_name"), info));
+        Map<String, VectorType> vectorTypes = getVectorTypes(databaseMetaData, catalogName, schemaName, tableName,
+                columnInfos);
         for (Map<String, Object> columnInfo : columnInfos) {
             String columnName = (String) columnInfo.get("COLUMN_NAME");
             if (StringUtils.isBlank((String) columnInfo.get("REMARKS")) && comments.containsKey(columnName)) {
                 columnInfo.put("REMARKS", comments.get(columnName));
+            }
+            VectorType vectorType = vectorTypes.get(columnName);
+            if (vectorType != null) {
+                // Vectors are text of other databases, e.g. [1.0000000e+000,2.5000000e+000]
+                columnInfo.put("DATA_TYPE", Types.LONGNVARCHAR);
+                columnInfo.put("COLUMN_SIZE", Integer.MAX_VALUE);
+                columnInfo.put(VectorType.DETAIL_KEY, vectorType.toString());
             }
             Map<String, Object> computedColumn = computedColumns.get(columnName);
             String typeName = StringUtils.defaultString((String) columnInfo.get("TYPE_NAME")).toLowerCase(Locale.ENGLISH);
@@ -211,6 +225,39 @@ public class SQLServerMetaDataOperations extends MetaDataOperations {
             }
         }
         return columnInfos;
+    }
+
+    /**
+     * Dimensions and base types (float32, float16) of the VECTOR columns of SQL Server 2025
+     */
+    private Map<String, VectorType> getVectorTypes(DatabaseMetaData databaseMetaData, String catalogName,
+                                                   String schemaName, String tableName,
+                                                   List<Map<String, Object>> columnInfos) throws SQLException {
+        Map<String, VectorType> vectorTypes = new HashMap<>();
+        if (columnInfos.stream().noneMatch(info -> "vector".equalsIgnoreCase((String) info.get("TYPE_NAME")))) {
+            return vectorTypes;
+        }
+        String sql = String.format("SELECT c.name AS column_name, c.vector_dimensions, c.vector_base_type_desc"
+                + " FROM %1$ssys.columns c JOIN %1$ssys.tables t ON t.object_id = c.object_id"
+                + " JOIN %1$ssys.schemas s ON s.schema_id = t.schema_id"
+                + " WHERE s.name = ? AND t.name = ? AND c.vector_dimensions IS NOT NULL", catalogPrefix(catalogName));
+        try {
+            for (Map<String, Object> row : JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql,
+                    new Object[]{schemaName, tableName})) {
+                Object dimensions = row.get("vector_dimensions");
+                vectorTypes.put((String) row.get("column_name"), VectorType.dense("float16".equalsIgnoreCase(
+                        (String) row.get("vector_base_type_desc")) ? VectorType.Element.FLOAT16
+                        : VectorType.Element.FLOAT32, dimensions instanceof Number ? ((Number) dimensions).intValue()
+                        : 0));
+            }
+        } catch (SQLException e) {
+            // Dimensions are not known, the vectors are text of other databases
+            log.warn("Vector columns of {}.{} are not readable: {}", schemaName, tableName, e.getMessage());
+            columnInfos.stream().filter(info -> "vector".equalsIgnoreCase((String) info.get("TYPE_NAME")))
+                    .forEach(info -> vectorTypes.put((String) info.get("COLUMN_NAME"), VectorType.dense(
+                            VectorType.Element.FLOAT32, 0)));
+        }
+        return vectorTypes;
     }
 
     /**
@@ -244,6 +291,13 @@ public class SQLServerMetaDataOperations extends MetaDataOperations {
         String typeName = StringUtils.defaultString((String) columnInfo.get("TYPE_NAME")).toLowerCase(Locale.ENGLISH);
         if (typeName.equals("timestamp") || typeName.equals("rowversion")) {
             columnInfo.put("IS_ROWVERSION", true);
+        }
+        if (typeName.equals("vector")) {
+            // Precision of a vector of a result set is its dimensions, see SQLServerDialect.getColumnValue
+            columnInfo.put(VectorType.DETAIL_KEY, VectorType.dense(VectorType.Element.FLOAT32, TableMetaData.getInt(
+                    columnInfo, "COLUMN_SIZE")).toString());
+            columnInfo.put("DATA_TYPE", Types.LONGNVARCHAR);
+            columnInfo.put("COLUMN_SIZE", Integer.MAX_VALUE);
         }
     }
 }

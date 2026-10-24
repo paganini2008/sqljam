@@ -36,6 +36,8 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 
@@ -192,10 +194,98 @@ public class ClickHouseMetaDataOperations extends MetaDataOperations {
     /**
      * Data skipping indexes of ClickHouse are not indexes of other databases
      */
+    /**
+     * Vector similarity indexes (HNSW) of a column, data skipping indexes of other types are not indexes of other
+     * databases
+     */
     @Override
     public List<Map<String, Object>> getIndexInfos(DatabaseMetaData databaseMetaData, String catalogName,
-                                                   String schemaName, String tableName) {
-        return Collections.emptyList();
+                                                   String schemaName, String tableName) throws SQLException {
+        List<Map<String, Object>> indexInfos = new ArrayList<>();
+        getVectorIndexes(databaseMetaData, getSchema(databaseMetaData, schemaName), tableName).forEach((column, index) -> {
+            Map<String, Object> indexInfo = new CaseInsensitiveMap<>();
+            indexInfo.put("TABLE_NAME", tableName);
+            indexInfo.put("INDEX_NAME", index[0]);
+            indexInfo.put("COLUMN_NAME", column);
+            indexInfo.put("NON_UNIQUE", true);
+            indexInfo.put("TYPE", (int) DatabaseMetaData.tableIndexOther);
+            indexInfo.put("ORDINAL_POSITION", 1);
+            indexInfo.put(VectorIndex.DETAIL_KEY, index[1]);
+            indexInfos.add(indexInfo);
+        });
+        return indexInfos;
+    }
+
+    /**
+     * vector_similarity('hnsw', 'cosineDistance', 1024[, quantization, M, ef_construction])
+     */
+    private static final Pattern VECTOR_SIMILARITY = Pattern.compile(
+            "(?i)^vector_similarity\\(\\s*'hnsw'\\s*,\\s*'(\\w+)'\\s*,\\s*(\\d+)(?:\\s*,\\s*'\\w+'"
+                    + "(?:\\s*,\\s*(\\d+)(?:\\s*,\\s*(\\d+))?)?)?\\s*\\)$");
+
+    /**
+     * Vector indexes of the columns of a table: index name, vector index and dimensions. None if the indexes are
+     * not readable.
+     */
+    static Map<String, String[]> getVectorIndexes(DatabaseMetaData databaseMetaData, String schema, String tableName) {
+        Map<String, String[]> indexes = new LinkedHashMap<>();
+        try {
+            for (Map<String, Object> row : JdbcUtils.fetchAll(databaseMetaData.getConnection(), "SELECT name, expr,"
+                    + " type_full FROM system.data_skipping_indices WHERE database = ? AND table = ?"
+                    + " AND type = 'vector_similarity'", new Object[]{schema, tableName})) {
+                String[] index = parseVectorIndex((String) row.get("type_full"));
+                String column = StringUtils.strip(StringUtils.trimToEmpty((String) row.get("expr")), "`");
+                if (index != null && column.matches("[A-Za-z_][A-Za-z0-9_]*")) {
+                    indexes.put(column, new String[]{(String) row.get("name"), index[0], index[1]});
+                }
+            }
+        } catch (SQLException e) {
+            // Without system.data_skipping_indices the arrays have no indexes
+        }
+        return indexes;
+    }
+
+    /**
+     * Vector index and dimensions of the definition of a vector similarity index, null for other definitions
+     */
+    static String[] parseVectorIndex(String typeFull) {
+        Matcher matcher = VECTOR_SIMILARITY.matcher(StringUtils.trimToEmpty(typeFull));
+        if (!matcher.matches()) {
+            return null;
+        }
+        String function = matcher.group(1).toLowerCase(Locale.ENGLISH);
+        VectorIndex.Distance distance = "cosinedistance".equals(function) ? VectorIndex.Distance.COSINE
+                : "l2distance".equals(function) ? VectorIndex.Distance.EUCLIDEAN : null;
+        if (distance == null) {
+            return null;
+        }
+        Map<String, String> options = new LinkedHashMap<>();
+        if (matcher.group(3) != null) {
+            options.put("m", matcher.group(3));
+        }
+        if (matcher.group(4) != null) {
+            options.put("ef_construction", matcher.group(4));
+        }
+        return new String[]{new VectorIndex(VectorIndex.Kind.HNSW, distance, options).toString(), matcher.group(2)};
+    }
+
+    /**
+     * Arrays of floats are the vectors of ClickHouse (cosineDistance, L2Distance), their dimensions are the ones of
+     * their vector similarity index, if they have one
+     */
+    static VectorType getVectorType(String typeName, String dimensions) {
+        String type = StringUtils.defaultString(typeName).replace(" ", "").toLowerCase(Locale.ENGLISH);
+        int size = dimensions != null ? Integer.parseInt(dimensions) : 0;
+        switch (type) {
+            case "array(float32)":
+                return VectorType.dense(VectorType.Element.FLOAT32, size);
+            case "array(bfloat16)":
+                return VectorType.dense(VectorType.Element.FLOAT16, size);
+            case "array(float64)":
+                return VectorType.dense(VectorType.Element.FLOAT64, size);
+            default:
+                return null;
+        }
     }
 
     @Override
@@ -223,6 +313,7 @@ public class ClickHouseMetaDataOperations extends MetaDataOperations {
             systemColumns.put((String) row.get("name"), row);
         }
         Set<String> keyColumns = new HashSet<>();
+        Map<String, String[]> vectorIndexes = getVectorIndexes(databaseMetaData, schema, tableName);
         for (Iterator<Map<String, Object>> it = columnInfos.iterator(); it.hasNext(); ) {
             Map<String, Object> columnInfo = it.next();
             String columnName = (String) columnInfo.get("COLUMN_NAME");
@@ -249,6 +340,12 @@ public class ClickHouseMetaDataOperations extends MetaDataOperations {
             }
             columnInfo.put("REMARKS", StringUtils.trimToNull((String) systemColumn.get("comment")));
             normalizeType(columnInfo, (String) systemColumn.get("type"));
+            String[] vectorIndex = vectorIndexes.get(columnName);
+            VectorType vectorType = getVectorType((String) systemColumn.get("type"), vectorIndex != null
+                    ? vectorIndex[2] : null);
+            if (vectorType != null) {
+                columnInfo.put(VectorType.DETAIL_KEY, vectorType.toString());
+            }
             if (isTrue(systemColumn.get("is_in_primary_key"))) {
                 keyColumns.add(columnName);
             }

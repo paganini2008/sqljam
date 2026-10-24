@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -49,6 +50,8 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.utils.MapUtils;
 
@@ -60,6 +63,7 @@ import com.github.sqljam.utils.MapUtils;
  */
 public abstract class Dialect {
 
+    private static final Logger LOGGER = LoggerFactory.getLogger(Dialect.class);
     private static final Pattern SIMPLE_IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_$#]*");
     private static final Pattern NUMBER_LITERAL = Pattern.compile("[-+]?\\d+(\\.\\d+)?([eE][-+]?\\d+)?");
     private static final Pattern STRING_LITERAL = Pattern.compile("[nN]?'((?:[^']|'')*)'");
@@ -122,6 +126,11 @@ public abstract class Dialect {
      */
     private int databaseMajorVersion = -1;
     private int databaseMinorVersion = -1;
+    /**
+     * Features detected on the connection of the target database, null if they are not known, e.g. for a script:
+     * then they are taken by the version, like the latest version for an unknown version
+     */
+    private Set<DatabaseFeature> databaseFeatures;
 
     protected Dialect() {
 
@@ -342,7 +351,68 @@ public abstract class Dialect {
         dialect.setTargetSchemaName(targetSchemaName);
         dialect.setSourceSchemaPreserved(sourceSchemaPreserved);
         dialect.addExactIdentifiers(exactIdentifiers);
+        dialect.setDatabaseFeatures(databaseFeatures);
         return dialect;
+    }
+
+    /**
+     * Detects the features of the connected database before they are used, e.g. installed extensions. A feature
+     * which can not be detected (no privilege, an older server) is not available.
+     */
+    public final Set<DatabaseFeature> readDatabaseFeatures(Connection connection) {
+        Set<DatabaseFeature> features = EnumSet.noneOf(DatabaseFeature.class);
+        try {
+            detectDatabaseFeatures(connection, features);
+        } catch (SQLException | RuntimeException e) {
+            // The features found before the error are kept
+            LOGGER.warn("Features of the database are not readable: {}", e.getMessage());
+        }
+        this.databaseFeatures = features;
+        return features;
+    }
+
+    /**
+     * Adds the features of the connected database, by queries which do not fail for a missing feature where the
+     * database has them (catalogs of PostgreSQL: a failed query aborts its transaction)
+     */
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+    }
+
+    public Set<DatabaseFeature> getDatabaseFeatures() {
+        return databaseFeatures != null ? Collections.unmodifiableSet(databaseFeatures) : null;
+    }
+
+    public void setDatabaseFeatures(Set<DatabaseFeature> databaseFeatures) {
+        this.databaseFeatures = databaseFeatures != null ? EnumSet.copyOf(databaseFeatures.isEmpty()
+                ? EnumSet.noneOf(DatabaseFeature.class) : databaseFeatures) : null;
+    }
+
+    /**
+     * Whether the database has the feature: by its detected features, by its version if they are not known
+     *
+     * @param byVersion whether the version of the database has the feature
+     */
+    protected boolean hasDatabaseFeature(DatabaseFeature feature, boolean byVersion) {
+        return databaseFeatures != null ? databaseFeatures.contains(feature) : byVersion;
+    }
+
+    /**
+     * Whether a probing query succeeds, e.g. a function of a feature. A failed query is rolled back if the
+     * connection has a transaction.
+     */
+    protected static boolean probe(Connection connection, String sql) {
+        try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(sql)) {
+            return rs.next();
+        } catch (SQLException e) {
+            try {
+                if (!connection.getAutoCommit()) {
+                    connection.rollback();
+                }
+            } catch (SQLException ignored) {
+                // The connection is closed
+            }
+            return false;
+        }
     }
 
     /**
@@ -667,6 +737,17 @@ public abstract class Dialect {
             name = String.format(indexNamePattern, "idx", tableName, StringUtils.join(columnNames, "_"));
         }
         return getLimitedIdentifier(foldIdentifier(name));
+    }
+
+    /**
+     * Index of an access method of the same database type, e.g. GIN of PostgreSQL, with the operator classes of its
+     * columns (null for the default ones) and its storage options, e.g. fillfactor=70
+     */
+    public String getCreateIndexStatement(String catalog, String schema, String tableName, boolean partition,
+                                          String[] columnNames, String indexName, boolean unique, String indexType,
+                                          String[] operatorClasses, String options) {
+        return getCreateIndexStatement(catalog, schema, tableName, partition, columnNames, indexName, unique,
+                indexType);
     }
 
     public String getCreateIndexStatement(String catalog, String schema, String tableName, boolean partition,
@@ -1006,6 +1087,48 @@ public abstract class Dialect {
     }
 
     // ------------------------------------------------------------------
+    // Vectors
+    // ------------------------------------------------------------------
+
+    /**
+     * Type of a vector column of this database, null if the vectors are kept as text: the database has no vectors,
+     * not of these elements or not of so many dimensions
+     */
+    public String getVectorTypeName(VectorType vectorType) {
+        return null;
+    }
+
+    /**
+     * Type of a vector column which takes NULL or not, a database whose vectors take no NULL (arrays of
+     * ClickHouse) keeps nullable vectors as text
+     */
+    public String getVectorTypeName(VectorType vectorType, boolean nullable) {
+        return getVectorTypeName(vectorType);
+    }
+
+    /**
+     * Value of a vector for a vector column of this database (see {@link #getVectorTypeName}), by the text of the
+     * source vector, e.g. a sparse vector as the sparse text of this database
+     */
+    public Object getVectorValue(VectorType.Values values, VectorType vectorType) {
+        return values.toDenseText();
+    }
+
+    /**
+     * Index for the nearest neighbors of a vector column, null if this database has none for it: then no index is
+     * created, an ordinary index can not hold vectors
+     *
+     * @param columnTypeName type of the column of this database, see {@link #getVectorTypeName}
+     * @param vectorType     vector type of the source column, e.g. for its dimensions
+     * @param nullable       whether the column takes NULL
+     */
+    public String getCreateVectorIndexStatement(String catalog, String schema, String tableName, String indexName,
+                                                String columnName, String columnTypeName, VectorType vectorType,
+                                                boolean nullable, VectorIndex vectorIndex) {
+        return null;
+    }
+
+    // ------------------------------------------------------------------
     // Default values
     // ------------------------------------------------------------------
 
@@ -1156,6 +1279,13 @@ public abstract class Dialect {
      */
     public String[] getSessionStatements() {
         return null;
+    }
+
+    /**
+     * Prepares a session of the target before tables are created and rows are written, e.g. types of extensions are
+     * made visible. A session which can not be prepared is used as it is.
+     */
+    public void prepareSession(Connection connection) {
     }
 
     public String getScriptCommentPrefix() {

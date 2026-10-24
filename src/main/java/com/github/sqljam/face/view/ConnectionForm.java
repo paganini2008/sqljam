@@ -16,15 +16,22 @@
 package com.github.sqljam.face.view;
 
 import java.io.File;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.face.service.JdbcUrls;
+import com.github.sqljam.impexp.DbCategory;
 import com.github.sqljam.impexp.DbType;
 import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -33,6 +40,7 @@ import javafx.scene.control.CheckBox;
 import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TextField;
@@ -43,6 +51,7 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 
@@ -66,6 +75,10 @@ public class ConnectionForm extends VBox {
     private final PasswordField passwordField = new PasswordField();
     private final CheckBox rememberPasswordCheck = new CheckBox(Messages.get("connection.rememberPassword"));
     private final TextField urlField = new TextField();
+    /**
+     * SSH tunnel of a server database, a database file has none
+     */
+    private final SshForm sshForm = new SshForm(LABEL_WIDTH);
     private final Label statusLabel = new Label();
     private final ProgressIndicator progressIndicator = new ProgressIndicator();
     private final BooleanProperty busy = new SimpleBooleanProperty(false);
@@ -73,13 +86,101 @@ public class ConnectionForm extends VBox {
     private final Label portLabel = new Label(Messages.get("connection.port"));
     private final HBox hostBox;
 
+    /**
+     * Category of the data source: a DbCategory (relational, OLAP) or a DataSourceExtension (vector databases), the
+     * types follow it, like the drivers of DBeaver
+     */
+    private final ComboBox<Object> categoryCombo = new ComboBox<>();
+    /**
+     * Types of the category of an extension, e.g. Qdrant
+     */
+    private final ComboBox<String> sourceTypeCombo = new ComboBox<>();
+    private final List<DataSourceExtension> extensions;
+    private final Map<DataSourceExtension, DataSourceExtension.SourceForm> sourceForms = new HashMap<>();
+    private final VBox sourceBox = new VBox();
+    private GridPane jdbcGrid;
+    private DataSourceExtension.SourceForm sourceForm;
+    private boolean switching;
+    /**
+     * A data source is being shown, its category is not a choice of the user
+     */
+    private boolean loading;
+
     private ConnectionProfile profile = new ConnectionProfile();
     /**
      * The url and the fields are being updated by each other
      */
     private boolean syncing;
 
+    /**
+     * Chooses the category of a new data source: a DbCategory, whose first type is chosen, or a
+     * DataSourceExtension
+     */
+    public void setCategory(Object category) {
+        categoryCombo.setValue(category);
+        if (category instanceof DbCategory && !dbTypeCombo.getItems().isEmpty()) {
+            dbTypeCombo.setValue(dbTypeCombo.getItems().get(0));
+        }
+    }
+
+    public Object getCategory() {
+        return categoryCombo.getValue();
+    }
+
+    public ReadOnlyObjectProperty<Object> categoryProperty() {
+        return categoryCombo.valueProperty();
+    }
+
+    /**
+     * Whether the category may be changed, the category of a saved data source is kept
+     */
+    public void setCategoryEditable(boolean editable) {
+        categoryCombo.setDisable(!editable);
+    }
+
+    /**
+     * The extension of the chosen category, null for the relational and the OLAP databases
+     */
+    public DataSourceExtension getSelectedExtension() {
+        return categoryCombo.getValue() instanceof DataSourceExtension ? (DataSourceExtension) categoryCombo
+                .getValue() : null;
+    }
+
+    /**
+     * Shows a source of an extension, a new one of the extension if it is null
+     */
+    public void setSource(DataSourceExtension extension, DataSourceExtension.Source source) {
+        loading = true;
+        try {
+            categoryCombo.setValue(extension);
+        } finally {
+            loading = false;
+        }
+        sourceForm.setSource(source);
+        nameField.setText(source != null ? source.getName() : "");
+        sourceTypeCombo.setValue(sourceForm.getType());
+        clearStatus();
+    }
+
+    /**
+     * Saves the source of the fields of an extension
+     */
+    public DataSourceExtension.Source saveSource() throws IOException {
+        return sourceForm.save(nameField.getText());
+    }
+
+    static final double LABEL_WIDTH = 110;
+
     public ConnectionForm() {
+        this(List.of());
+    }
+
+    /**
+     * @param extensions kinds of data sources other than the relational and the OLAP databases, offered as
+     *                   categories
+     */
+    public ConnectionForm(List<DataSourceExtension> extensions) {
+        this.extensions = extensions;
         setSpacing(10);
         getStyleClass().add("connection-form");
         nameField.setId("nameField");
@@ -95,10 +196,32 @@ public class ConnectionForm extends VBox {
         urlField.setId("urlField");
         statusLabel.setId("formStatusLabel");
 
-        dbTypeCombo.getItems().addAll(DbTypeCells.getDbTypesByCategory());
+        categoryCombo.setId("categoryCombo");
+        sourceTypeCombo.setId("sourceTypeCombo");
+        categoryCombo.getItems().addAll(DbCategory.values());
+        categoryCombo.getItems().addAll(extensions);
+        categoryCombo.setMaxWidth(Double.MAX_VALUE);
+        categoryCombo.setCellFactory(view -> categoryCell());
+        categoryCombo.setButtonCell(categoryCell());
+        categoryCombo.valueProperty().addListener((obs, oldCategory, category) -> onCategoryChanged(category));
+        sourceTypeCombo.setMaxWidth(Double.MAX_VALUE);
+        sourceTypeCombo.setCellFactory(view -> sourceTypeCell());
+        sourceTypeCombo.setButtonCell(sourceTypeCell());
+        sourceTypeCombo.valueProperty().addListener((obs, oldType, type) -> {
+            if (sourceForm != null && type != null) {
+                sourceForm.setType(type);
+            }
+        });
         DbTypeCells.setupDbTypeCombo(dbTypeCombo);
         dbTypeCombo.setMaxWidth(Double.MAX_VALUE);
-        dbTypeCombo.valueProperty().addListener((obs, oldType, newType) -> onDbTypeChanged(oldType, newType));
+        dbTypeCombo.valueProperty().addListener((obs, oldType, newType) -> {
+            // A type of another category chooses its category
+            if (newType != null && !switching && categoryCombo.getValue() != newType.getCategory()) {
+                categoryCombo.setValue(newType.getCategory());
+                dbTypeCombo.setValue(newType);
+            }
+            onDbTypeChanged(oldType, newType);
+        });
         portField.setTextFormatter(new TextFormatter<String>(change -> change.getControlNewText().matches("\\d{0,5}")
                 ? change : null));
         portField.setPrefColumnCount(6);
@@ -126,23 +249,22 @@ public class ConnectionForm extends VBox {
         HBox databaseBox = new HBox(8, databaseField, browseButton);
         HBox.setHgrow(databaseField, Priority.ALWAYS);
 
-        GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(10);
-        ColumnConstraints labelColumn = new ColumnConstraints();
-        labelColumn.setMinWidth(110);
-        ColumnConstraints fieldColumn = new ColumnConstraints();
-        fieldColumn.setHgrow(Priority.ALWAYS);
-        grid.getColumnConstraints().addAll(labelColumn, fieldColumn);
+        // Category and type first, the fields of the type follow them
+        GridPane headGrid = grid();
+        StackPane typeBox = new StackPane(dbTypeCombo, sourceTypeCombo);
+        headGrid.addRow(0, new Label(Messages.get("connection.category")), categoryCombo);
+        headGrid.addRow(1, new Label(Messages.get("connection.dbType")), typeBox);
+        headGrid.addRow(2, new Label(Messages.get("connection.name")), nameField);
+        GridPane grid = grid();
+        jdbcGrid = grid;
         int row = 0;
-        grid.addRow(row++, new Label(Messages.get("connection.name")), nameField);
-        grid.addRow(row++, new Label(Messages.get("connection.dbType")), dbTypeCombo);
         grid.addRow(row++, hostLabel, hostBox);
         grid.addRow(row++, databaseLabel, databaseBox);
         grid.addRow(row++, new Label(Messages.get("connection.username")), usernameField);
         grid.addRow(row++, new Label(Messages.get("connection.password")), passwordField);
         grid.add(rememberPasswordCheck, 1, row++);
-        grid.addRow(row, new Label(Messages.get("connection.url")), urlField);
+        grid.addRow(row++, new Label(Messages.get("connection.url")), urlField);
+        grid.add(sshForm, 0, row, 2, 1);
 
         // The url follows the fields, a pasted or edited url fills the fields, like DBeaver
         hostField.textProperty().addListener((obs, oldText, text) -> updateUrl());
@@ -153,8 +275,89 @@ public class ConnectionForm extends VBox {
 
         HBox statusBox = new HBox(8, progressIndicator, statusLabel);
         statusBox.setPadding(new Insets(4, 0, 0, 0));
-        getChildren().addAll(grid, statusBox);
+        getChildren().addAll(headGrid, grid, sourceBox, statusBox);
         setProfile(new ConnectionProfile(), true);
+    }
+
+    private static GridPane grid() {
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        ColumnConstraints labelColumn = new ColumnConstraints();
+        labelColumn.setMinWidth(LABEL_WIDTH);
+        ColumnConstraints fieldColumn = new ColumnConstraints();
+        fieldColumn.setHgrow(Priority.ALWAYS);
+        grid.getColumnConstraints().addAll(labelColumn, fieldColumn);
+        return grid;
+    }
+
+    /**
+     * The types follow the category: types of a DbCategory with the JDBC fields, or types of an extension with
+     * its fields
+     */
+    private void onCategoryChanged(Object category) {
+        boolean jdbc = !(category instanceof DataSourceExtension);
+        if (!loading) {
+            // Another category chosen by the user is a new data source, the shown one is not overwritten
+            profile = new ConnectionProfile();
+            nameField.clear();
+        }
+        jdbcGrid.setVisible(jdbc);
+        jdbcGrid.setManaged(jdbc);
+        dbTypeCombo.setVisible(jdbc);
+        sourceTypeCombo.setVisible(!jdbc);
+        sourceBox.getChildren().clear();
+        if (jdbc) {
+            sourceForm = null;
+            DbType selected = dbTypeCombo.getValue();
+            switching = true;
+            try {
+                dbTypeCombo.getItems().setAll(DbTypeCells.getDbTypesByCategory().stream().filter(type -> category
+                        == null || type.getCategory() == category).collect(Collectors.toList()));
+                // The type is kept in its category, otherwise the first type of the category is chosen
+                dbTypeCombo.setValue(selected != null && dbTypeCombo.getItems().contains(selected) ? selected
+                        : dbTypeCombo.getItems().isEmpty() ? null : dbTypeCombo.getItems().get(0));
+            } finally {
+                switching = false;
+            }
+        } else {
+            DataSourceExtension extension = (DataSourceExtension) category;
+            sourceForm = sourceForms.computeIfAbsent(extension, key -> key.createForm(LABEL_WIDTH));
+            if (!loading) {
+                sourceForm.setSource(null);
+            }
+            sourceBox.getChildren().add(sourceForm.getNode());
+            sourceTypeCombo.getItems().setAll(sourceForm.getTypeNames());
+            sourceTypeCombo.setValue(sourceForm.getType());
+        }
+        clearStatus();
+    }
+
+    private static String categoryName(Object category) {
+        return category instanceof DataSourceExtension ? ((DataSourceExtension) category).getGroupName()
+                : category != null ? ((DbCategory) category).getDisplayName() : "";
+    }
+
+    private static ListCell<Object> categoryCell() {
+        return new ListCell<>() {
+            @Override
+            protected void updateItem(Object item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : categoryName(item));
+                setGraphic(empty || item == null ? null : DbIcons.of(categoryName(item)));
+            }
+        };
+    }
+
+    private static ListCell<String> sourceTypeCell() {
+        return new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item);
+                setGraphic(empty || item == null ? null : DbIcons.of(item));
+            }
+        };
     }
 
     private void onDbTypeChanged(DbType oldType, DbType newType) {
@@ -172,6 +375,8 @@ public class ConnectionForm extends VBox {
         hostLabel.setManaged(hostVisible);
         hostBox.setVisible(hostVisible);
         hostBox.setManaged(hostVisible);
+        sshForm.setVisible(!fileBased);
+        sshForm.setManaged(!fileBased);
         hostField.setPromptText(newType == DbType.H2 ? Messages.get("connection.host.h2.prompt") : "localhost");
         // Files are chosen for H2/SQLite, databases of the server for MySQL/PostgreSQL/SQL Server
         boolean browsable = fileBased || newType.isCatalogSupported();
@@ -301,6 +506,12 @@ public class ConnectionForm extends VBox {
     public void setProfile(ConnectionProfile profile, boolean passwordRemembered) {
         this.profile = profile.copy();
         DbType dbType = profile.getDbType() != null ? profile.getDbType() : DbType.MYSQL;
+        loading = true;
+        try {
+            categoryCombo.setValue(DbTypeCells.categoryOf(profile));
+        } finally {
+            loading = false;
+        }
         dbTypeCombo.setValue(null);
         portField.setText(profile.getPort() > 0 ? String.valueOf(profile.getPort()) : "");
         dbTypeCombo.setValue(dbType);
@@ -310,6 +521,7 @@ public class ConnectionForm extends VBox {
         usernameField.setText(StringUtils.defaultString(profile.getUsername()));
         passwordField.setText(StringUtils.defaultString(profile.getPassword()));
         rememberPasswordCheck.setSelected(passwordRemembered);
+        sshForm.setSettings(profile.getSsh());
         syncing = true;
         try {
             urlField.setText(StringUtils.isNotBlank(profile.getUrl()) ? profile.getUrl() : buildUrl());
@@ -334,6 +546,7 @@ public class ConnectionForm extends VBox {
         // The url of the fields is not kept, a url with its own options is
         String url = StringUtils.trimToNull(urlField.getText());
         result.setUrl(url == null || url.equals(buildUrl()) ? null : url);
+        result.setSsh(dbType != null && dbType.isFileBased() ? null : sshForm.getSettings());
         String name = StringUtils.trimToNull(nameField.getText());
         if (name == null) {
             name = buildDefaultName(result);
@@ -368,11 +581,18 @@ public class ConnectionForm extends VBox {
      * Validates required fields, returns the error message or null
      */
     public String validate() {
+        if (sourceForm != null) {
+            return sourceForm.validate();
+        }
         ConnectionProfile edited = getProfile();
         if (edited.getDbType() == null) {
             return Messages.get("connection.error.dbType");
         }
         DbType dbType = edited.getDbType();
+        String sshError = dbType.isFileBased() ? null : sshForm.validate();
+        if (sshError != null) {
+            return sshError;
+        }
         // PostgreSQL and Db2 connect to a database, Oracle to a service, H2/SQLite to a file; the database of MySQL
         // and SQL Server is the optional default database
         boolean databaseRequired = dbType == DbType.POSTGRESQL || dbType == DbType.ORACLE || dbType == DbType.DB2
@@ -432,6 +652,21 @@ public class ConnectionForm extends VBox {
         String error = validate();
         if (error != null) {
             showError(error);
+            return;
+        }
+        if (sourceForm != null) {
+            busy.set(true);
+            showInfo(Messages.get("connection.connecting"));
+            sourceForm.test(nameField.getText(), message -> {
+                busy.set(false);
+                showSuccess(message);
+                if (onSuccess != null) {
+                    onSuccess.accept(message);
+                }
+            }, failure -> {
+                busy.set(false);
+                showError(failure);
+            });
             return;
         }
         ConnectionProfile edited = getProfile();

@@ -156,9 +156,13 @@ public class ImportExportHandler implements ExportHandler {
                 int[] version = dialect.readDatabaseVersion(databaseMetaData);
                 dialect = dialect.forVersion(version[0], version[1]);
             }
+            Set<DatabaseFeature> features = dialect.readDatabaseFeatures(connection);
             this.dialect = dialect;
             exportListener.onMessage(String.format("Target database: %s %s",
                     databaseMetaData.getDatabaseProductName(), databaseMetaData.getDatabaseProductVersion()));
+            if (!features.isEmpty()) {
+                exportListener.onMessage("Target database features: " + features);
+            }
         } catch (SQLException e) {
             throw new ImpExpException("Unable to connect to target database: " + e.getMessage(), e);
         } finally {
@@ -203,6 +207,9 @@ public class ImportExportHandler implements ExportHandler {
             connection = connectionFactory.getConnection();
         }
         executeQuietly(connection, dialect != null ? dialect.getSessionStatements() : null);
+        if (dialect != null) {
+            dialect.prepareSession(connection);
+        }
         return connection;
     }
 

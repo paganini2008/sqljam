@@ -36,6 +36,10 @@ public class ProfileRegistry {
 
     private final ConnectionStore connectionStore;
     private final Map<String, String> sessionPasswords = new ConcurrentHashMap<>();
+    /**
+     * Passwords or passphrases of the SSH tunnels which are not remembered, of this session only
+     */
+    private final Map<String, String> sessionSshSecrets = new ConcurrentHashMap<>();
 
     public ProfileRegistry(ConnectionStore connectionStore) {
         this.connectionStore = connectionStore;
@@ -58,6 +62,10 @@ public class ProfileRegistry {
         if (copy.getPassword() == null && password != null) {
             copy.setPassword(password);
         }
+        String sshSecret = sessionSshSecrets.get(profile.getId());
+        if (copy.getSsh() != null && copy.getSsh().getSecret() == null && sshSecret != null) {
+            copy.getSsh().setSecret(sshSecret);
+        }
         return copy;
     }
 
@@ -75,10 +83,16 @@ public class ProfileRegistry {
         ConnectionProfile saved = profile.copy();
         if (passwordRemembered) {
             sessionPasswords.remove(profile.getId());
+            sessionSshSecrets.remove(profile.getId());
         } else {
             saved.setPassword(null);
             if (profile.getPassword() != null) {
                 sessionPasswords.put(profile.getId(), profile.getPassword());
+            }
+            sessionSshSecrets.remove(profile.getId());
+            if (saved.getSsh() != null && saved.getSsh().getSecret() != null) {
+                sessionSshSecrets.put(profile.getId(), saved.getSsh().getSecret());
+                saved.getSsh().setSecret(null);
             }
         }
         connectionStore.saveProfile(saved);
@@ -86,6 +100,7 @@ public class ProfileRegistry {
 
     public void removeProfile(String id) throws IOException {
         sessionPasswords.remove(id);
+        sessionSshSecrets.remove(id);
         connectionStore.removeProfile(id);
     }
 }

@@ -42,7 +42,13 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 | Only part of a table is needed | **Data viewer query**: columns, WHERE, GROUP BY and ORDER BY, then export the rows of the query. Missing target tables are created with the selected columns |
 | A copy next to the original | **Copy in the same schema** with a table name such as `{table}_copy`. Keys, indexes and constraints get their own names and the source tables are protected |
 | What is inside this package? | **Package viewer**: files with size and modified time, previews of manifest, SQL, LOB, Parquet and CSV files |
-| Custom and modern types | PostgreSQL enums and domains, MySQL, MariaDB and Oracle vectors, DuckDB unions and fixed arrays, ClickHouse variants, maps and tuples |
+| Custom and modern types | PostgreSQL enums and domains, DuckDB unions and fixed arrays, ClickHouse variants, maps and tuples |
+| Embeddings move with their search | Vectors of pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse keep their dimensions, and vector indexes (HNSW, IVF) keep their distances and options |
+| Embeddings live in a vector database | **Vector databases** sit in the connection tree like the other data sources: Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma, read by their REST APIs. Expand one to its databases, collections, partitions, tenants or namespaces, open a collection to browse its fields and records page by page, then **Import…** writes it straight into a database with vectors: ids and vectors become columns, every top-level field becomes a column of its type and the whole payload is kept as JSON. Conditions, native filters and nearest neighbor searches choose the rows |
+| The database sits behind a bastion host | **SSH tunnel** per data source, with a password or a private key (ed25519, RSA, ECDSA, with a passphrase). Host keys are trusted on first use and remembered, a changed host key is refused. A broken tunnel opens again by itself |
+| Which server is this, and is it well? | **Info** opens the overview (product, version, driver, session, features SqlJam detected) and the health of a data source or a vector database (uptime, connections, size, cluster state, load), refreshed when you ask |
+| Long values and rows for a chat or a ticket | Cells show one line, a **double click** or **Shift+Enter** opens the whole value with JSON indented and vectors described. Select rows and **Copy Rows As** CSV, TSV, JSON or Markdown, or press **Ctrl+C** to paste them into a spreadsheet |
+| Many data sources, one is needed | Data sources are grouped as **relational, OLAP and vector databases** with their logos, and the **filter** above the tree finds them by name or type |
 
 ---
 
@@ -62,6 +68,9 @@ flowchart LR
     DS --> PE[ParquetExporter · CsvExporter<br/>DuckDB workspace] --> PP[/Parquet or CSV package<br/>schema.sql · data/*.parquet or *.csv · manifest.json/]
     P --> SI[ScriptImporter] --> TD
     PP --> PI[ParquetImporter · CsvImporter] --> TD
+    VS[(Vector DB<br/>Milvus · Qdrant · Weaviate · Pinecone<br/>Elasticsearch · OpenSearch · Chroma)] --> VC[VdbClient<br/>REST API]
+    VC --> VT[Collection tree<br/>collection · field · key · vector index]
+    VT --> VV[VdbMetaDataVisitor] --> VD[Vdb dialect<br/>target with vectors] --> VI[VdbImportHandler] --> TD
 ```
 
 | Component | Role |
@@ -76,6 +85,8 @@ flowchart LR
 | `TableQuery` | Columns, WHERE, GROUP BY and ORDER BY of the data viewer, used by exports per table |
 | `Dialect` + `impexp.db.*` | Per-database SQL generation. Old versions are subclasses |
 | `MetaDataOperations` + `impexp.db.*` | Per-database metadata fixes (comments, identity, generated columns, partitions, sequences) |
+| `VdbClient` + `vdb.client.*` | REST clients of the vector databases: collections as tables, records read page by page, conditions, native filters and nearest neighbor searches |
+| `VdbExporter` + `vdb.dialect.*` | Pipeline of the vector databases, its own line next to the JDBC one: a visitor of the collection tree, `VdbDdlScripter` and `VdbImportHandler` write into the target with vectors |
 | `face.*` | JavaFX UI (AtlantaFX themes, Ikonli icons) |
 
 ---
@@ -91,19 +102,31 @@ Only **Java 17+** is needed to run SqlJam. JavaFX and all JDBC drivers are insid
 | macOS Intel | `sqljam-<version>-mac.jar` | `sqljam.sh` | ✅ |
 | Linux x64 (GTK 3) | `sqljam-<version>-linux.jar` | `sqljam.sh` | ✅ |
 
-| Database | Tested on | Supported from |
-|---|---|---|
-| MySQL | 9.6 | 5.5 (`MySQL55/56/57Dialect`) |
-| PostgreSQL | 16 | 9.x (`PostgreSQL9/10Dialect`) |
-| Oracle | 23ai Free | 11g (`Oracle11g/12cDialect`) |
-| SQL Server | 2022 | 2008 (`SQLServer2008Dialect`) |
-| Db2 for Linux, UNIX and Windows | 12.1 | 11.1 |
-| MariaDB | 11.8 | 10.3 |
-| H2 | 2.3 | 2.x |
-| SQLite | 3.46 | 3.x |
-| Microsoft Access (`.accdb`, `.mdb`) | 2016 | 2000 |
-| DuckDB (OLAP) | 1.5 | 1.x |
-| ClickHouse (OLAP) | 26.9 | 24.x |
+| Database | Tested on | Supported from | Vectors |
+|---|---|---|---|
+| MySQL | 9.7 | 5.5 (`MySQL55/56/57Dialect`) | `VECTOR` from 9.0 |
+| PostgreSQL | 17 | 9.x (`PostgreSQL9/10Dialect`) | pgvector 0.4 `vector` and IVFFlat, HNSW from 0.5, `halfvec` and `sparsevec` from 0.7 |
+| Oracle | 26ai Free | 11g (`Oracle11g/12cDialect`) | `VECTOR` from 23ai, sparse from 23.7, HNSW with vector memory, IVF |
+| SQL Server | 2025 | 2008 (`SQLServer2008Dialect`) | `VECTOR` from 2025, `float16` too |
+| Db2 for Linux, UNIX and Windows | 12.1.5 | 11.1 | `VECTOR` and vector indexes from 12.1.2 |
+| MariaDB | 11.8 | 10.3 | `VECTOR` and `VECTOR INDEX` from 11.7 |
+| H2 | 2.3 | 2.x | as text |
+| SQLite | 3.46 | 3.x | as text |
+| Microsoft Access (`.accdb`, `.mdb`) | 2016 | 2000 | as text |
+| DuckDB (OLAP) | 1.5 | 1.x | `FLOAT[n]` |
+| ClickHouse (OLAP) | 25.8 | 24.x | `Array(Float32)`, `vector_similarity` indexes |
+
+| Vector database (source only) | Tested on | Supported from | Read by |
+|---|---|---|---|
+| Milvus | 3.0 | 2.4 | REST API v2, dense, 16-bit, int8, binary and sparse vectors |
+| Qdrant | 1.19 | 1.10 | scroll, named, sparse and multivectors |
+| Weaviate | 1.39 | 1.24 | objects cursor and GraphQL, named vectors and tenants |
+| Pinecone and Pinecone Local | API 2025-01 | API 2025-01 | list and fetch, namespaces, dense and sparse values |
+| Elasticsearch | 8.19 | 8.0 | point in time, `dense_vector` |
+| OpenSearch | 2.19 | 2.4 | point in time, `knn_vector` |
+| Chroma | 1.5 | 1.0 | REST API v2, tenants and databases |
+
+Collections of vector databases go into the databases above which have vectors, never the other way round. Vector types and indexes are detected on the target before they are used, by a probe of each feature, so an older server, a missing extension or a setting which is turned off keeps the vectors as text.
 
 All JDBC drivers are bundled, no extra downloads.
 
@@ -128,7 +151,7 @@ bin/
 ├── sqljam.properties                       # configuration, edit and restart
 ├── sqljam.vmoptions                        # JVM options, one per line
 ├── sqljam.png                              # Dock icon of macOS
-├── sqljam-tutorial.mp4                     # tutorial video, export and import in under 3 minutes
+├── sqljam-tutorial.mp4                     # tutorial video, SQL and vector databases in under 4 minutes
 ├── sqljam-1.0.0-SNAPSHOT-sources.jar
 └── sqljam-1.0.0-SNAPSHOT-javadoc.jar
 ```
@@ -139,14 +162,15 @@ SqlJam starts with a splash screen while it loads the configuration, the data so
 
 <p align="center"><img src="docs/assets/splash.png" alt="SqlJam splash screen" width="520"></p>
 
-1. Create a **data source** on the login page and click **Connect**. The first start brings an **Example Shop (H2)** data source with a few e-commerce tables to try everything right away. **Example** on the login page or **Help → Restore Example Database** brings it back at any time.
+1. Create a **data source** on the login page and click **Connect**. Choose its category first (relational, OLAP or vector databases), the types and the fields follow it. **Connect through SSH tunnel** reaches a database behind a bastion host. The first start brings an **Example Shop (H2)** data source with a few e-commerce tables to try everything right away. **Example** on the login page or **Help → Restore Example Database** brings it back at any time.
 2. Right-click a database or schema → **Export…**
 3. Pick tables, choose **SQL scripts**, **Parquet** or **CSV** (folder) or **Database** (another data source, or a new one from the **+** button next to it), press **Start**. An import into a database runs in one transaction or commits every N rows (N is typed next to it), check **Skip rows with errors** to go on after bad rows and **Confirm before commit** to review it first, and choose **Update or insert by key** or **Skip existing by key** for rows which exist already.
-4. Open a table, narrow its rows on the **Data** tab with columns, WHERE, GROUP BY and ORDER BY, then **Export…** just those rows.
+4. Open a table, narrow its rows on the **Data** tab with columns, WHERE, GROUP BY and ORDER BY, then **Export…** just those rows. A header sorts the rows of the page, a double click shows a whole value and **Copy Rows As** copies the selected rows. **Info** on the toolbar or a right-click shows the overview and the health of the data source.
 5. **SQL Query** on the toolbar or a right-click opens an editor for the data source. **Ctrl+Enter** (**⌘+Enter** on macOS) runs the statement at the caret, **Ctrl+Shift+Enter** runs them all, then **Export…** sends all rows of the query through the same exits.
-6. Right-click a connected data source → **Disconnect** when you are done, its table tabs close with it. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and the author, and the GitHub icon at the bottom right opens the repository.
+6. Create a data source of the **Vector databases** category for Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch or Chroma, with an API key, a user and password or neither, as the database asks. Expand it in the tree to its databases, collections and partitions (tenants of Weaviate, namespaces of Pinecone), open a collection to see its fields and its records page by page, narrowed by conditions, a native filter or a nearest neighbor search. **Import…** on the collection tab, a right-click or **File → Import from Vector Database…** opens the wizard which imports the checked collections into a data source with vectors. Only such data sources are offered as targets.
+7. Right-click a connected data source → **Disconnect** when you are done, its table tabs close with it. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and the author, and the GitHub icon at the bottom right opens the repository.
 
-A short [tutorial video](docs/assets/sqljam-tutorial.mp4) walks through the example database: query rows, export into files, import the package into PostgreSQL, and copy the tables straight into SQL Server and Oracle.
+A short [tutorial video](docs/assets/sqljam-tutorial.mp4) walks through the example database: query rows, export into files, import the package into PostgreSQL, copy the tables straight into SQL Server, then browse a Qdrant collection, import it into PostgreSQL and open a tenant of Weaviate.
 
 | Login | Export wizard | Progress |
 |---|---|---|
@@ -159,6 +183,10 @@ A short [tutorial video](docs/assets/sqljam-tutorial.mp4) walks through the exam
 | SQL query | Package import | Light theme |
 |---|---|---|
 | ![sql](docs/assets/sql-editor.png) | ![import](docs/assets/import-package.png) | ![light](docs/assets/main-light.png) |
+
+| Vector database collection | Vector database import | Database info |
+|---|---|---|
+| ![collection](docs/assets/vdb-collection.png) | ![vdb import](docs/assets/import-vdb.png) | ![info](docs/assets/database-info.png) |
 
 Expected export package:
 
@@ -266,6 +294,21 @@ source.getTableQueries().put("EMPLOYEES", new TableQuery(List.of("EMPLOYEE_ID", 
 target.setTableNamePattern("{table}_copy");
 ```
 
+A collection of a vector database goes into a target with vectors through the vdb pipeline:
+
+```java
+try (VdbClient client = VdbType.QDRANT.createClient(new VdbSource(VdbType.QDRANT, "http://qdrant-host:6333"))) {
+    VdbExportConfiguration configuration = new VdbExportConfiguration();
+    configuration.setTargetSchema("public");
+    configuration.addCollection("docs", "docs");          // collection → table
+    configuration.setQuery(VdbQuery.all().where("lang = 'en'"));
+    configuration.setTableRecreated(true);
+    VdbExportResult result = new VdbExporter(client, pgDataSource, configuration).export();
+}
+```
+
+**Output**: table `public.docs` with `id`, `embedding vector(1024)`, a column of each payload field and `payload jsonb`, an HNSW index of the cosine distance of the collection, and the rows of `lang = 'en'`.
+
 ### 3. Import an export package
 
 ```java
@@ -307,7 +350,9 @@ try (ManualTransaction transaction = new ManualTransaction(connection, DbType.PO
 | Db2 `CHAR(4) FOR BIT DATA` | `bytea` | `RAW(4)` | `binary(4)` | `binary(4)` |
 | Db2 `XML` | `xml` | `CLOB` | `xml` | `longtext` |
 | PostgreSQL enum / domain | same (type created in the target schema) | `VARCHAR2` / base type | `varchar` / base type | `varchar` / base type |
-| MySQL / Oracle `VECTOR` | `text` | same | `nvarchar(max)` | same |
+| MySQL / Oracle / SQL Server `VECTOR(1024)` | `vector(1024)` | `VECTOR(1024, FLOAT32)` | `VECTOR(1024)` | `VECTOR(1024)` |
+| PostgreSQL `halfvec(2560)` / `sparsevec(8)` | same | `VECTOR(2560, FLOAT32)` / `VECTOR(8, FLOAT32, SPARSE)` | `VECTOR(2560, float16)` / `nvarchar(max)` | `VECTOR(2560)` / `longtext` |
+| pgvector HNSW index, cosine, `m = 16` | same | HNSW index, cosine, `NEIGHBORS 16` (IVF without vector memory) | vectors only | vectors only |
 | ClickHouse `Nullable(String)` / `Array(T)` | `text` | `CLOB` | `nvarchar(max)` | `longtext` |
 | DuckDB `HUGEINT` / `UNION` | `numeric(38, 0)` / `text` | `NUMBER(38,0)` / `CLOB` | `decimal(38,0)` / `nvarchar(max)` | `decimal(38,0)` / `longtext` |
 | Access `CURRENCY` / `YESNO` / `OLE` | `numeric(19, 4)` / `boolean` / `bytea` | `NUMBER(19,4)` / `NUMBER(1)` / `BLOB` | `decimal(19,4)` / `bit` / `varbinary(max)` | `decimal(19,4)` / `tinyint(1)` / `longblob` |
@@ -343,6 +388,9 @@ All settings live in `sqljam.properties`, placed next to the runnable jar in `bi
 |---|---|---|
 | `sqljam.home` | `${user.home}/.sqljam` | Application data directory |
 | `sqljam.connections.file` | `${sqljam.home}/connections.json` | Saved data sources |
+| `sqljam.vdb.enabled` | `true` | Shows the **Vector databases** category, its data sources and **File → Import from Vector Database…**, `false` hides them and loads nothing of the vector databases |
+| `sqljam.vdb.connections.file` | `${sqljam.home}/vdb-connections.json` | Saved vector databases, apart from the data sources |
+| `sqljam.ssh.known-hosts.file` | `${sqljam.home}/ssh_known_hosts` | Host keys of the SSH servers of tunnels, trusted on first use |
 | `sqljam.ui.theme` | `Primer Dark` | Primer/Nord/Cupertino Light & Dark, Dracula |
 | `sqljam.ui.window.width` / `height` | `1280` / `800` | Main window size |
 | `sqljam.banner.mode` | `console` | Startup banner with the version: `console`, `log` or `off` |
@@ -443,8 +491,11 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | What does a roll back undo? | Everything on PostgreSQL, SQL Server, Db2, SQLite and DuckDB, tables included. MySQL, MariaDB, Oracle, H2 and Access commit DDL at once, there the created tables stay empty and keys and identity values are set after the commit |
 | Can I export only the structure? | Yes. Rows are optional. Pick content **Structure** (`ExportMode.DDL`) for a package or a direct import. Tables, keys, indexes, comments, sequences and partitions are created without rows |
 | Are partitioned tables kept? | Yes. The same database type creates the partitioning again with its partitions, bounds and rows: range, list, hash, key and subpartitions of MySQL and MariaDB (system time too), range, list, hash, default and nested partitions of PostgreSQL, range, list, hash, interval, automatic list, composite and reference partitions of Oracle, partition functions of SQL Server, range partitions of Db2 and partition keys of ClickHouse. Other databases get the tables with all rows. In the tree a partitioned table shows its partitioning next to its name and PostgreSQL partitions are listed under their table |
+| How are vectors copied? | As vectors of the target with their dimensions: `vector(n)` of pgvector, `VECTOR(n)` of MySQL, MariaDB, SQL Server and Db2, `VECTOR(n, FLOAT32)` of Oracle, `FLOAT[n]` of DuckDB and `Array(Float32)` of ClickHouse. A vector index becomes the vector index of the target with the same distance. Vectors which the target can not keep exactly, e.g. doubles into pgvector, stay text and keep every digit |
 | Can I generate scripts for an older server? | Yes, choose the target version (e.g. Oracle `11.2`, SQL Server `2008`) and a compatible dialect is used |
-| Can I keep the password out of disk? | Uncheck *Remember password* on the login page, it stays in memory for the session |
+| Can I keep the password out of disk? | Uncheck *Remember password* on the login page, it stays in memory for the session, and so does the password or passphrase of the SSH tunnel |
+| Can I reach a database behind a bastion host? | Yes. Check **Connect through SSH tunnel** and enter the SSH server, its user and a password or a private key. The host and port of the data source are those which the SSH server reaches, e.g. `localhost:5432`. Exports, imports, queries and Info all go through the tunnel |
+| Can I paste rows into a spreadsheet or a ticket? | Yes. Select rows of any data table and press **Ctrl+C** (**⌘+C** on macOS) for tab separated values, **Ctrl+Shift+C** with the headers, or right-click **Copy Rows As** CSV, TSV, JSON or Markdown |
 | How do I run the tests? | `mvn verify`, integration tests use local databases and are skipped when unreachable |
 
 ---

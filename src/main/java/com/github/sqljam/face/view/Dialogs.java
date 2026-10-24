@@ -50,7 +50,7 @@ public final class Dialogs {
      * Sets the owner of a dialog. JavaFX fails with a NullPointerException for an owner window without a scene,
      * the dialog is then shown without an owner.
      */
-    static void initOwner(Dialog<?> dialog, Window owner) {
+    public static void initOwner(Dialog<?> dialog, Window owner) {
         if (owner != null && owner.getScene() != null) {
             dialog.initOwner(owner);
         }

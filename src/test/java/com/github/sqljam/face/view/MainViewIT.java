@@ -119,7 +119,7 @@ class MainViewIT {
 
         // Browse: data source -> database -> table
         ConnectionTree tree = (ConnectionTree) FxTestSupport.call(() -> mainView.get().lookup("#connectionTree"));
-        TreeItem<DbNode> connection = FxTestSupport.call(() -> tree.getRoot().getChildren().get(0));
+        TreeItem<DbNode> connection = FxTestSupport.call(() -> tree.getConnectionItems().get(0));
         waitLoaded(connection);
         TreeItem<DbNode> catalog = child(connection, database.getSourceCatalog());
         FxTestSupport.run(() -> catalog.setExpanded(true));

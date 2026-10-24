@@ -97,6 +97,8 @@ public final class FxTestSupport {
     public static AppContext createContext(File dir) {
         applyAppStyle();
         Config config = new Config(new File(dir, Config.FILE_NAME));
+        // Vector databases of tests are not read from the home directory of the user either
+        config.set("sqljam.vdb.connections.file", new File(dir, "vdb-connections.json").getAbsolutePath());
         Config.setInstance(config);
         AppContext context = new AppContext(new SettingsStore(config), new ProfileRegistry(new ConnectionStore(
                 new File(dir, "connections.json"))), null);

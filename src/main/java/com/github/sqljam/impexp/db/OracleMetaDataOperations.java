@@ -25,6 +25,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -35,6 +36,8 @@ import java.util.stream.Collectors;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 import lombok.extern.slf4j.Slf4j;
@@ -262,6 +265,24 @@ public class OracleMetaDataOperations extends MetaDataOperations {
         return " (" + StringUtils.join(definitions, ", ") + ")";
     }
 
+    /**
+     * VECTOR(3,FLOAT32,DENSE) of VECTOR_INFO. A column of any format (VECTOR(*,*)) has no vector type, it keeps the
+     * vectors of any format for Oracle and as text for others.
+     */
+    static VectorType getVectorType(String vectorInfo) {
+        String[] parts = StringUtils.defaultString(StringUtils.substringBetween(vectorInfo, "(", ")")).split(",");
+        if (parts.length < 2 || "*".equals(parts[1].trim())) {
+            return null;
+        }
+        try {
+            int dimensions = "*".equals(parts[0].trim()) ? 0 : Integer.parseInt(parts[0].trim());
+            return new VectorType(VectorType.Element.valueOf(parts[1].trim().toUpperCase(Locale.ENGLISH)), dimensions,
+                    parts.length > 2 && "SPARSE".equalsIgnoreCase(parts[2].trim()));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private static String quote(String name) {
         return name.matches("[A-Z][A-Z0-9_$#]*") ? name : "\"" + name + "\"";
     }
@@ -273,7 +294,10 @@ public class OracleMetaDataOperations extends MetaDataOperations {
         if (CollectionUtils.isEmpty(columnInfos)) {
             return columnInfos;
         }
-        String sql = "SELECT c.COLUMN_NAME, c.IDENTITY_COLUMN, c.VIRTUAL_COLUMN, m.COMMENTS FROM ALL_TAB_COLS c"
+        // Vectors of Oracle 23ai and later
+        String vectorInfo = databaseMetaData.getDatabaseMajorVersion() >= 23 ? ", c.VECTOR_INFO" : "";
+        String sql = "SELECT c.COLUMN_NAME, c.IDENTITY_COLUMN, c.VIRTUAL_COLUMN, m.COMMENTS" + vectorInfo
+                + " FROM ALL_TAB_COLS c"
                 + " LEFT JOIN ALL_COL_COMMENTS m ON m.OWNER = c.OWNER AND m.TABLE_NAME = c.TABLE_NAME"
                 + " AND m.COLUMN_NAME = c.COLUMN_NAME WHERE c.OWNER = ? AND c.TABLE_NAME = ?";
         List<Map<String, Object>> columnDetails = JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql,
@@ -310,6 +334,10 @@ public class OracleMetaDataOperations extends MetaDataOperations {
                 // Vectors are text of other databases, e.g. [1.0E+000,2.5E+000]
                 columnInfo.put("DATA_TYPE", Types.LONGVARCHAR);
                 columnInfo.put("COLUMN_SIZE", Integer.MAX_VALUE);
+                VectorType vectorType = getVectorType((String) columnDetail.get("VECTOR_INFO"));
+                if (vectorType != null) {
+                    columnInfo.put(VectorType.DETAIL_KEY, vectorType.toString());
+                }
             }
         }
         return columnInfos;
@@ -334,8 +362,86 @@ public class OracleMetaDataOperations extends MetaDataOperations {
                 excludedIndexNames.add(indexName);
             }
         }
-        return indexInfos.stream().filter(info -> !excludedIndexNames.contains((String) info.get("INDEX_NAME")))
-                .collect(Collectors.toList());
+        List<Map<String, Object>> infos = indexInfos.stream().filter(info -> !excludedIndexNames.contains(
+                (String) info.get("INDEX_NAME"))).collect(Collectors.toList());
+        if (databaseMetaData.getDatabaseMajorVersion() >= 23 && !infos.isEmpty()) {
+            applyVectorIndexes(databaseMetaData, schemaName, tableName, infos);
+        }
+        return infos;
+    }
+
+    /**
+     * Vector indexes of Oracle 23ai: the kind by INDEX_SUBTYPE, the distance by V$VECTOR_INDEX and the neighbors of
+     * HNSW by GV$VECTOR_GRAPH_INDEX. Without access to the views (SELECT_CATALOG_ROLE) the default distance of
+     * Oracle (cosine) is taken.
+     */
+    private void applyVectorIndexes(DatabaseMetaData databaseMetaData, String schemaName, String tableName,
+                                    List<Map<String, Object>> indexInfos) throws SQLException {
+        Connection connection = databaseMetaData.getConnection();
+        Map<String, String> kinds = new HashMap<>();
+        fetchQuietly(connection, "SELECT INDEX_NAME, INDEX_SUBTYPE FROM ALL_INDEXES WHERE OWNER = ? AND TABLE_NAME = '"
+                + tableName.replace("'", "''") + "' AND INDEX_TYPE = 'VECTOR'", schemaName).forEach((name, row) ->
+                kinds.put(name, StringUtils.defaultString((String) row.get("INDEX_SUBTYPE"))));
+        if (kinds.isEmpty()) {
+            return;
+        }
+        Map<String, Map<String, Object>> distances = fetchQuietly(connection, "SELECT INDEX_NAME, DISTANCE_TYPE"
+                + " FROM V$VECTOR_INDEX WHERE OWNER = ?", schemaName);
+        Map<String, Map<String, Object>> graphs = fetchQuietly(connection, "SELECT INDEX_NAME, NUM_NEIGHBORS,"
+                + " EF_CONSTRUCTION FROM GV$VECTOR_GRAPH_INDEX WHERE OWNER = ?", schemaName);
+        for (Map<String, Object> indexInfo : indexInfos) {
+            String indexName = (String) indexInfo.get("INDEX_NAME");
+            String kind = kinds.get(indexName);
+            if (kind == null) {
+                continue;
+            }
+            Map<String, Object> distance = distances.get(indexName);
+            VectorIndex.Distance distanceType = VectorIndex.Distance.COSINE;
+            if (distance != null && distance.get("DISTANCE_TYPE") != null) {
+                try {
+                    distanceType = VectorIndex.Distance.valueOf(distance.get("DISTANCE_TYPE").toString().trim()
+                            .toUpperCase(Locale.ENGLISH));
+                } catch (IllegalArgumentException e) {
+                    // Distances of other names, e.g. EUCLIDEAN_SQUARED, are taken as the default
+                    log.info("Distance {} of vector index {} is taken as cosine", distance.get("DISTANCE_TYPE"),
+                            indexName);
+                }
+            } else {
+                log.info("Distance of vector index {} is not readable (SELECT_CATALOG_ROLE), cosine is taken",
+                        indexName);
+            }
+            Map<String, String> options = new LinkedHashMap<>();
+            Map<String, Object> graph = graphs.get(indexName);
+            if (graph != null) {
+                putOption(options, "m", graph.get("NUM_NEIGHBORS"));
+                putOption(options, "ef_construction", graph.get("EF_CONSTRUCTION"));
+            }
+            indexInfo.put(VectorIndex.DETAIL_KEY, new VectorIndex(kind.toUpperCase(Locale.ENGLISH).contains("IVF")
+                    ? VectorIndex.Kind.IVF : VectorIndex.Kind.HNSW, distanceType, options).toString());
+        }
+    }
+
+    private static void putOption(Map<String, String> options, String name, Object value) {
+        if (value != null) {
+            options.put(name, value.toString());
+        }
+    }
+
+    /**
+     * Rows of a view by their INDEX_NAME, none if the view is not granted
+     */
+    private static Map<String, Map<String, Object>> fetchQuietly(Connection connection, String sql, String owner) {
+        Map<String, Map<String, Object>> rows = new HashMap<>();
+        try {
+            for (Map<String, Object> row : JdbcUtils.fetchAll(connection, sql, new Object[]{owner})) {
+                rows.putIfAbsent((String) row.get("INDEX_NAME"), row);
+            }
+        } catch (SQLException e) {
+            if (log.isDebugEnabled()) {
+                log.debug("Vector indexes are not readable: {}", e.getMessage());
+            }
+        }
+        return rows;
     }
 
     @Override

@@ -19,13 +19,17 @@ import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
+import java.util.ServiceLoader;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
+import atlantafx.base.controls.CustomTextField;
+import atlantafx.base.theme.Styles;
 
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
+import com.github.sqljam.face.service.DatabaseInfo;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.face.service.TransferService;
 import com.github.sqljam.impexp.AbstractFileImporter;
@@ -90,6 +94,8 @@ public class MainView extends BorderPane {
         getStyleClass().add("main-view");
         connectionTree = new ConnectionTree(context);
         connectionTree.setOnOpenTable(this::openTable);
+        connectionTree.setOnOpenSourceItem(this::openSourceItem);
+        connectionTree.setOnInfo(this::openInfo);
         connectionTree.setOnSqlQuery(this::openSqlTab);
         connectionTree.setOnExport(this::showExportDialog);
         connectionTree.setOnImportScripts(this::showImportDialog);
@@ -107,13 +113,40 @@ public class MainView extends BorderPane {
         welcome.visibleProperty().bind(Bindings.isEmpty(tabPane.getTabs()));
         StackPane center = new StackPane(welcome, tabPane);
         tabPane.visibleProperty().bind(Bindings.isNotEmpty(tabPane.getTabs()));
-        SplitPane splitPane = new SplitPane(connectionTree, center);
+        SplitPane splitPane = new SplitPane(createTreePane(), center);
         splitPane.setDividerPositions(0.24);
-        SplitPane.setResizableWithParent(connectionTree, false);
+        SplitPane.setResizableWithParent(splitPane.getItems().get(0), false);
 
         setTop(new VBox(createMenuBar(), createToolBar()));
         setCenter(splitPane);
         setBottom(createStatusBar());
+    }
+
+    /**
+     * The connection tree under its filter, Escape clears the filter
+     */
+    private Node createTreePane() {
+        CustomTextField filterField = new CustomTextField();
+        filterField.setId("treeFilterField");
+        filterField.setPromptText(Messages.get("tree.filter.prompt"));
+        filterField.setLeft(Icons.of(Icons.SEARCH));
+        Button clearButton = new Button(null, Icons.of(Icons.CANCEL));
+        clearButton.setId("treeFilterClearButton");
+        clearButton.getStyleClass().addAll(Styles.BUTTON_ICON, Styles.FLAT);
+        clearButton.setFocusTraversable(false);
+        clearButton.visibleProperty().bind(filterField.textProperty().isNotEmpty());
+        clearButton.setOnAction(event -> filterField.clear());
+        filterField.setRight(clearButton);
+        filterField.textProperty().bindBidirectional(connectionTree.filterProperty());
+        filterField.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ESCAPE) {
+                filterField.clear();
+            }
+        });
+        VBox pane = new VBox(4, filterField, connectionTree);
+        pane.setPadding(new Insets(4, 0, 0, 0));
+        VBox.setVgrow(connectionTree, Priority.ALWAYS);
+        return pane;
     }
 
     private Window getWindow() {
@@ -160,8 +193,17 @@ public class MainView extends BorderPane {
         MenuItem exit = new MenuItem(Messages.get("action.exit"), Icons.of(Icons.EXIT));
         exit.setOnAction(event -> exit());
         Menu fileMenu = new Menu(Messages.get("menu.file"), null, newConnection, new SeparatorMenuItem(), sqlQuery,
-                export, importScripts, importParquet, new SeparatorMenuItem(), openPackage, new SeparatorMenuItem(),
-                exit);
+                export, importScripts, importParquet);
+        // Items of optional lines (vector databases) follow the imports when their settings switch them on
+        for (MenuExtension extension : ServiceLoader.load(MenuExtension.class)) {
+            if (extension.isEnabled(context.getSettingsStore().getConfig())) {
+                MenuItem item = new MenuItem(extension.getText(), Icons.of(Icons.IMPORT));
+                item.setId(extension.getId());
+                item.setOnAction(event -> extension.show(getWindow(), context));
+                fileMenu.getItems().add(item);
+            }
+        }
+        fileMenu.getItems().addAll(new SeparatorMenuItem(), openPackage, new SeparatorMenuItem(), exit);
 
         Menu themeMenu = new Menu(Messages.get("menu.theme"), Icons.of(Icons.THEME));
         ToggleGroup themeGroup = new ToggleGroup();
@@ -209,19 +251,34 @@ public class MainView extends BorderPane {
             DbNode node = connectionTree.getSelectedNode();
             if (node != null && node.getProfile() != null) {
                 editConnection(node.getProfile());
+            } else if (connectionTree.getSelectedSource() != null) {
+                connectionTree.editSource(connectionTree.getSelectedSource());
             }
         });
         Button deleteButton = toolButton(Icons.DELETE, "action.deleteConnection", () -> {
             DbNode node = connectionTree.getSelectedNode();
             if (node != null && node.getProfile() != null) {
                 deleteConnection(node.getProfile());
+            } else if (connectionTree.getSelectedSource() != null) {
+                connectionTree.deleteSource(connectionTree.getSelectedSource());
             }
         });
+        Button infoButton = toolButton(Icons.INFO, "action.info", () -> {
+            DbNode node = connectionTree.getSelectedNode();
+            openInfo(connectionTree.getSelectedSource() != null ? connectionTree.getSelectedSource()
+                    : node != null && node.getProfile() != null ? DbNode.connection(node.getProfile()) : null);
+        });
         connectionTree.getSelectionModel().selectedItemProperty().addListener((obs, oldItem, item) -> {
-            boolean connection = item != null && item.getValue().getKind() == DbNode.Kind.CONNECTION;
+            boolean connection = item != null && (item.getValue().getKind() == DbNode.Kind.CONNECTION
+                    || item.getValue().getKind() == DbNode.Kind.SOURCE);
             editButton.setDisable(!connection);
             deleteButton.setDisable(!connection);
+            // The info of the data source of any of its nodes, e.g. of a table
+            infoButton.setDisable(item == null || (item.getValue().getProfile() == null && item.getValue()
+                    .getKind() != DbNode.Kind.SOURCE));
         });
+        infoButton.setText(Messages.get("action.info"));
+        infoButton.setDisable(true);
         editButton.setDisable(true);
         deleteButton.setDisable(true);
         Button exportButton = toolButton(Icons.EXPORT, "action.export",
@@ -244,7 +301,8 @@ public class MainView extends BorderPane {
         exitButton.setText(Messages.get("action.exit"));
         return new ToolBar(markBox, new Separator(),
                 toolButton(Icons.ADD, "action.newConnection", this::newConnection), editButton,
-                deleteButton, toolButton(Icons.REFRESH, "action.refresh", connectionTree::refreshSelected),
+                deleteButton, infoButton, toolButton(Icons.REFRESH, "action.refresh",
+                connectionTree::refreshSelected),
                 new Separator(), sqlButton, exportButton, importButton, spacer, exitButton);
     }
 
@@ -287,9 +345,12 @@ public class MainView extends BorderPane {
         }
     }
 
+    /**
+     * A new data source of the category which the user chooses in the form: relational, OLAP, or a kind of an
+     * extension (vector databases) when one is switched on
+     */
     private void newConnection() {
-        Optional<ConnectionProfile> profile = ConnectionDialog.show(getWindow(), context, null);
-        profile.ifPresent(this::selectConnection);
+        connectionTree.createConnection(null);
     }
 
     private void editConnection(ConnectionProfile profile) {
@@ -356,6 +417,53 @@ public class MainView extends BorderPane {
         Optional<TransferRequest> request = dialog.showAndWait();
         connectionTree.addNewConnections();
         request.ifPresent(transferRequest -> startTransfer(transferRequest, 1));
+    }
+
+    /**
+     * Opens the tab of an item of a source of an extension, e.g. a collection of a vector database, like a table
+     */
+    void openSourceItem(DbNode node) {
+        String key = node.getSource().getId() + "|item|" + node.getItem().getKey();
+        for (Tab tab : tabPane.getTabs()) {
+            if (key.equals(tab.getUserData())) {
+                tabPane.getSelectionModel().select(tab);
+                return;
+            }
+        }
+        Tab tab = node.getSource().openItem(node.getItem(), getWindow(), context);
+        tab.setUserData(key);
+        tabPane.getTabs().add(tab);
+        tabPane.getSelectionModel().select(tab);
+    }
+
+    /**
+     * Opens the info tab of a data source or of a source of an extension, an opened one is selected
+     */
+    void openInfo(DbNode node) {
+        if (node == null || (node.getProfile() == null && node.getSource() == null)) {
+            return;
+        }
+        String key = (node.getSource() != null ? node.getSource().getId() : node.getProfile().getId()) + "|info";
+        for (Tab tab : tabPane.getTabs()) {
+            if (key.equals(tab.getUserData())) {
+                tabPane.getSelectionModel().select(tab);
+                ((InfoTab) tab).refresh();
+                return;
+            }
+        }
+        InfoTab tab;
+        if (node.getSource() != null) {
+            DataSourceExtension.Source source = node.getSource();
+            tab = new InfoTab(source.getName(), DbIcons.of(source.getTypeName()), source::loadOverview,
+                    source::loadHealth);
+        } else {
+            ConnectionProfile profile = node.getProfile();
+            DatabaseInfo info = new DatabaseInfo(profile, context.getSessionManager().getSession(profile));
+            tab = new InfoTab(profile.getName(), DbTypeCells.iconOf(profile), info::getOverview, info::getHealth);
+        }
+        tab.setUserData(key);
+        tabPane.getTabs().add(tab);
+        tabPane.getSelectionModel().select(tab);
     }
 
     void openTable(DbNode node) {

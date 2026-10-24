@@ -26,6 +26,7 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import lombok.extern.slf4j.Slf4j;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.SqlResult;
 import com.github.sqljam.face.service.DatabaseSession;
@@ -34,6 +35,7 @@ import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.jdbc.JdbcUtils;
 import javafx.beans.property.ReadOnlyObjectWrapper;
+import javafx.collections.ObservableList;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -55,7 +57,6 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * @Description: SqlTab runs SQL on a data source and exports the rows of a query, SqlJam is an import and export
@@ -82,6 +83,7 @@ public class SqlTab extends Tab {
     private final DatabaseSession session;
     private final SqlEditor editor = new SqlEditor();
     private final TableView<List<String>> resultTable = new TableView<>();
+    private final ObservableList<List<String>> resultRows = TableColumns.sortedRows(resultTable);
     private final ListView<LogEntry> messageList = new ListView<>();
     private final TabPane resultTabs = new TabPane();
     private final Tab resultTab = new Tab(Messages.get("sql.result"));
@@ -129,6 +131,7 @@ public class SqlTab extends Tab {
         exportButton.setId("sqlExportButton");
         statusLabel.setId("sqlStatusLabel");
         resultTable.setId("sqlResultTable");
+        TableColumns.fill(resultTable);
         messageList.setId("sqlMessageList");
         runButton.setTooltip(new Tooltip(Messages.get("sql.run.tooltip")));
         runAllButton.setTooltip(new Tooltip(Messages.get("sql.runAll.tooltip")));
@@ -350,10 +353,10 @@ public class SqlTab extends Tab {
             column.setCellValueFactory(features -> new ReadOnlyObjectWrapper<>(features.getValue().get(index)));
             column.setCellFactory(tableColumn -> new DataPane.NullableCell());
             column.setPrefWidth(DataPane.getColumnWidth(columns.get(i), result.getRows(), index));
-            column.setSortable(false);
+            column.setComparator(ValueCell.COMPARATOR);
             resultTable.getColumns().add(column);
         }
-        resultTable.getItems().setAll(result.getRows());
+        resultRows.setAll(result.getRows());
         resultTable.setPlaceholder(new Label(Messages.get("data.empty")));
     }
 

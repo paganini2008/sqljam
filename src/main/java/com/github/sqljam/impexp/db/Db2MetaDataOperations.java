@@ -30,6 +30,8 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 import lombok.extern.slf4j.Slf4j;
@@ -157,9 +159,18 @@ public class Db2MetaDataOperations extends MetaDataOperations {
                 new Object[]{schemaName, tableName})) {
             catalogColumns.put(StringUtils.trim((String) column.get("COLNAME")), column);
         }
+        Map<String, VectorType> vectorTypes = getVectorTypes(databaseMetaData, schemaName, tableName, catalogColumns);
         for (Map<String, Object> columnInfo : columnInfos) {
             columnInfo.put("TABLE_SCHEM", StringUtils.trim((String) columnInfo.get("TABLE_SCHEM")));
             Map<String, Object> column = catalogColumns.get((String) columnInfo.get("COLUMN_NAME"));
+            VectorType vectorType = vectorTypes.get((String) columnInfo.get("COLUMN_NAME"));
+            if (vectorType != null) {
+                // The driver reports vectors as VARCHAR, they are text of other databases
+                columnInfo.put("TYPE_NAME", "VECTOR");
+                columnInfo.put("DATA_TYPE", Types.LONGVARCHAR);
+                columnInfo.put("COLUMN_SIZE", Integer.MAX_VALUE);
+                columnInfo.put(VectorType.DETAIL_KEY, vectorType.toString());
+            }
             boolean identity = column != null && "Y".equals(StringUtils.trim((String) column.get("IDENTITY")));
             String expression = column != null && "A".equals(StringUtils.trim((String) column.get("GENERATED")))
                     && !identity ? getGenerationExpression((String) column.get("TEXT")) : null;
@@ -258,10 +269,60 @@ public class Db2MetaDataOperations extends MetaDataOperations {
         return super.getPrimaryKeyInfos(databaseMetaData, null, schemaName, tableName);
     }
 
+    /**
+     * Vectors of Db2 12.1.2 and later: dimensions (LENGTH) and coordinate types (FLOAT32, INT8) of SYSCAT.COLUMNS.
+     * COORDINATETYPE is read only for tables with vectors, older versions do not have it.
+     */
+    private Map<String, VectorType> getVectorTypes(DatabaseMetaData databaseMetaData, String schemaName,
+                                                   String tableName, Map<String, Map<String, Object>> catalogColumns) {
+        Map<String, VectorType> vectorTypes = new HashMap<>();
+        if (catalogColumns.values().stream().noneMatch(column -> "VECTOR".equals(StringUtils.trim(
+                (String) column.get("TYPENAME"))))) {
+            return vectorTypes;
+        }
+        try {
+            for (Map<String, Object> column : JdbcUtils.fetchAll(databaseMetaData.getConnection(),
+                    "SELECT COLNAME, LENGTH, COORDINATETYPE FROM SYSCAT.COLUMNS WHERE TABSCHEMA = ? AND TABNAME = ?"
+                            + " AND TYPENAME = 'VECTOR'", new Object[]{schemaName, tableName})) {
+                Object length = column.get("LENGTH");
+                vectorTypes.put(StringUtils.trim((String) column.get("COLNAME")), VectorType.dense("INT8".equals(
+                        StringUtils.trim((String) column.get("COORDINATETYPE"))) ? VectorType.Element.INT8
+                        : VectorType.Element.FLOAT32, length instanceof Number ? ((Number) length).intValue() : 0));
+            }
+        } catch (SQLException e) {
+            log.warn("Vector columns of {}.{} are not readable: {}", schemaName, tableName, e.getMessage());
+        }
+        return vectorTypes;
+    }
+
+    /**
+     * Vector indexes (INDEXTYPE VANN) of Db2 12.1.2 and later: the distance is not in the catalog views, the cosine
+     * distance is taken
+     */
     @Override
     public List<Map<String, Object>> getIndexInfos(DatabaseMetaData databaseMetaData, String catalogName,
                                                    String schemaName, String tableName) throws SQLException {
-        return super.getIndexInfos(databaseMetaData, null, schemaName, tableName);
+        List<Map<String, Object>> indexInfos = super.getIndexInfos(databaseMetaData, null, schemaName, tableName);
+        if (indexInfos.isEmpty()) {
+            return indexInfos;
+        }
+        List<String> vectorIndexes = new ArrayList<>();
+        try {
+            JdbcUtils.fetchAll(databaseMetaData.getConnection(), "SELECT INDNAME FROM SYSCAT.INDEXES"
+                    + " WHERE TABSCHEMA = ? AND TABNAME = ? AND INDEXTYPE = 'VANN'", new Object[]{schemaName,
+                    tableName}).forEach(row -> vectorIndexes.add(StringUtils.trim((String) row.get("INDNAME"))));
+        } catch (SQLException e) {
+            log.warn("Indexes of {}.{} are not readable: {}", schemaName, tableName, e.getMessage());
+        }
+        for (Map<String, Object> indexInfo : indexInfos) {
+            if (vectorIndexes.contains(StringUtils.trim((String) indexInfo.get("INDEX_NAME")))) {
+                log.info("Distance of vector index {} is not in the catalog of Db2, cosine is taken",
+                        indexInfo.get("INDEX_NAME"));
+                indexInfo.put(VectorIndex.DETAIL_KEY, new VectorIndex(VectorIndex.Kind.HNSW,
+                        VectorIndex.Distance.COSINE, null).toString());
+            }
+        }
+        return indexInfos;
     }
 
     @Override
