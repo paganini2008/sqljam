@@ -115,19 +115,4 @@ class DbTypeCellsTest {
         }).stream().flatMap(listView -> headers(listView).stream()).collect(Collectors.toList());
         assertEquals(List.of("Relational databases", "OLAP databases"), headers);
     }
-
-    @Test
-    void showsHeadersInProfileList() {
-        ListView<ConnectionProfile> listView = FxTestSupport.call(() -> {
-            ListView<ConnectionProfile> profiles = new ListView<>();
-            DbTypeCells.setupProfileList(profiles);
-            profiles.getItems().setAll(profile("Orders", DbType.MYSQL), profile("Local", DbType.H2),
-                    profile("Lake", DbType.DUCKDB));
-            return profiles;
-        });
-        assertEquals(List.of("Relational databases", "OLAP databases"), headers(listView));
-        // Without OLAP data sources only one header is shown
-        FxTestSupport.run(() -> listView.getItems().remove(2));
-        assertEquals(List.of("Relational databases"), headers(listView));
-    }
 }

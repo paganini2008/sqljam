@@ -92,8 +92,8 @@ public class PrimaryKeyMetaData implements TiedMetaData {
         String tableName = getDialect().getTargetTableName(getTableName());
         // Names of copied keys are derived from the target table
         String pkName = getDialect().isTableRenamed() ? null : (String) detail.get("PK_NAME");
-        String statement = getDialect().getCreatePrimaryKeyStatement(catalogName, schemaName, tableName, columnName,
-                pkName);
+        String statement = getDialect().getCreatePrimaryKeyStatement(catalogName, schemaName, tableName, getDialect()
+                .getTargetColumnNames(getTableName(), columnName), pkName);
         return new String[]{statement};
     }
 

@@ -37,6 +37,7 @@ import java.util.HashMap;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import com.github.sqljam.impexp.db.DuckDBDialect;
 import com.github.sqljam.impexp.db.H2Dialect;
 import com.github.sqljam.impexp.db.MySQLDialect;
 import com.github.sqljam.impexp.db.OracleDialect;
@@ -281,6 +282,11 @@ class DialectTest {
                         "users", new String[]{"id"}, "SET NULL", "CASCADE"));
         assertEquals("INSERT INTO orders(id,name) VALUES (?,?)",
                 dialect.getInsertTableStatement(null, null, "orders", new String[]{"id", "name"}));
+        // Statements of several rows, one row a statement unless the database runs batches row by row
+        assertEquals("INSERT INTO orders(id,name) VALUES (?,?),(?,?),(?,?)",
+                dialect.getInsertTableStatement(null, null, "orders", new String[]{"id", "name"}, 3));
+        assertEquals(1, dialect.getRowsPerInsert());
+        assertEquals(256, new DuckDBDialect().getRowsPerInsert());
         assertEquals("SELECT id,name FROM src.orders",
                 dialect.getSelectTableStatement(null, "src", "orders", new String[]{"id", "name"}));
         assertEquals("SELECT COUNT(*) FROM orders", dialect.getCountTableStatement(null, null, "orders"));

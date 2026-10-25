@@ -35,7 +35,7 @@ import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.utils.SshSettings;
-import com.github.sqljam.utils.SshTunnels;
+import com.github.sqljam.utils.SshUtils;
 
 /**
  * @Description: DatabaseInfo reads the overview and the health of a data source for its info tab: the server, the
@@ -130,7 +130,7 @@ public class DatabaseInfo {
                 // The url is of the local end of the tunnel
                 SshSettings ssh = profile.getSsh();
                 server.put("SSH tunnel", ssh.getUsername() + "@" + ssh.getHost() + ":" + ssh.getEffectivePort()
-                        + ", local port " + SshTunnels.getLocalPort(profile.getId()));
+                        + ", local port " + SshUtils.getLocalPort(profile.getId()));
             }
             sections.put("Server", server);
 

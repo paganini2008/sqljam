@@ -44,10 +44,14 @@ import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.model.TransferReport;
 import com.github.sqljam.face.view.AppContext;
+import com.github.sqljam.face.view.ColumnMappingDialog;
 import com.github.sqljam.face.view.FxTestSupport;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.vdb.VdbExportConfiguration;
 import com.github.sqljam.vdb.VdbField;
+import com.github.sqljam.vdb.VdbFieldMapping;
 import com.github.sqljam.vdb.VdbQuery;
 import com.github.sqljam.vdb.VdbType;
 import com.github.sqljam.vdb.it.VdbServer;
@@ -411,6 +415,65 @@ class VdbImportDialogTest {
         FxTestSupport.waitUntil(() -> Window.getWindows().stream().anyMatch(window -> window.isShowing()
                 && window.getScene() != null && window.getScene().getRoot().lookup("#progressStatus") != null));
         dialog = null;
+
+        // The report of the import is in the history: the collection is its table, its rows are counted
+        FxTestSupport.waitUntil(() -> !context.getReportStore().list().isEmpty());
+        TransferReport report = context.getReportStore().list().get(0);
+        assertEquals(TransferReport.Kind.VECTOR_IMPORT, report.getKind());
+        assertEquals(TransferReport.Status.COMPLETED, report.getStatus(), report.getFailure());
+        assertTrue(report.getSource().startsWith(profile.getName() + " (QDRANT)"), report.getSource());
+        assertTrue(report.getTarget().startsWith("Target DuckDB"), report.getTarget());
+        assertEquals("true", report.getOptions().get("Recreate tables"));
+        TransferReport.TableReport table = report.getTables().stream().filter(item -> "sjvt_ui".equals(item
+                .getName())).findFirst().orElseThrow();
+        assertEquals(3, table.getWritten());
+        assertEquals(3L, table.getTargetRows());
+        assertTrue(table.getVerified());
+    }
+
+    /**
+     * Fields of the checked collections are mapped, the id is always imported, the mappings go with the import
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void mapsFieldsOfCollections() throws Exception {
+        assumeTrue(SERVER.isAvailable());
+        VdbProfile profile = profile();
+        store.saveProfile(profile, true);
+        dialog = FxTestSupport.call(() -> {
+            VdbImportDialog created = new VdbImportDialog(stage, context, store, profile, null, List.of(), null);
+            created.show();
+            return created;
+        });
+        TableView<VdbImportDialog.CollectionItem> collections = node("vdbCollections");
+        FxTestSupport.waitUntil(() -> !collections.getItems().isEmpty());
+        // Nothing is checked
+        FxTestSupport.run(() -> ((Button) node("vdbMapColumnsButton")).fire());
+        assertTrue(status().contains("Check the collections"), status());
+        FxTestSupport.run(() -> collections.getItems().stream().filter(item -> item.name.equals(SERVER
+                .getCollection())).forEach(item -> item.selected.set(true)));
+        FxTestSupport.fireLater((Button) node("vdbMapColumnsButton"));
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().stream().anyMatch(pane -> pane.lookup(
+                "#mappingColumnTable") != null));
+        DialogPane mapping = FxTestSupport.getDialogPanes().stream().filter(pane -> pane.lookup(
+                "#mappingColumnTable") != null).findFirst().orElseThrow();
+        TableView<ColumnMappingDialog.Row> fields = (TableView<ColumnMappingDialog.Row>) mapping.lookup(
+                "#mappingColumnTable");
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> !fields.getItems().isEmpty()));
+        assertTrue(FxTestSupport.call(() -> fields.getItems().stream().anyMatch(row -> row.getColumn().isRequired())));
+        FxTestSupport.run(() -> {
+            fields.getItems().stream().filter(row -> row.getColumn().getName().equals("title")).forEach(row -> row
+                    .targetNameProperty().set("headline"));
+            fields.getItems().stream().filter(row -> row.getColumn().getName().equals("tags")).forEach(row -> row
+                    .importedProperty().set(false));
+            ((Button) mapping.lookupButton(ButtonType.OK)).fire();
+        });
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> ((Label) node("vdbMappingLabel")).getText().equals(
+                "2 columns are mapped")));
+        VdbExportConfiguration configuration = FxTestSupport.call(dialog::buildConfiguration);
+        assertEquals(new VdbFieldMapping("headline", null, false), configuration.getMappings().get(0).getFields()
+                .get("title"));
+        assertEquals(VdbFieldMapping.skip(), configuration.getMappings().get(0).getFields().get("tags"));
     }
 
     @Test
@@ -484,7 +547,12 @@ class VdbImportDialogTest {
         store.saveProfile(read, true);
         assertEquals(read.getApiKey(), new VdbProfileStore(new File(dir, VdbProfileStore.FILE_NAME)).getProfiles()
                 .get(0).getApiKey());
-        assertFalse(read.toString().contains(String.valueOf(read.getApiKey())));
+        // Secrets are never in the text of a profile, whether the server of the tests is reachable or not
+        VdbProfile secret = read.copy();
+        secret.setApiKey("sj-api-key-secret");
+        secret.setPassword("sj-password-secret");
+        assertFalse(secret.toString().contains("sj-api-key-secret") || secret.toString().contains(
+                "sj-password-secret"), secret.toString());
         assertEquals(read, read.copy());
         assertEquals(read.hashCode(), read.copy().hashCode());
         store.removeProfile(read.getId());

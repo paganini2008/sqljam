@@ -188,7 +188,7 @@ public enum VdbServer {
         });
     }
 
-    RestClient rest() {
+    public RestClient rest() {
         RestClient rest = new RestClient(Settings.get(this, "url"), true, 120);
         String apiKey = Settings.get(this, "apiKey");
         switch (type) {

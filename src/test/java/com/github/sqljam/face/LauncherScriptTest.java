@@ -52,6 +52,19 @@ class LauncherScriptTest {
         assertTrue(text.contains("start \"SqlJam\" \"%JAVAW%\""));
     }
 
+    /**
+     * sqljam.bat sync runs in the console with java.exe, so that the Task Scheduler gets its output and exit code
+     */
+    @Test
+    void runsSyncTasksInTheConsole() throws Exception {
+        String text = Files.readString(SCRIPT.toPath(), StandardCharsets.UTF_8);
+        assertTrue(text.contains("if /i \"%~1\"==\"sync\" goto sync"));
+        assertTrue(text.contains("\"%JAVA%\" %VMOPTIONS% -Dsqljam.vmoptions.applied=true %JAVA_OPTS% -jar \"%JAR%\" %*"));
+        assertTrue(text.contains("endlocal & exit /b %CODE%"));
+        assertTrue(Files.readString(new File("src/bin/sqljam.sh").toPath(), StandardCharsets.UTF_8).contains(
+                "sqljam.sh sync --task NAME"));
+    }
+
     @Test
     void expandsNoPathInBlocks() throws Exception {
         List<String> lines = Files.readAllLines(SCRIPT.toPath(), StandardCharsets.UTF_8);

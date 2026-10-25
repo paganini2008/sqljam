@@ -15,6 +15,7 @@
  */
 package com.github.sqljam.vdb.dialect;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -22,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.LinkedHashMap;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.sql.Timestamp;
@@ -36,6 +38,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import com.github.sqljam.vdb.VdbFieldMapping;
 import com.github.sqljam.vdb.DefaultVdbMetaDataVisitor;
 import com.github.sqljam.vdb.VdbClient;
 import com.github.sqljam.vdb.VdbCollection;
@@ -151,6 +154,78 @@ class VdbDialectTest {
         VdbDdlScripter scripter = new VdbDdlScripter();
         metaData.getServerMetaData().accept(new DefaultVdbMetaDataVisitor(configuration, scripter));
         return scripter.getTable(metaData.getSchemaName(), metaData.getTableName());
+    }
+
+    /**
+     * Scripts of the collection with the fields which the user mapped
+     */
+    static VdbDdlScripter.Table mappedScripts(VdbDialect dialect, Map<String, VdbFieldMapping> fields)
+            throws Exception {
+        VdbCollection collection = collection();
+        VdbExportConfiguration configuration = new VdbExportConfiguration();
+        configuration.setTargetSchema("sjit_dst");
+        configuration.setTableRecreated(true);
+        configuration.setDialect(dialect);
+        configuration.addCollection(collection.getName(), null);
+        configuration.getMappings().get(0).getFields().putAll(fields);
+        VdbCollectionMetaData metaData = new VdbServerMetaData(client(collection), dialect, configuration)
+                .getCollectionMetaData().get(0);
+        VdbDdlScripter scripter = new VdbDdlScripter();
+        metaData.getServerMetaData().accept(new DefaultVdbMetaDataVisitor(configuration, scripter));
+        return scripter.getTable(metaData.getSchemaName(), metaData.getTableName());
+    }
+
+    @ParameterizedTest
+    @MethodSource("dialects")
+    void mapsFields(VdbDialect dialect) throws Exception {
+        Map<String, VdbFieldMapping> fields = new LinkedHashMap<>();
+        fields.put("title", new VdbFieldMapping(" headline ", null, false));
+        fields.put("c_text", new VdbFieldMapping(null, "SJ_TEXT_TYPE", false));
+        fields.put("half", VdbFieldMapping.skip());
+        VdbDdlScripter.Table table = mappedScripts(dialect, fields);
+        String create = table.getCreateTableScript();
+        assertTrue(create.contains(dialect.getIdentifier("headline")), create);
+        // Title keeps its name, title is another column now
+        assertTrue(create.contains(dialect.getIdentifier("Title")) && !create.contains("Title_2"), create);
+        assertTrue(create.contains("SJ_TEXT_TYPE"), create);
+        // The skipped vector has no column and no index
+        assertFalse(create.contains(dialect.getIdentifier("half")), create);
+        assertTrue(table.getIndexScripts().stream().noneMatch(script -> script.contains(dialect.getIdentifier(
+                "half"))), table.getIndexScripts().toString());
+
+        // Mappings which change nothing, and no mappings, give the same scripts
+        Map<String, VdbFieldMapping> same = new LinkedHashMap<>();
+        same.put("title", new VdbFieldMapping(null, " ", false));
+        assertEquals(scripts(dialect, true).getScripts(), mappedScripts(dialect, same).getScripts());
+        assertEquals(scripts(dialect, true).getScripts(), mappedScripts(dialect, Map.of()).getScripts());
+    }
+
+    @Test
+    void refusesFieldMappingsWhichCanNotBeImported() {
+        VdbDialect dialect = full(new PostgreSQLVdbDialect());
+        VdbException missing = assertThrows(VdbException.class, () -> mappedScripts(dialect, Map.of("nothing",
+                VdbFieldMapping.skip())));
+        assertTrue(missing.getMessage().contains("Field nothing of the mapping is not a field of collection sjv-doc"),
+                missing.getMessage());
+        VdbException id = assertThrows(VdbException.class, () -> mappedScripts(dialect, Map.of("id",
+                VdbFieldMapping.skip())));
+        assertTrue(id.getMessage().contains("it can not be skipped"), id.getMessage());
+        Map<String, VdbFieldMapping> twice = new LinkedHashMap<>();
+        twice.put("title", new VdbFieldMapping("name", null, false));
+        twice.put("Title", new VdbFieldMapping("NAME", null, false));
+        VdbException duplicate = assertThrows(VdbException.class, () -> mappedScripts(dialect, twice));
+        assertTrue(duplicate.getMessage().contains("are both mapped to"), duplicate.getMessage());
+        // An unmapped field gives way to a name which the user chose
+        Map<String, VdbFieldMapping> taken = new LinkedHashMap<>();
+        taken.put("c_text", new VdbFieldMapping("long_text", null, false));
+        taken.put("long_text", VdbFieldMapping.skip());
+        assertDoesNotThrow(() -> mappedScripts(dialect, taken));
+
+        VdbFieldMapping mapping = new VdbFieldMapping(" a ", "", false);
+        assertEquals(new VdbFieldMapping("a", null, false), mapping);
+        assertEquals(mapping.hashCode(), new VdbFieldMapping("a", null, false).hashCode());
+        assertFalse(mapping.equals("a"));
+        assertTrue(VdbFieldMapping.skip().toString().contains("skipped=true"));
     }
 
     @ParameterizedTest

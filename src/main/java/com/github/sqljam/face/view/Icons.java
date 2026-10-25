@@ -41,6 +41,7 @@ public final class Icons {
     public static final String COPY = "fth-copy";
     public static final String CANCEL = "fth-x";
     public static final String SEARCH = "fth-search";
+    public static final String HISTORY = "fth-clock";
     public static final String START = "fth-play";
     public static final String FOLDER = "fth-folder";
     public static final String SETTINGS = "fth-settings";

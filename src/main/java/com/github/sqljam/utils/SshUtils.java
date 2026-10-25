@@ -18,9 +18,11 @@ package com.github.sqljam.utils;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.net.SocketAddress;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyPair;
+import java.security.PublicKey;
 import java.time.Duration;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,19 +30,20 @@ import java.util.concurrent.ConcurrentHashMap;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.sshd.client.SshClient;
 import org.apache.sshd.client.channel.ChannelDirectTcpip;
-import org.apache.sshd.client.keyverifier.AcceptAllServerKeyVerifier;
 import org.apache.sshd.client.keyverifier.KnownHostsServerKeyVerifier;
 import org.apache.sshd.client.session.ClientSession;
 import org.apache.sshd.client.session.forward.ExplicitPortForwardingTracker;
 import org.apache.sshd.common.config.keys.FilePasswordProvider;
+import org.apache.sshd.common.config.keys.KeyUtils;
 import org.apache.sshd.common.keyprovider.FileKeyPairProvider;
+import org.apache.sshd.common.session.helpers.AbstractConnectionService;
 import org.apache.sshd.common.util.net.SshdSocketAddress;
 import org.apache.sshd.core.CoreModuleProperties;
 import lombok.extern.slf4j.Slf4j;
 import com.github.sqljam.config.Config;
 
 /**
- * @Description: SshTunnels forwards a local port through an SSH server to the host and port of a data source, like
+ * @Description: SshUtils forwards a local port through an SSH server to the host and port of a data source, like
  *               the SSH tunnels of DBeaver and DataGrip. A tunnel is opened for a data source when it is first
  *               connected, shared by its connections and opened again when its settings change or its session ends.
  *               Host keys are trusted on first use and kept in a known hosts file, a changed host key is refused.
@@ -49,10 +52,14 @@ import com.github.sqljam.config.Config;
  * @Version 1.0.0
  */
 @Slf4j
-public final class SshTunnels {
+public final class SshUtils {
 
     static final Duration TIMEOUT = Duration.ofSeconds(15);
     static final Duration HEARTBEAT = Duration.ofSeconds(30);
+    /**
+     * Time which a closing tunnel gives the data on its way, e.g. the quit of a closed connection
+     */
+    static final Duration CLOSE_TIMEOUT = Duration.ofSeconds(2);
     public static final String LOCALHOST_ADDRESS = "127.0.0.1";
 
     private static final Map<String, Tunnel> TUNNELS = new ConcurrentHashMap<>();
@@ -63,10 +70,10 @@ public final class SshTunnels {
     private static Path knownHostsFile;
 
     static {
-        Runtime.getRuntime().addShutdownHook(new Thread(SshTunnels::closeAll, "sqljam-ssh-tunnels"));
+        Runtime.getRuntime().addShutdownHook(new Thread(SshUtils::closeAll, "sqljam-ssh-tunnels"));
     }
 
-    private SshTunnels() {
+    private SshUtils() {
     }
 
     /**
@@ -92,11 +99,26 @@ public final class SshTunnels {
             return tracker.getBoundAddress().getPort();
         }
 
+        /**
+         * No new connections are accepted, the connections which are closing (e.g. the quit of a closed JDBC
+         * connection) end before the session closes, an SSH server would refuse their last data otherwise
+         */
         void close() {
             try {
                 tracker.close();
             } catch (IOException e) {
                 log.debug("Unable to close port forwarding: {}", e.getMessage());
+            }
+            AbstractConnectionService connections = session.getService(AbstractConnectionService.class);
+            long deadline = System.currentTimeMillis() + CLOSE_TIMEOUT.toMillis();
+            while (connections != null && !connections.getChannels().isEmpty() && session.isOpen()
+                    && System.currentTimeMillis() < deadline) {
+                try {
+                    Thread.sleep(20);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
             }
             session.close(true);
         }
@@ -123,11 +145,28 @@ public final class SshTunnels {
     }
 
     private static KnownHostsServerKeyVerifier createVerifier() {
+        Path parent = getKnownHostsFile().toAbsolutePath().getParent();
+        try {
+            // A new home or a configured directory which does not exist yet keeps the host keys too
+            Files.createDirectories(parent);
+        } catch (IOException e) {
+            log.warn("Unable to create the directory of the known hosts {}: {}", parent, e.getMessage());
+        }
         // A new host is accepted and remembered, a changed key of a known host is refused
-        KnownHostsServerKeyVerifier verifier = new KnownHostsServerKeyVerifier(AcceptAllServerKeyVerifier.INSTANCE,
+        KnownHostsServerKeyVerifier verifier = new KnownHostsServerKeyVerifier(SshUtils::trustOnFirstUse,
                 getKnownHostsFile());
         verifier.setModifiedServerKeyAcceptor((session, address, entry, expected, actual) -> false);
         return verifier;
+    }
+
+    /**
+     * A host which is not known yet is trusted and remembered, its fingerprint is logged to be compared
+     */
+    static boolean trustOnFirstUse(ClientSession session, SocketAddress address, PublicKey key) {
+        if (log.isInfoEnabled()) {
+            log.info("Trusting the host key {} of {} on first use", KeyUtils.getFingerPrint(key), address);
+        }
+        return true;
     }
 
     private static synchronized SshClient getClient() {

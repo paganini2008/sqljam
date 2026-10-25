@@ -270,6 +270,16 @@ public abstract class AbstractFileImporter {
         }
 
         @Override
+        public void onRowSkipped(String catalogName, String schemaName, String tableName, String key, Throwable e) {
+            delegate.onRowSkipped(catalogName, schemaName, tableName, key, e);
+        }
+
+        @Override
+        public void onDdlExecuted(String statement, boolean successful) {
+            delegate.onDdlExecuted(statement, successful);
+        }
+
+        @Override
         public boolean isCancelled() {
             return delegate.isCancelled();
         }

@@ -320,10 +320,7 @@ class MainViewTest {
     }
 
     private MenuItem fileMenuItem(String id) {
-        return FxTestSupport.call(() -> {
-            Menu fileMenu = ((MenuBar) mainView.lookup(".menu-bar")).getMenus().get(0);
-            return fileMenu.getItems().stream().filter(item -> id.equals(item.getId())).findFirst().orElse(null);
-        });
+        return FxTestSupport.menuItem(mainView, id);
     }
 
     @Test
@@ -594,5 +591,87 @@ class MainViewTest {
         FxTestSupport.run(() -> mainView.openSqlTab(null));
         assertTrue(FxTestSupport.call(() -> tabs().getTabs().get(0).getText()).startsWith("SQL 2: "));
         FxTestSupport.run(() -> ((SqlTab) tabs().getTabs().get(0)).close());
+    }
+
+    private static boolean disabledOnShowing(MenuItem item) {
+        return FxTestSupport.call(() -> {
+            item.getParentMenu().getOnShowing().handle(new javafx.event.Event(Menu.ON_SHOWING));
+            return item.isDisable();
+        });
+    }
+
+    /**
+     * The menus of the main window: the actions of the toolbar and of the tree, switched off without a data source,
+     * the themes in the menu and in the toolbar, tabs closed together and the keys read from the menus
+     */
+    @Test
+    void offersActionsInMenus() {
+        assertEquals(List.of("File", "Database", "Transfer", "View", "Help"), FxTestSupport.call(() -> ((MenuBar)
+                mainView.lookup(".menu-bar")).getMenus().stream().map(Menu::getText).collect(Collectors.toList())));
+        MenuItem edit = FxTestSupport.menuItem(mainView, "action-editConnection-menu");
+        MenuItem connect = FxTestSupport.menuItem(mainView, "tree-connect-menu");
+        MenuItem disconnect = FxTestSupport.menuItem(mainView, "tree-disconnect-menu");
+        MenuItem disconnectAll = FxTestSupport.menuItem(mainView, "action-disconnectAll-menu");
+        MenuItem dashboard = FxTestSupport.menuItem(mainView, "action-dashboard-menu");
+        FxTestSupport.run(() -> tree().getSelectionModel().clearSelection());
+        assertTrue(disabledOnShowing(edit));
+        assertTrue(disabledOnShowing(connect));
+        assertTrue(disabledOnShowing(dashboard));
+
+        // A data source: connected by the menu, its table selected keeps it, disconnected again
+        TreeItem<DbNode> h2 = connection("Embedded H2");
+        FxTestSupport.run(() -> tree().getSelectionModel().select(h2));
+        assertFalse(disabledOnShowing(edit));
+        assertFalse(disabledOnShowing(connect));
+        assertTrue(disabledOnShowing(disconnect));
+        FxTestSupport.run(connect::fire);
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> tree().isConnected(h2)));
+        assertTrue(disabledOnShowing(connect));
+        assertFalse(disabledOnShowing(disconnectAll));
+        FxTestSupport.run(dashboard::fire);
+        InfoTab info = FxTestSupport.call(() -> (InfoTab) tabs().getSelectionModel().getSelectedItem());
+        assertTrue(FxTestSupport.call(() -> info.getDashboard() != null));
+        FxTestSupport.run(disconnectAll::fire);
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> !tree().isConnected(h2)));
+
+        // Disconnected: its info was closed with it
+        assertTrue(FxTestSupport.call(() -> tabs().getTabs().isEmpty()));
+        // Tabs: the others, then all of them, closed like by the user
+        FxTestSupport.run(() -> {
+            mainView.openHistory();
+            mainView.openSync();
+        });
+        assertEquals(2, FxTestSupport.call(() -> tabs().getTabs().size()).intValue());
+        FxTestSupport.run(FxTestSupport.menuItem(mainView, "action-closeOtherTabs-menu")::fire);
+        assertEquals(List.of("Sync Tasks"), FxTestSupport.call(() -> tabs().getTabs().stream().map(Tab::getText)
+                .collect(Collectors.toList())));
+        FxTestSupport.run(FxTestSupport.menuItem(mainView, "action-closeAllTabs-menu")::fire);
+        assertTrue(FxTestSupport.call(() -> tabs().getTabs().isEmpty()));
+        assertTrue(disabledOnShowing(FxTestSupport.menuItem(mainView, "action-closeTab-menu")));
+
+        // The theme of the toolbar is checked in the menu too, Next Theme goes on through the list
+        javafx.scene.control.MenuButton themes = FxTestSupport.call(() -> (javafx.scene.control.MenuButton) mainView
+                .lookup("#toolbarThemeButton"));
+        String second = ThemeManager.getThemeNames().get(1);
+        FxTestSupport.run(() -> themes.getItems().stream().filter(item -> second.equals(item.getText())).findFirst()
+                .orElseThrow().fire());
+        assertEquals(second, context.getSettings().getTheme());
+        assertTrue(FxTestSupport.call(() -> ((Menu) FxTestSupport.menuItem(mainView, "themeMenu")).getItems().stream()
+                .filter(item -> second.equals(item.getText())).map(item -> ((javafx.scene.control.RadioMenuItem) item)
+                        .isSelected()).findFirst().orElseThrow()));
+        FxTestSupport.run(FxTestSupport.menuItem(mainView, "action-nextTheme-menu")::fire);
+        assertEquals(ThemeManager.getThemeNames().get(2), context.getSettings().getTheme());
+        FxTestSupport.run(() -> mainView.applyTheme(ThemeManager.DEFAULT_THEME));
+
+        // The keys of the menus
+        List<String[]> shortcuts = FxTestSupport.call(mainView::getShortcuts);
+        assertTrue(shortcuts.stream().anyMatch(row -> row[0].equals("Transfer > Export...")), shortcuts.stream().map(
+                row -> row[0]).collect(Collectors.joining(", ")));
+        assertTrue(shortcuts.stream().anyMatch(row -> row[0].equals("Database > Refresh")));
+        FxTestSupport.run(FxTestSupport.menuItem(mainView, "help-shortcuts-menu")::fire);
+        javafx.scene.control.DialogPane pane = FxTestSupport.waitForDialogPane();
+        assertEquals(shortcuts.size(), FxTestSupport.call(() -> ((javafx.scene.control.TableView<?>) pane.lookup(
+                "#shortcutsTable")).getItems().size()).intValue());
+        FxTestSupport.closeDialog(javafx.scene.control.ButtonType.OK);
     }
 }

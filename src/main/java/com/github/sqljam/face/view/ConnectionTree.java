@@ -15,6 +15,9 @@
  */
 package com.github.sqljam.face.view;
 
+import java.util.stream.Stream;
+import java.util.Optional;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -28,11 +31,13 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.kordamp.ikonli.javafx.FontIcon;
 import lombok.Setter;
+import com.github.sqljam.utils.SshSettings;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.DbCategory;
 import com.github.sqljam.impexp.DbType;
+import javafx.stage.Window;
 import javafx.application.Platform;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
@@ -288,6 +293,7 @@ public class ConnectionTree extends TreeView<DbNode> {
         ConnectionProfile profile = item.getValue().getProfile();
         ((LazyItem) item).unload();
         context.getSessionManager().closeSession(profile.getId());
+        rememberConnected(item.getValue(), false);
         if (onDisconnect != null) {
             onDisconnect.accept(profile);
         }
@@ -505,6 +511,111 @@ public class ConnectionTree extends TreeView<DbNode> {
         }
     }
 
+    private Window getWindow() {
+        return getScene() != null ? getScene().getWindow() : null;
+    }
+
+    /**
+     * The password of a data source which is not remembered is asked before it is connected, like DBeaver does.
+     * Database files without users (SQLite, DuckDB, Access) need none.
+     *
+     * @return false when it is cancelled
+     */
+    boolean askMissingPassword(ConnectionProfile profile) {
+        if (!needsPassword(profile)) {
+            return true;
+        }
+        Optional<CredentialsDialog.Credentials> credentials = CredentialsDialog.ask(getWindow(), profile.getName(),
+                Messages.get("connection.password"), StringUtils.defaultString(profile.getUsername()), null);
+        credentials.ifPresent(entered -> {
+            profile.setUsername(entered.getUsername());
+            profile.setPassword(entered.getSecret());
+            saveCredentials(profile, entered.isSaved());
+        });
+        return credentials.isPresent();
+    }
+
+    boolean needsPassword(ConnectionProfile profile) {
+        DbType dbType = profile.getDbType();
+        return profile.getPassword() == null && dbType != null && (!dbType.isFileBased() || dbType == DbType.H2)
+                && !context.getProfileRegistry().isPasswordRemembered(profile.getId());
+    }
+
+    /**
+     * Asks again for the secret which was refused: the password of the SSH tunnel or the key, the password of the
+     * database, or the key of a source of an extension
+     *
+     * @return true when a new secret is entered and the node is connected again
+     */
+    boolean askAfterFailure(DbNode node, Throwable error) {
+        if (node.getKind() == DbNode.Kind.SOURCE) {
+            return node.getSource().authenticate(getWindow(), error);
+        }
+        if (node.getKind() != DbNode.Kind.CONNECTION) {
+            return false;
+        }
+        ConnectionProfile profile = node.getProfile();
+        String message = StringUtils.abbreviate(StringUtils.defaultString(error.getMessage()), 300);
+        Optional<CredentialsDialog.Credentials> credentials;
+        if (profile.isSshEnabled() && AuthFailures.isSshFailure(error)) {
+            SshSettings ssh = profile.getSsh();
+            boolean key = ssh.getAuthentication() == SshSettings.Authentication.KEY;
+            credentials = CredentialsDialog.ask(getWindow(), profile.getName(), Messages.get(key
+                    ? "credentials.ssh.passphrase" : "credentials.ssh.password"), null, message);
+            credentials.ifPresent(entered -> ssh.setSecret(entered.getSecret()));
+        } else if (AuthFailures.isDatabaseFailure(error)) {
+            credentials = CredentialsDialog.ask(getWindow(), profile.getName(), Messages.get("connection.password"),
+                    StringUtils.defaultString(profile.getUsername()), message);
+            credentials.ifPresent(entered -> {
+                profile.setUsername(entered.getUsername());
+                profile.setPassword(entered.getSecret());
+            });
+        } else {
+            return false;
+        }
+        credentials.ifPresent(entered -> {
+            // The session of the refused secret is closed, the next one connects with the new secret
+            context.getSessionManager().closeSessionNow(profile.getId());
+            saveCredentials(profile, entered.isSaved());
+        });
+        return credentials.isPresent();
+    }
+
+    private void saveCredentials(ConnectionProfile profile, boolean saved) {
+        try {
+            context.getProfileRegistry().saveProfile(profile, saved);
+        } catch (IOException e) {
+            Dialogs.showError(getWindow(), Messages.get("connection.saveError"), e);
+        }
+    }
+
+    /**
+     * Data sources which are connected when the window is closed are connected again when it is opened
+     */
+    void rememberConnected(DbNode node, boolean connected) {
+        String id = node.getProfile() != null ? node.getProfile().getId() : node.getSource().getId();
+        List<String> ids = context.getSettings().getConnectedSources();
+        boolean changed = connected ? !ids.contains(id) && ids.add(id) : ids.remove(id);
+        if (changed) {
+            context.saveSettings();
+        }
+    }
+
+    /**
+     * Expands the data sources of the ids, which connects them, e.g. those connected when SqlJam was closed
+     */
+    public void restoreConnected(List<String> ids) {
+        for (String id : new ArrayList<>(ids)) {
+            Stream.concat(connectionItems.stream(), sourceItems.values().stream().flatMap(List::stream))
+                    .filter(item -> id.equals(item.getValue().getProfile() != null ? item.getValue().getProfile()
+                            .getId() : item.getValue().getSource().getId())).findFirst()
+                    .ifPresentOrElse(item -> item.setExpanded(true), () -> {
+                        // A data source which was deleted meanwhile
+                        context.getSettings().getConnectedSources().remove(id);
+                    });
+        }
+    }
+
     private class LazyItem extends TreeItem<DbNode> {
 
         private boolean loaded;
@@ -545,17 +656,43 @@ public class ConnectionTree extends TreeView<DbNode> {
         }
 
         private void load() {
+            DbNode node = getValue();
+            if (node.getKind() == DbNode.Kind.CONNECTION && needsPassword(node.getProfile())) {
+                // Asked after the expansion is handled, a dialog may not wait during a layout
+                loading = true;
+                Platform.runLater(() -> {
+                    loading = false;
+                    if (askMissingPassword(node.getProfile())) {
+                        connect(node);
+                    } else {
+                        // Cancelled, nothing is connected
+                        setExpanded(false);
+                    }
+                });
+                return;
+            }
+            connect(node);
+        }
+
+        private void connect(DbNode node) {
             loading = true;
-            TaskRunner.run(() -> loadChildren(getValue()), children -> {
+            TaskRunner.run(() -> loadChildren(node), children -> {
                 loading = false;
                 loaded = true;
                 getChildren().setAll(children);
+                if (node.getKind() == DbNode.Kind.CONNECTION || node.getKind() == DbNode.Kind.SOURCE) {
+                    rememberConnected(node, true);
+                }
             }, e -> {
                 loading = false;
+                // A secret which the database or the SSH server refused is asked again, then connected again
+                if (askAfterFailure(node, e)) {
+                    connect(node);
+                    return;
+                }
                 getChildren().setAll(Collections.singletonList(new TreeItem<>(DbNode.message(Messages.format(
                         "tree.error", e.getMessage())))));
-                Dialogs.showError(getScene() != null ? getScene().getWindow() : null,
-                        Messages.format("tree.loadError", getValue().getLabel()), e);
+                Dialogs.showError(getWindow(), Messages.format("tree.loadError", node.getLabel()), e);
             });
         }
     }

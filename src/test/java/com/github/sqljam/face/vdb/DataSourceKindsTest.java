@@ -34,6 +34,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import org.testfx.util.WaitForAsyncUtils;
+import com.github.sqljam.utils.RestException;
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.view.AppContext;
@@ -43,7 +44,6 @@ import com.github.sqljam.face.view.DataSourceExtension;
 import com.github.sqljam.face.view.DbIcons;
 import com.github.sqljam.face.view.DbNode;
 import com.github.sqljam.face.view.FxTestSupport;
-import com.github.sqljam.face.view.LoginView;
 import com.github.sqljam.impexp.DbCategory;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.vdb.VdbType;
@@ -213,6 +213,30 @@ class DataSourceKindsTest {
                 .getLabel()).collect(Collectors.toList()));
     }
 
+    /**
+     * A key which the database refused, e.g. one which is not remembered, is asked and saved
+     */
+    @Test
+    void asksRefusedKey() {
+        DataSourceExtension.Source source = FxTestSupport.call(() -> extension.getSources().get(0));
+        boolean[] asked = new boolean[1];
+        Platform.runLater(() -> asked[0] = source.authenticate(stage, new RestException("Qdrant: 401", 401, null)));
+        FxTestSupport.waitUntil(() -> dialogs().stream().anyMatch(pane -> pane.lookup("#credentialsSecretField")
+                != null));
+        DialogPane pane = dialogs().stream().filter(candidate -> candidate.lookup("#credentialsSecretField")
+                != null).findFirst().orElseThrow();
+        // An API key has no user
+        assertNull(pane.lookup("#credentialsUsernameField"));
+        FxTestSupport.run(() -> {
+            ((TextField) pane.lookup("#credentialsSecretField")).setText("new-key");
+            ((Button) pane.lookupButton(ButtonType.OK)).fire();
+        });
+        FxTestSupport.waitUntil(() -> asked[0]);
+        assertEquals("new-key", store.getProfiles().get(0).getApiKey());
+        // Other errors ask nothing
+        assertFalse(FxTestSupport.call(() -> source.authenticate(stage, new IllegalStateException("down"))));
+    }
+
     @Test
     void filtersDataSources() {
         TreeItem<DbNode> h2 = FxTestSupport.call(() -> group("Relational databases").getChildren().get(0));
@@ -351,53 +375,6 @@ class DataSourceKindsTest {
         assertTrue(Window.getWindows().stream().noneMatch(window -> window.isShowing() && window != stage));
     }
 
-    @Test
-    @SuppressWarnings("unchecked")
-    void listsVectorDatabasesOnLoginPage() {
-        Object[] loggedIn = {"none"};
-        LoginView login = FxTestSupport.call(() -> {
-            LoginView view = new LoginView(context, profile -> loggedIn[0] = profile);
-            stage.setScene(new Scene(view, 900, 700));
-            return view;
-        });
-        ListView<Object> list = (ListView<Object>) login.lookup("#profileList");
-        assertEquals(List.of("Shop H2", "Lake DuckDB", "Docs Qdrant"), FxTestSupport.call(() -> list.getItems()
-                .stream().map(LoginView::nameOf).collect(Collectors.toList())));
-        // A vector database shows its fields, the category follows it
-        FxTestSupport.run(() -> list.getSelectionModel().select(2));
-        ComboBox<Object> categories = (ComboBox<Object>) login.lookup("#categoryCombo");
-        assertEquals(extension.getClass(), FxTestSupport.call(() -> categories.getValue().getClass()));
-        assertEquals("Docs Qdrant", FxTestSupport.call(() -> ((TextField) login.lookup("#nameField")).getText()));
-        assertEquals("http://127.0.0.1:1", FxTestSupport.call(() -> ((TextField) login.lookup("#vdbUrlField"))
-                .getText()));
-        // The vector database is not reachable, the login waits
-        FxTestSupport.fireLater((Button) login.lookup("#loginButton"));
-        FxTestSupport.waitUntil(() -> ((Label) login.lookup("#formStatusLabel")).getStyleClass().contains(
-                "status-error"));
-        assertEquals("none", loggedIn[0]);
-        // Another category chosen by the user is a new data source: no name, nothing selected in the list
-        FxTestSupport.run(() -> categories.setValue(DbCategory.OLAP));
-        assertEquals("", FxTestSupport.call(() -> ((TextField) login.lookup("#nameField")).getText()));
-        assertNull(FxTestSupport.call(() -> list.getSelectionModel().getSelectedItem()));
-        // A relational data source shows the JDBC fields again
-        FxTestSupport.run(() -> list.getSelectionModel().select(0));
-        assertEquals(DbCategory.RELATIONAL, FxTestSupport.call(categories::getValue));
-        // Search by type
-        FxTestSupport.run(() -> ((TextField) login.lookup("#searchField")).setText("qdrant"));
-        assertEquals(1, FxTestSupport.call(() -> list.getItems().size()));
-        // Deleted after the confirmation
-        FxTestSupport.run(() -> list.getSelectionModel().select(0));
-        FxTestSupport.fireLater((Button) login.lookup("#deleteButton"));
-        FxTestSupport.waitUntil(() -> !dialogs().isEmpty());
-        press(dialogs().get(0), ButtonType.OK);
-        FxTestSupport.waitUntil(() -> list.getItems().isEmpty());
-        assertTrue(new VdbProfileStore(new File(dir, VdbProfileStore.FILE_NAME)).getProfiles().isEmpty());
-    }
-
-    /**
-     * Vector databases are sources only: no target of an import or of an export is a vector database, and a vector
-     * database is imported into a database only
-     */
     @Test
     @SuppressWarnings("unchecked")
     void neverOffersVectorDatabasesAsTargets() {

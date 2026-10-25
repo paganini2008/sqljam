@@ -38,6 +38,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
+import com.github.sqljam.face.model.SyncTask;
 import com.github.sqljam.face.Banner;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.service.ExampleDatabase;
@@ -55,6 +56,7 @@ import javafx.geometry.Bounds;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.Scene;
+import javafx.scene.control.MenuBar;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBase;
 import javafx.scene.control.CheckBox;
@@ -85,23 +87,19 @@ import javafx.stage.Stage;
 import javafx.stage.Window;
 
 /**
- * @Description: TutorialVideo records the tutorial video of SqlJam with the example database: connect, query rows,
- *               export into CSV files, import the package into PostgreSQL (with a partitioned table in the tree),
- *               query with the SQL editor, export directly into SQL Server
- *               (its data source created from a pasted JDBC URL, skipping existing rows and rows with errors).
- *               Imports run in one transaction, the package import is confirmed before its commit. Then the vector
- *               databases: the filter of the tree, a Qdrant collection page by page, conditions, nearest
- *               neighbors and whole values, its import into PostgreSQL, the tenants of Weaviate and the Info pages.
- *               It starts with the name, the version (-Dvideo.version) and what SqlJam is for. Subtitles are in
- *               English, the background music is generated. It runs about 4 minutes, half of them SQL.
- *               It is recorded once per major version, it is not a test of the build (the name does not
- *               end with Test), run it by
- *               mvn test -Dtest=TutorialVideo -Dvideo.file=docs/assets/sqljam-tutorial.mp4
+ * @Description: TutorialVideo records the three tutorial videos of SqlJam, about 2 minutes each, for users, with
+ *               generated music and English subtitles, starting with the name, the version (-Dvideo.version)
+ *               and the subject: SQL databases (query the example, export into CSV files, import the package
+ *               into PostgreSQL with a partitioned table in the tree, the SQL editor, a direct copy into SQL
+ *               Server), vector databases (the filter of the tree, a Qdrant collection page by page, conditions,
+ *               nearest neighbors and whole values, its import into PostgreSQL, the tenants of Weaviate, the info)
+ *               and the scheduled sync (a task of the example into PostgreSQL, the first and the next run, their
+ *               reports, the system scheduler and the history). They are recorded once per major version, they
+ *               are not tests of the build (the name does not end with Test), run them by
+ *               mvn test -Pui -Dtest=TutorialVideo -Dvideo.dir=docs/assets
  *               The windows are shown on the screen while recording, the target databases are those of the
  *               integration tests (-Dvideo.postgresql.url, -Dvideo.sqlserver.url, user and password by
  *               -Dvideo.username and -Dvideo.password), the vector databases those of it-vdb-test.properties
- *               (Qdrant and Weaviate). Recorded tables and collections are
- *               dropped afterwards and an existing table of the same name stops the recording.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -160,6 +158,7 @@ class TutorialVideo {
      * Tables are dropped only after the check found none of them, tables of the user are never touched
      */
     private boolean targetsChecked;
+    private boolean vectorsCreated;
 
     @Start
     void start(Stage stage) throws Exception {
@@ -206,53 +205,267 @@ class TutorialVideo {
 
     @AfterEach
     void close() throws Exception {
+        context.closeSyncScheduler();
         context.getSessionManager().closeAll();
         FxTestSupport.closeAllDialogs();
         if (targetsChecked) {
             dropTables();
+        }
+        if (vectorsCreated) {
             VECTOR_SERVER.dropFixture();
             TENANT_SERVER.dropPartitionedFixture();
         }
         FileUtils.deleteQuietly(packageDir);
     }
 
-    @Test
-    void record() throws Exception {
-        checkTargets();
-        targetsChecked = true;
-        VECTOR_SERVER.createFixture();
-        TENANT_SERVER.createPartitionedFixture();
+    /**
+     * Steps of a video between its title and its end
+     */
+    @FunctionalInterface
+    private interface Steps {
+        void run() throws Exception;
+    }
+
+    /**
+     * Records one video of about 2 minutes: its title, its steps and the end, with music and subtitles
+     */
+    private void record(String name, String subject, Steps steps) throws Exception {
         File work = new File(System.getProperty("video.work", "target/video"));
         work.mkdirs();
         packageDir = new File(work, "shop-export");
         FileUtils.deleteQuietly(packageDir);
-        File output = new File(System.getProperty("video.file", "target/video/sqljam-tutorial.mp4"));
+        File output = new File(System.getProperty("video.dir", "target/video"), "sqljam-" + name + ".mp4");
+        output.getParentFile().mkdirs();
         recorder = FxTestSupport.call(() -> new VideoRecorder(stage, System.getProperty("ffmpeg", "ffmpeg"), 1.25,
                 24, 100));
-        recorder.start(new File(work, "raw.mp4"));
-
-        title();
-        connect();
-        query();
-        exportFiles();
-        importPackage();
-        sqlQuery();
-        exportSqlServer();
-        vectorDatabase();
+        recorder.start(new File(work, "raw-" + name + ".mp4"));
+        title(subject);
+        steps.run();
         outro();
-
         recorder.stop();
-        File music = new File(work, "music.wav");
+        File music = new File(work, "music-" + name + ".wav");
         TutorialMusic.write(music, recorder.getDurationSeconds() + 2);
         recorder.finish(output, music, System.getProperty("video.font", "Helvetica Neue"));
         assertTrue(output.length() > 0);
-        assertTrue(recorder.getDurationSeconds() < 240, "The video is longer than 4 minutes");
+        assertTrue(recorder.getDurationSeconds() < 150, "The video is longer than 2.5 minutes: " + recorder
+                .getDurationSeconds());
+    }
+
+    /**
+     * SQL databases: query, export files, import the package, the SQL editor and a direct copy
+     */
+    @Test
+    void recordSql() throws Exception {
+        checkTargets();
+        targetsChecked = true;
+        record("sql", "Relational and OLAP databases", () -> {
+            connect();
+            query();
+            exportFiles();
+            importPackage();
+            sqlQuery();
+            exportSqlServer();
+        });
+    }
+
+    /**
+     * Vector databases: the tree, a collection, its import into PostgreSQL, tenants and the info
+     */
+    @Test
+    void recordVectors() throws Exception {
+        checkVectorTarget();
+        targetsChecked = true;
+        VECTOR_SERVER.createFixture();
+        TENANT_SERVER.createPartitionedFixture();
+        vectorsCreated = true;
+        record("vectors", "Vector databases", () -> {
+            connect();
+            vectorDatabase();
+        });
+    }
+
+    /**
+     * Scheduled sync of the example into PostgreSQL, its reports and the history
+     */
+    @Test
+    void recordSync() throws Exception {
+        checkSyncTarget();
+        targetsChecked = true;
+        record("sync", "Scheduled sync and migration reports", () -> {
+            connect();
+            sync();
+        });
+    }
+
+    /**
+     * Opens the File menu a moment and runs its item of the id
+     */
+    private void fileMenu(String id) throws Exception {
+        MenuBar bar = (MenuBar) onFx(() -> mainView.lookup(".menu-bar"));
+        javafx.scene.control.MenuItem item = FxTestSupport.menuItem(mainView, id);
+        javafx.scene.control.Menu menu = item.getParentMenu();
+        int index = onFx(() -> bar.getMenus().indexOf(menu));
+        // The button of the menu in the menu bar
+        Node button = waitFor(() -> {
+            bar.applyCss();
+            bar.layout();
+            List<Node> buttons = new ArrayList<>(bar.lookupAll(".menu"));
+            return buttons.size() > index ? buttons.get(index) : null;
+        });
+        moveTo(button);
+        recorder.click();
+        FxTestSupport.run(menu::show);
+        pause(1300);
+        FxTestSupport.run(() -> {
+            menu.hide();
+            item.fire();
+        });
+        pause(900);
+    }
+
+    private SyncTask syncTask() {
+        return context.getSyncScheduler().getStore().getTasks().get(0);
+    }
+
+    /**
+     * Runs the task of the list now and waits for its end
+     */
+    private void runSync(SyncTab tab) throws Exception {
+        FxTestSupport.run(() -> tab.getTable().getSelectionModel().select(0));
+        long last = syncTask().getLastRunAt();
+        press(node(tab.getContent(), "syncRunButton"));
+        waitFor(() -> syncTask().getLastRunAt() != last && !context.getSyncScheduler().isRunning(syncTask().getId())
+                ? true : null);
+        FxTestSupport.run(tab::refresh);
+        pause(1600);
+    }
+
+    /**
+     * Changes of the shop meanwhile: orders are shipped, new orders and a new customer arrive
+     */
+    private void changeShop() throws SQLException {
+        ConnectionProfile example = onFx(() -> connection(ExampleDatabase.PROFILE_NAME).getValue().getProfile());
+        try (Connection connection = DriverManager.getConnection(example.getJdbcUrl(), example.getUsername(),
+                example.getPassword()); Statement statement = connection.createStatement()) {
+            statement.execute("UPDATE orders SET status = 'SHIPPED', updated_at = CURRENT_TIMESTAMP WHERE id IN "
+                    + "(1, 2, 3)");
+            statement.execute("INSERT INTO customers (name, email, city) VALUES ('Nina Video', "
+                    + "'nina.video@example.com', 'Lisbon')");
+            statement.execute("INSERT INTO orders (order_no, customer_id, status, total, created_at, updated_at) "
+                    + "VALUES ('SO-2026-90001', 1, 'NEW', 59.90, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP), "
+                    + "('SO-2026-90002', 2, 'NEW', 120.00, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)");
+        }
+    }
+
+    /**
+     * A sync task of the example into PostgreSQL: the first run copies all rows, the next one the changed rows,
+     * every run leaves a report, the system scheduler runs it when SqlJam is closed, the history lists the runs
+     */
+    @SuppressWarnings("unchecked")
+    private void sync() throws Exception {
+        recorder.caption("Keep a copy up to date: Transfer > Sync Tasks copies the rows which changed, on a schedule");
+        fileMenu("syncMenuItem");
+        SyncTab tab = onFx(() -> (SyncTab) ((TabPane) mainView.lookup("#tableTabs")).getSelectionModel()
+                .getSelectedItem());
+        pause(1200);
+        press(node(tab.getContent(), "syncAddButton"));
+        TextField name = waitFor(() -> (TextField) topNode("syncNameField"));
+        fitDialog(topWindow());
+        recorder.caption("The source: the tables of the shop");
+        type(name, "Shop to PostgreSQL");
+        ComboBox<ConnectionProfile> sources = (ComboBox<ConnectionProfile>) topNode("syncSourceCombo");
+        choose(sources, onFx(() -> sources.getItems().stream().filter(profile -> ExampleDatabase.PROFILE_NAME
+                .equals(profile.getName())).findFirst().orElseThrow()));
+        TableView<SyncTaskDialog.TableRow> tables = waitFor(() -> {
+            TableView<SyncTaskDialog.TableRow> view = (TableView<SyncTaskDialog.TableRow>) topNode("syncTables");
+            return view != null && view.getItems().stream().anyMatch(row -> row.name.equalsIgnoreCase("orders"))
+                    ? view : null;
+        });
+        pause(800);
+        recorder.caption("Check a table: SqlJam picks its watermark, the time of the last update when it has one");
+        for (String table : new String[]{"ORDERS", "CUSTOMERS"}) {
+            SyncTaskDialog.TableRow row = onFx(() -> tables.getItems().stream().filter(item -> item.name
+                    .equalsIgnoreCase(table)).findFirst().orElseThrow());
+            Node cell = onFx(() -> {
+                tables.scrollTo(row);
+                tables.layout();
+                return tables.lookupAll(".table-row-cell").stream().filter(item -> ((javafx.scene.control.TableRow<?>)
+                        item).getItem() == row).findFirst().map(item -> item.lookup(".check-box")).orElse(tables);
+            });
+            press(cell, () -> row.selected.set(true));
+            waitFor(() -> row.watermarkColumn.get() != null ? true : null);
+            moveTo(topNode("syncWatermarkCombo"));
+            pause(1500);
+        }
+        recorder.caption("Orders by their update time, customers by their key which only grows");
+        moveTo(topNode("syncWatermarkTypeCombo"));
+        pause(1600);
+        recorder.caption("The target: PostgreSQL. Missing tables are created with their keys, rows are updated or "
+                + "inserted by key");
+        ComboBox<ConnectionProfile> targets = (ComboBox<ConnectionProfile>) topNode("syncTargetCombo");
+        choose(targets, onFx(() -> targets.getItems().stream().filter(profile -> "PostgreSQL demo".equals(profile
+                .getName())).findFirst().orElseThrow()));
+        ComboBox<String> schemas = waitFor(() -> {
+            ComboBox<String> combo = (ComboBox<String>) topNode("syncTargetSchemaCombo");
+            return combo != null && !combo.getItems().isEmpty() ? combo : null;
+        });
+        moveTo(schemas);
+        recorder.click();
+        FxTestSupport.run(() -> schemas.setValue(SCHEMA));
+        pause(900);
+        recorder.caption("Every 15 minutes, while SqlJam is open");
+        choose(topNode("syncScheduleCombo"), SyncTask.ScheduleType.INTERVAL);
+        moveTo(topNode("syncIntervalSpinner"));
+        FxTestSupport.run(() -> ((javafx.scene.control.Spinner<Integer>) topNode("syncIntervalSpinner"))
+                .getValueFactory().setValue(15));
+        pause(1200);
+        press(buttonOf(topWindow(), "OK"));
+        waitFor(() -> tab.getTasks().isEmpty() ? null : true);
+        pause(800);
+
+        recorder.caption("Run Now: the first run copies all rows, its watermark is read before them");
+        runSync(tab);
+        recorder.caption("Each run leaves a report: tables, rows, the rows found in the target and the watermarks");
+        press(node(tab.getContent(), "syncReportButton"));
+        pause(4200);
+
+        FxTestSupport.run(() -> ((TabPane) mainView.lookup("#tableTabs")).getSelectionModel().select(tab));
+        changeShop();
+        recorder.caption("Meanwhile the shop changes: three orders are shipped, two orders and a customer are new");
+        pause(3500);
+        recorder.caption("The next run reads only the rows after the watermarks, deleted rows stay in the target");
+        runSync(tab);
+        press(node(tab.getContent(), "syncReportButton"));
+        pause(1500);
+        recorder.caption("Its report: the changed rows of each table, and how far the watermarks moved");
+        pause(4000);
+
+        FxTestSupport.run(() -> ((TabPane) mainView.lookup("#tableTabs")).getSelectionModel().select(tab));
+        recorder.caption("Errors of the connection are run again, errors of the data are not, the watermark moves "
+                + "after the commit only");
+        pause(3500);
+        recorder.caption("Run by the system scheduler (crontab, Task Scheduler), the task runs when SqlJam is closed "
+                + "too");
+        FxTestSupport.run(() -> tab.getTable().getSelectionModel().select(0));
+        press(node(tab.getContent(), "syncEditButton"));
+        waitFor(() -> topNode("syncRunnerCombo"));
+        fitDialog(topWindow());
+        pause(800);
+        choose(topNode("syncRunnerCombo"), SyncTask.Runner.SYSTEM);
+        pause(800);
+        press(buttonOf(topWindow(), "OK"));
+        waitFor(() -> syncTask().getRunner() == SyncTask.Runner.SYSTEM ? true : null);
+        pause(2500);
+
+        recorder.caption("Transfer > Import History keeps the report of every run, next to the imports and exports");
+        fileMenu("historyMenuItem");
+        pause(3800);
     }
 
     /**
      * The name, the version and what SqlJam is for, before the tutorial starts
      */
-    private void title() throws Exception {
+    private void title(String subject) throws Exception {
         FxTestSupport.run(() -> {
             ImageView logo = Branding.logoView(190);
             Label name = new Label("SqlJam");
@@ -263,7 +476,9 @@ class TutorialVideo {
             Label tagline = new Label("Import and export tool for relational, OLAP and vector databases");
             tagline.getStyleClass().add("muted");
             tagline.setStyle("-fx-font-size: 18px;");
-            VBox card = new VBox(12, logo, name, version, tagline);
+            Label topic = new Label(subject);
+            topic.setStyle("-fx-font-size: 26px; -fx-font-weight: bold;");
+            VBox card = new VBox(12, logo, name, version, tagline, topic);
             card.setAlignment(Pos.CENTER);
             holder.getChildren().setAll(card);
         });
@@ -293,25 +508,22 @@ class TutorialVideo {
         return card;
     }
 
+    /**
+     * SqlJam opens its main window with the data sources in the tree, the example is connected by expanding it
+     */
     private void connect() throws Exception {
-        LoginView loginView = FxTestSupport.call(() -> {
-            LoginView view = new LoginView(context, profile -> {
-                mainView = new MainView(context);
-                holder.getChildren().setAll(mainView);
-                mainView.selectConnection(profile);
-            });
+        mainView = FxTestSupport.call(() -> {
+            MainView view = new MainView(context);
+            // The video shows the window only: its menus are in it, not in the menu bar of macOS
+            ((MenuBar) view.lookup(".menu-bar")).setUseSystemMenuBar(false);
             holder.getChildren().setAll(view);
+            view.applyCss();
+            view.layout();
             return view;
         });
-        recorder.caption("Getting started: the first start brings the Example Shop (H2) database, connect to it");
-        @SuppressWarnings("unchecked")
-        ListView<ConnectionProfile> list = (ListView<ConnectionProfile>) node(loginView, "profileList");
-        pause(1200);
-        moveTo(onFx(() -> list.lookup(".list-cell")));
-        pause(800);
-        press(node(loginView, "loginButton"));
-        waitFor(() -> mainView != null && connection(ExampleDatabase.PROFILE_NAME) != null);
-        pause(1500);
+        recorder.caption("SqlJam opens with its data sources, the first start brings the Example Shop (H2) database");
+        waitFor(() -> connection(ExampleDatabase.PROFILE_NAME));
+        pause(1800);
     }
 
     private ConnectionTree tree() {
@@ -319,8 +531,12 @@ class TutorialVideo {
     }
 
     private TreeItem<DbNode> connection(String name) {
-        return onFx(() -> tree().getConnectionItems().stream().filter(item -> name.equals(item
-                .getValue().getLabel())).findFirst().orElse(null));
+        return onFx(() -> {
+            // The tree is found once the window was laid out
+            ConnectionTree tree = tree();
+            return tree == null ? null : tree.getConnectionItems().stream().filter(item -> name.equals(item
+                    .getValue().getLabel())).findFirst().orElse(null);
+        });
     }
 
     private TreeItem<DbNode> child(TreeItem<DbNode> parent, String label) {
@@ -1041,6 +1257,29 @@ class TutorialVideo {
              Statement statement = connection.createStatement()) {
             assertEquals(0, count(statement, "SELECT COUNT(*) FROM sys.schemas WHERE name = '" + SCHEMA + "'"),
                     "Schema shop of SQL Server exists");
+        }
+    }
+
+    /**
+     * The vector video imports into the schema of the SQL video, it is created for it when it is missing
+     */
+    private static void checkVectorTarget() throws SQLException {
+        try (Connection connection = DriverManager.getConnection(POSTGRESQL_URL, USERNAME, PASSWORD);
+             Statement statement = connection.createStatement()) {
+            assertEquals(0, count(statement, "SELECT COUNT(*) FROM pg_tables WHERE schemaname = '" + SCHEMA + "'"),
+                    "Schema shop of PostgreSQL has tables");
+            statement.execute("CREATE SCHEMA IF NOT EXISTS " + SCHEMA);
+        }
+    }
+
+    /**
+     * The sync video creates the schema and its tables by its first run
+     */
+    private static void checkSyncTarget() throws SQLException {
+        try (Connection connection = DriverManager.getConnection(POSTGRESQL_URL, USERNAME, PASSWORD);
+             Statement statement = connection.createStatement()) {
+            assertEquals(0, count(statement, "SELECT COUNT(*) FROM pg_tables WHERE schemaname = '" + SCHEMA + "'"),
+                    "Schema shop of PostgreSQL has tables");
         }
     }
 

@@ -19,10 +19,15 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.ServiceLoader;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import com.github.sqljam.config.Config;
+import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.model.SyncTask;
+import com.github.sqljam.face.service.SyncEngine;
 import javafx.scene.Node;
 import javafx.scene.control.Tab;
 import javafx.stage.Window;
@@ -93,6 +98,14 @@ public interface DataSourceExtension {
          * Deletes the source after a confirmation, true if it is deleted
          */
         boolean delete(Window owner, AppContext context);
+
+        /**
+         * Asks for the secret which the source refused (e.g. an API key which is not remembered), true when a new
+         * one is entered and the source is read again
+         */
+        default boolean authenticate(Window owner, Throwable error) {
+            return false;
+        }
     }
 
     /**
@@ -159,6 +172,38 @@ public interface DataSourceExtension {
     boolean isEnabled(Config config);
 
     List<Source> getSources();
+
+    /**
+     * Sync tasks of the sources of the kind: the engine which runs them, and the parts which the task dialog lists
+     */
+    interface SyncSupport {
+
+        /**
+         * Kind of the tasks of the sources
+         */
+        SyncTask.Kind getKind();
+
+        SyncEngine createEngine(Function<String, Optional<ConnectionProfile>> profiles);
+
+        /**
+         * Databases of a source, empty for sources without databases
+         */
+        List<String> getDatabases(String sourceId) throws Exception;
+
+        List<String> getCollections(String sourceId, String database) throws Exception;
+
+        /**
+         * Fields of a collection which can be watermarks: numbers and times
+         */
+        List<String> getWatermarkFields(String sourceId, String database, String collection) throws Exception;
+    }
+
+    /**
+     * Sync tasks of the sources, null for kinds without
+     */
+    default SyncSupport getSyncSupport() {
+        return null;
+    }
 
     /**
      * Extensions which their settings switch on

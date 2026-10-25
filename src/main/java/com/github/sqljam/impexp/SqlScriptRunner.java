@@ -72,6 +72,22 @@ public class SqlScriptRunner {
 
     private static final Pattern INSERT_STATEMENT = Pattern.compile("(?is)^(INSERT|MERGE)\\s+INTO\\s.*");
     private static final Pattern MERGE_STATEMENT = Pattern.compile("(?is)^MERGE\\s+INTO\\s.*");
+    /**
+     * Statements of rows, their failures are skipped rows
+     */
+    private static final Pattern ROW_STATEMENT = Pattern.compile("(?is)^\\s*(INSERT|MERGE|UPSERT|REPLACE|UPDATE|"
+            + "DELETE)\\b.*");
+    /**
+     * Statements of the session, which are neither rows nor the structure
+     */
+    private static final Pattern SESSION_STATEMENT = Pattern.compile("(?is)^\\s*(SET|USE|COMMIT|ROLLBACK|SELECT|"
+            + "WITH|CALL|DECLARE|START\\s+TRANSACTION|BEGIN\\s+TRAN\\w*)\\b.*");
+    /**
+     * Table of a statement of rows, the last part of its qualified name without quotes
+     */
+    private static final Pattern ROW_TABLE = Pattern.compile("(?is)^\\s*(?:INSERT|MERGE|UPSERT|REPLACE)\\s+"
+            + "(?:IGNORE\\s+)?INTO\\s+(?:[`\"\\[]?[^\\s(`\"\\]]+[`\"\\]]?\\.)*[`\"\\[]?([^\\s(`\"\\].]+)"
+            + "[`\"\\]]?.*");
 
     private final Connection connection;
     private boolean stopOnError = true;
@@ -238,6 +254,18 @@ public class SqlScriptRunner {
         }
     }
 
+    static boolean isRowStatement(String sql) {
+        return ROW_STATEMENT.matcher(sql).matches();
+    }
+
+    /**
+     * Table of an INSERT or MERGE statement without its schema and quotes, null for other statements
+     */
+    static String tableOf(String sql) {
+        java.util.regex.Matcher matcher = ROW_TABLE.matcher(sql);
+        return matcher.matches() ? matcher.group(1) : null;
+    }
+
     static boolean isBatchable(String sql) {
         return INSERT_STATEMENT.matcher(sql).matches();
     }
@@ -295,6 +323,9 @@ public class SqlScriptRunner {
             statement().execute(sql);
             executedCount++;
             releaseSavepoint(savepoint);
+            if (!isRowStatement(sql) && !SESSION_STATEMENT.matcher(sql).matches()) {
+                exportListener.onDdlExecuted(sql, true);
+            }
             return true;
         } catch (SQLException e) {
             if (missingDropError != null && missingDropError.test(sql, e)) {
@@ -320,13 +351,18 @@ public class SqlScriptRunner {
                 log.error(message);
             }
             exportListener.onError(message, e);
+            if (isRowStatement(sql)) {
+                exportListener.onRowSkipped(null, null, tableOf(sql), StringUtils.abbreviate(StringUtils
+                        .normalizeSpace(sql), 200), e);
+            } else {
+                exportListener.onDdlExecuted(sql, false);
+            }
             if (stopOnError) {
                 rollback();
                 throw e;
             }
-            if (savepoint != null) {
-                connection.rollback(savepoint);
-            }
+            // A failed DDL statement of H2 ends the transaction with its savepoints, nothing is rolled back then
+            rollbackQuietly(savepoint);
             return false;
         }
     }

@@ -45,11 +45,13 @@ CREATE TABLE orders (
     total       DECIMAL(12,2) DEFAULT 0 NOT NULL,
     paid_at     TIMESTAMP,
     created_at  TIMESTAMP     NOT NULL,
+    updated_at  TIMESTAMP     NOT NULL,
     CONSTRAINT uk_orders_order_no UNIQUE (order_no),
     CONSTRAINT fk_orders_customer FOREIGN KEY (customer_id) REFERENCES customers (id)
 );
 COMMENT ON TABLE orders IS 'Orders of customers';
 COMMENT ON COLUMN orders.status IS 'NEW, PAID, SHIPPED, DELIVERED or CANCELLED';
+COMMENT ON COLUMN orders.updated_at IS 'Time of the last change, e.g. the watermark of a sync task';
 CREATE INDEX idx_orders_customer ON orders (customer_id);
 CREATE INDEX idx_orders_status ON orders (status, created_at);
 
@@ -93,10 +95,11 @@ SELECT MOD(X - 1, 6) + 1,
        DATEADD('DAY', -X * 11, TIMESTAMP '2026-09-30 10:00:00')
 FROM SYSTEM_RANGE(1, 30);
 
-INSERT INTO orders (order_no, customer_id, status, created_at)
+INSERT INTO orders (order_no, customer_id, status, created_at, updated_at)
 SELECT 'SO-2026-' || LPAD(CAST(X AS VARCHAR), 5, '0'),
        MOD(X * 7, 50) + 1,
        ARRAY['NEW', 'PAID', 'SHIPPED', 'DELIVERED', 'CANCELLED'][MOD(X, 5) + 1],
+       DATEADD('HOUR', -X * 13, TIMESTAMP '2026-09-30 12:00:00'),
        DATEADD('HOUR', -X * 13, TIMESTAMP '2026-09-30 12:00:00')
 FROM SYSTEM_RANGE(1, 300);
 
@@ -108,5 +111,6 @@ JOIN products p ON p.id = MOD(o.X * 3 + k.X * 7, 30) + 1;
 
 UPDATE orders o SET total = (SELECT SUM(i.quantity * i.unit_price) FROM order_items i WHERE i.order_id = o.id),
     paid_at = CASE WHEN o.status IN ('PAID', 'SHIPPED', 'DELIVERED') THEN DATEADD('MINUTE', 30, o.created_at) END;
+UPDATE orders SET updated_at = COALESCE(paid_at, created_at);
 
 UPDATE customers c SET vip = TRUE WHERE (SELECT COUNT(*) FROM orders o WHERE o.customer_id = c.id) > 5;

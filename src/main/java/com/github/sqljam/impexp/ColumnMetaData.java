@@ -66,10 +66,15 @@ public class ColumnMetaData implements TiedMetaData {
         String schemaName = getSchemaName();
         String tableName = dialect.getTargetTableName(getTableName());
         int dataType = TableMetaData.getInt(detail, "DATA_TYPE");
-        String typeName = getUserTypeName(dialect);
+        // A type which the user mapped is written as it is
+        String typeName = dialect.getMappedColumnType(getTableName(), columnName);
+        if (typeName == null) {
+            typeName = getUserTypeName(dialect);
+        }
         if (typeName == null) {
             typeName = getVectorTypeName(dialect);
         }
+        String targetColumnName = dialect.getTargetColumnName(getTableName(), columnName);
         if (typeName == null) {
             typeName = (String) detail.get("TYPE_NAME");
         }
@@ -84,15 +89,18 @@ public class ColumnMetaData implements TiedMetaData {
         String expression = (String) detail.get("GENERATION_EXPRESSION");
         if (isGenerated() && StringUtils.isNotBlank(expression) && !dialect.isCrossDatabase()
                 && dialect.isGeneratedColumnSupported()) {
-            statement = dialect.getGeneratedColumnStatement(catalogName, schemaName, tableName, columnName, dataType,
+            statement = dialect.getGeneratedColumnStatement(catalogName, schemaName, tableName, targetColumnName,
+                    dataType,
                     typeName, columnSize, columnScale, expression,
                     !"VIRTUAL".equalsIgnoreCase((String) detail.get("GENERATION_TYPE")));
         } else if (unwrap(TableMetaData.class).getIncrementalColumnNames(dialect).contains(columnName)) {
-            statement = dialect.getIncrementalColumnStatement(catalogName, schemaName, tableName, columnName, dataType,
+            statement = dialect.getIncrementalColumnStatement(catalogName, schemaName, tableName, targetColumnName,
+                    dataType,
                     typeName,
                     columnSize, columnScale, defaultValue, nullable);
         } else {
-            statement = dialect.getColumnStatement(catalogName, schemaName, tableName, columnName, dataType, typeName,
+            statement = dialect.getColumnStatement(catalogName, schemaName, tableName, targetColumnName, dataType,
+                    typeName,
                     columnSize,
                     columnScale, defaultValue, nullable, comment);
         }

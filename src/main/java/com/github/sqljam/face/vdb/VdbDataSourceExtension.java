@@ -17,18 +17,29 @@ package com.github.sqljam.face.vdb;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.config.Config;
+import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.model.SyncTask;
+import com.github.sqljam.face.service.SyncEngine;
 import com.github.sqljam.face.view.AppContext;
 import com.github.sqljam.face.view.DataSourceExtension;
 import com.github.sqljam.face.view.Dialogs;
 import com.github.sqljam.face.view.Messages;
 import com.github.sqljam.face.view.SourceItem;
+import com.github.sqljam.face.view.CredentialsDialog;
+import com.github.sqljam.utils.RestException;
 import com.github.sqljam.vdb.VdbClient;
+import com.github.sqljam.vdb.VdbField;
 import com.github.sqljam.vdb.VdbQuery;
 import com.github.sqljam.vdb.VdbType;
 import javafx.scene.Node;
@@ -153,6 +164,48 @@ public class VdbDataSourceExtension implements DataSourceExtension {
                 }
                 return List.of();
             }
+        }
+
+        /**
+         * A key or a password which the database refused (HTTP 401 or 403, Milvus 1800), e.g. one which is not
+         * remembered, is asked again. The key is asked of a database which has keys, the user and password of the
+         * others.
+         */
+        @Override
+        public boolean authenticate(Window owner, Throwable error) {
+            if (!isAccessDenied(error)) {
+                return false;
+            }
+            VdbType type = profile.getType();
+            boolean key = type.isApiKeySupported() && (!type.isUserSupported() || StringUtils.isEmpty(profile
+                    .getUsername()));
+            Optional<CredentialsDialog.Credentials> credentials = CredentialsDialog.ask(owner, profile.getName(),
+                    Messages.get(key ? "credentials.apiKey" : "connection.password"), key ? null : StringUtils
+                            .defaultString(profile.getUsername()), StringUtils.abbreviate(error.getMessage(), 300));
+            credentials.ifPresent(entered -> {
+                if (key) {
+                    profile.setApiKey(entered.getSecret());
+                } else {
+                    profile.setUsername(entered.getUsername());
+                    profile.setPassword(entered.getSecret());
+                }
+                try {
+                    store.saveProfile(profile, entered.isSaved());
+                } catch (IOException e) {
+                    Dialogs.showError(owner, Messages.get("connection.saveError"), e);
+                }
+            });
+            return credentials.isPresent();
+        }
+
+        static boolean isAccessDenied(Throwable error) {
+            for (Throwable cause = error; cause != null && cause.getCause() != cause; cause = cause.getCause()) {
+                if (cause instanceof RestException && (((RestException) cause).getStatus() == 401
+                        || ((RestException) cause).getStatus() == 403)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         @Override
@@ -329,6 +382,63 @@ public class VdbDataSourceExtension implements DataSourceExtension {
     private VdbProfileStore getStore() {
         return store != null ? store : VdbProfileStore.getInstance();
     }
+
+    @Override
+    public SyncSupport getSyncSupport() {
+        return new SyncSupport() {
+            @Override
+            public SyncTask.Kind getKind() {
+                return SyncTask.Kind.VECTOR;
+            }
+
+            @Override
+            public SyncEngine createEngine(Function<String, Optional<ConnectionProfile>> profiles) {
+                return new VdbSyncEngine(getStore(), profiles);
+            }
+
+            private VdbProfile profile(String sourceId, String database) {
+                VdbProfile profile = getStore().getProfiles().stream().filter(item -> item.getId().equals(sourceId))
+                        .findFirst().orElseThrow(() -> new IllegalArgumentException("No vector database " + sourceId));
+                if (StringUtils.isNotBlank(database)) {
+                    profile = profile.copy();
+                    profile.setDatabase(database);
+                }
+                return profile;
+            }
+
+            @Override
+            public List<String> getDatabases(String sourceId) {
+                VdbProfile profile = profile(sourceId, null);
+                try (VdbClient client = profile.getType().createClient(profile.toSource())) {
+                    return client.getDatabases();
+                }
+            }
+
+            @Override
+            public List<String> getCollections(String sourceId, String database) {
+                VdbProfile profile = profile(sourceId, database);
+                try (VdbClient client = profile.getType().createClient(profile.toSource())) {
+                    return client.getCollections();
+                }
+            }
+
+            @Override
+            public List<String> getWatermarkFields(String sourceId, String database, String collection) {
+                VdbProfile profile = profile(sourceId, database);
+                try (VdbClient client = profile.getType().createClient(profile.toSource())) {
+                    return client.describe(collection).getFields().stream().filter(field -> !field.isPrimaryKey()
+                            && WATERMARK_KINDS.contains(field.getKind())).map(VdbField::getName).collect(Collectors
+                            .toList());
+                }
+            }
+        };
+    }
+
+    /**
+     * Kinds of the fields which a sync task compares: numbers and times
+     */
+    static final Set<VdbField.Kind> WATERMARK_KINDS = EnumSet.of(VdbField.Kind.SMALLINT, VdbField.Kind.INTEGER,
+            VdbField.Kind.BIGINT, VdbField.Kind.REAL, VdbField.Kind.DOUBLE, VdbField.Kind.TIMESTAMP);
 
     @Override
     public SourceForm createForm(double labelWidth) {

@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.github.sqljam.impexp.ColumnMapping;
 import com.github.sqljam.impexp.CsvOptions;
 import com.github.sqljam.impexp.DataFileStrategy;
 import com.github.sqljam.impexp.DataFormat;
@@ -131,6 +132,11 @@ public class TransferRequest {
      * Chosen key columns of upserts by table, the primary key of other tables
      */
     private Map<String, List<String>> keyColumnNames = new HashMap<>();
+    /**
+     * Columns which the user mapped by table and column, for imports into a database; none imports the tables as
+     * they are
+     */
+    private Map<String, Map<String, ColumnMapping>> columnMappings = new HashMap<>();
     /**
      * Name pattern of target tables, {table} is the source table name, e.g. {table}_copy copies tables in the same
      * schema. Target tables have the same names if it is blank.

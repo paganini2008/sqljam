@@ -15,6 +15,7 @@
  */
 package com.github.sqljam.face.view;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -141,6 +142,55 @@ class BrandingTest {
         // Links without a browser do nothing
         FxTestSupport.run(() -> ((Hyperlink) noOwner.getDialogPane().lookup("#aboutHomepage")).fire());
         assertEquals(3, opened.size());
+    }
+
+    /**
+     * The map of the features: SqlJam in the middle, six groups on both sides joined by curves, the logos of the
+     * data sources, the dialog wider while it is shown
+     */
+    @Test
+    void featureMap() throws Exception {
+        Alert about = FxTestSupport.call(() -> Dialogs.createAbout(stage, null));
+        FxTestSupport.run(about::show);
+        javafx.scene.control.TabPane tabs = FxTestSupport.call(() -> (javafx.scene.control.TabPane) about
+                .getDialogPane().lookup("#aboutTabs"));
+        assertEquals(List.of("About", "Features"), FxTestSupport.call(() -> tabs.getTabs().stream().map(
+                javafx.scene.control.Tab::getText).collect(Collectors.toList())));
+        FxTestSupport.run(() -> tabs.getSelectionModel().select(1));
+        assertEquals(1000, FxTestSupport.call(() -> about.getDialogPane().getPrefWidth()));
+        FeatureMap map = FxTestSupport.call(() -> (FeatureMap) about.getDialogPane().lookup("#featureMap"));
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> about.getDialogPane().getScene().getWindow()
+                .getWidth() >= 990));
+        // The layout of the dialog, not a size of the test
+        FxTestSupport.run(() -> {
+            about.getDialogPane().applyCss();
+            about.getDialogPane().layout();
+        });
+        assertTrue(FxTestSupport.call(map::getWidth) >= FxTestSupport.call(() -> map.prefWidth(-1)) - 1);
+        List<javafx.scene.layout.VBox> cards = map.getCards();
+        assertEquals(6, cards.size());
+        List<javafx.geometry.Bounds> all = FxTestSupport.call(() -> java.util.stream.IntStream.range(0, cards.size())
+                .mapToObj(map::getCardBounds).collect(Collectors.toList()));
+        for (int i = 0; i < cards.size(); i++) {
+            javafx.geometry.Bounds bounds = all.get(i);
+            for (int j = i + 1; j < cards.size(); j++) {
+                javafx.geometry.Bounds other = all.get(j);
+                assertFalse(bounds.intersects(other), FeatureMap.GROUPS[i] + " and " + FeatureMap.GROUPS[j]);
+            }
+        }
+        // Left and right of the middle
+        assertTrue(all.get(0).getMaxX() < all.get(3).getMinX());
+        // Every group has items, the data sources show their logos
+        assertTrue(FxTestSupport.call(() -> cards.stream().allMatch(card -> card.getChildren().size() > 2)));
+        assertTrue(FxTestSupport.call(() -> ((javafx.scene.layout.FlowPane) map.lookup("#featureLogos"))
+                .getChildren().size() > 5));
+        File image = new File("target/screenshots/feature-map.png");
+        image.getParentFile().mkdirs();
+        DocImages.write(FxTestSupport.call(() -> about.getDialogPane().getScene().snapshot(null)), image);
+        // Back to About, the dialog is narrow again
+        FxTestSupport.run(() -> tabs.getSelectionModel().select(0));
+        assertEquals(500, FxTestSupport.call(() -> about.getDialogPane().getPrefWidth()));
+        FxTestSupport.run(about::close);
     }
 
     @Test

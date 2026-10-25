@@ -40,7 +40,6 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.Label;
-import javafx.scene.control.ListView;
 import javafx.scene.control.MenuBar;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TabPane;
@@ -82,25 +81,15 @@ class ExampleDatabaseViewTest {
         context.getSessionManager().closeAll();
     }
 
+    /**
+     * The first start shows the example in the tree of the main window, connected without a password
+     */
     @Test
-    @SuppressWarnings("unchecked")
-    void selectsExampleOnLoginPage() {
-        LoginView view = FxTestSupport.call(() -> {
-            LoginView loginView = new LoginView(context, profile -> {
-            });
-            root.getChildren().setAll(loginView);
-            loginView.applyCss();
-            loginView.layout();
-            return loginView;
-        });
-        ListView<ConnectionProfile> list = FxTestSupport.call(() -> (ListView<ConnectionProfile>) view.lookup(
-                "#profileList"));
-        assertEquals(List.of(ExampleDatabase.PROFILE_NAME), FxTestSupport.call(() -> list.getItems().stream()
-                .map(ConnectionProfile::getName).collect(Collectors.toList())));
-        assertEquals(ExampleDatabase.PROFILE_NAME, FxTestSupport.call(() -> list.getSelectionModel()
-                .getSelectedItem().getName()));
-        // The example is connected without a password
-        assertEquals("sa", FxTestSupport.call(() -> ((TextField) view.lookup("#usernameField")).getText()));
+    void showsExampleInTree() {
+        MainView mainView = showMain();
+        assertEquals(List.of(ExampleDatabase.PROFILE_NAME), names(mainView));
+        assertEquals("sa", FxTestSupport.call(() -> tree(mainView).getConnectionItems().get(0).getValue()
+                .getProfile().getUsername()));
     }
 
     @Test
@@ -148,21 +137,32 @@ class ExampleDatabaseViewTest {
         return item;
     }
 
-    private LoginView showLogin() {
+    private MainView showMain() {
         return FxTestSupport.call(() -> {
-            LoginView loginView = new LoginView(context, profile -> {
-            });
-            root.getChildren().setAll(loginView);
-            loginView.applyCss();
-            loginView.layout();
-            return loginView;
+            MainView mainView = new MainView(context);
+            root.getChildren().setAll(mainView);
+            mainView.applyCss();
+            mainView.layout();
+            return mainView;
         });
     }
 
-    @SuppressWarnings("unchecked")
-    private static List<String> names(LoginView view) {
-        return FxTestSupport.call(() -> ((ListView<ConnectionProfile>) view.lookup("#profileList")).getItems()
-                .stream().map(ConnectionProfile::getName).collect(Collectors.toList()));
+    private static ConnectionTree tree(MainView mainView) {
+        return (ConnectionTree) mainView.lookup("#connectionTree");
+    }
+
+    private static List<String> names(MainView mainView) {
+        return FxTestSupport.call(() -> tree(mainView).getConnectionItems().stream().map(item -> item.getValue()
+                .getLabel()).collect(Collectors.toList()));
+    }
+
+    /**
+     * Help → Restore Example Database of the main window
+     */
+    private static MenuItem restoreMenuItem(MainView mainView) {
+        return FxTestSupport.call(() -> ((MenuBar) mainView.lookup(".menu-bar")).getMenus().stream().flatMap(menu
+                -> menu.getItems().stream()).filter(item -> "restoreExampleMenuItem".equals(item.getId()))
+                .findFirst().orElseThrow());
     }
 
     private long countOrders() throws Exception {
@@ -174,17 +174,17 @@ class ExampleDatabaseViewTest {
     }
 
     @Test
-    @SuppressWarnings("unchecked")
-    void restoresRemovedExampleOnLoginPage() throws Exception {
+    void restoresRemovedExample() throws Exception {
         // The user removed the example data source
         context.getProfileRegistry().removeProfile(ExampleDatabase.PROFILE_ID);
-        LoginView view = showLogin();
+        MainView view = showMain();
         assertTrue(names(view).isEmpty());
-        // No confirmation, nothing is replaced
-        FxTestSupport.run(() -> ((Button) view.lookup("#exampleButton")).fire());
+        // No confirmation, nothing is replaced, the restored example is selected in the tree
+        FxTestSupport.run(() -> restoreMenuItem(view).fire());
         FxTestSupport.waitUntil(() -> names(view).contains(ExampleDatabase.PROFILE_NAME));
-        assertEquals(ExampleDatabase.PROFILE_NAME, FxTestSupport.call(() -> ((ListView<ConnectionProfile>) view
-                .lookup("#profileList")).getSelectionModel().getSelectedItem().getName()));
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> tree(view).getSelectionModel().getSelectedItem()
+                != null && ExampleDatabase.PROFILE_NAME.equals(tree(view).getSelectionModel().getSelectedItem()
+                .getValue().getLabel())));
         assertEquals(1, context.getProfileRegistry().getProfiles().size());
         assertEquals(300, countOrders());
     }
@@ -196,13 +196,13 @@ class ExampleDatabaseViewTest {
             statement.execute("DELETE FROM order_items");
             statement.execute("DELETE FROM orders");
         }
-        LoginView view = showLogin();
+        MainView view = showMain();
         // Cancelled, the changed database is kept
-        FxTestSupport.fireLater((Button) FxTestSupport.call(() -> view.lookup("#exampleButton")));
+        Platform.runLater(() -> restoreMenuItem(view).fire());
         FxTestSupport.closeDialog(ButtonType.CANCEL);
         assertEquals(0, countOrders());
         // Confirmed, the example is created again with one data source
-        FxTestSupport.fireLater((Button) FxTestSupport.call(() -> view.lookup("#exampleButton")));
+        Platform.runLater(() -> restoreMenuItem(view).fire());
         FxTestSupport.closeDialog(ButtonType.OK);
         FxTestSupport.waitUntil(() -> {
             try {

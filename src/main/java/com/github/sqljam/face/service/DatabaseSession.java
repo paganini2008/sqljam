@@ -57,7 +57,7 @@ import com.github.sqljam.impexp.TableMetaData;
 import com.github.sqljam.impexp.TableQuery;
 import com.github.sqljam.jdbc.ConnectionFactory;
 import com.github.sqljam.jdbc.JdbcUtils;
-import com.github.sqljam.utils.SshTunnels;
+import com.github.sqljam.utils.SshUtils;
 
 /**
  * @Description: DatabaseSession browses a database: catalogs, schemas, tables, metadata and rows of tables
@@ -102,13 +102,13 @@ public class DatabaseSession implements Closeable {
     public static String testConnection(ConnectionProfile profile) throws SQLException {
         DriverManager.setLoginTimeout(10);
         // A tunnel opened only for the test is closed after it
-        boolean tunnelOpened = profile.isSshEnabled() && !SshTunnels.isOpen(profile.getId());
+        boolean tunnelOpened = profile.isSshEnabled() && !SshUtils.isOpen(profile.getId());
         try (Connection connection = connect(profile, profile.getJdbcUrl())) {
             DatabaseMetaData metaData = connection.getMetaData();
             return metaData.getDatabaseProductName() + " " + metaData.getDatabaseProductVersion();
         } finally {
             if (tunnelOpened) {
-                SshTunnels.close(profile.getId());
+                SshUtils.close(profile.getId());
             }
         }
     }
@@ -130,7 +130,7 @@ public class DatabaseSession implements Closeable {
     }
 
     private Connection getConnection(String catalog) throws SQLException {
-        if (profile.isSshEnabled() && !SshTunnels.isOpen(profile.getId())) {
+        if (profile.isSshEnabled() && !SshUtils.isOpen(profile.getId())) {
             // A tunnel which was closed, e.g. by the network, is opened again on its local port, the connections
             // of the pools went through the closed one
             closePools();
@@ -505,7 +505,7 @@ public class DatabaseSession implements Closeable {
     @Override
     public void close() {
         closePools();
-        SshTunnels.close(profile.getId());
+        SshUtils.close(profile.getId());
     }
 
     private void closePools() {

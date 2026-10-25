@@ -36,17 +36,20 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 | Analytics teams want Parquet, not SQL | **Parquet packages** (ZSTD, Snappy, GZIP) through an embedded DuckDB, and **Parquet files of other tools** loaded into any table |
 | Spreadsheets and text tools want CSV | **CSV packages** with your delimiter, quote, NULL text, header, encoding (UTF-8 with BOM for Excel, GBK and more) and date format, read back with the exact column types kept in `manifest.json`, and **CSV files of other tools** with detected delimiter and types |
 | An import went wrong, now what? | **One transaction** by default: an error rolls back the whole import, or **commit every N rows** like other import tools. **Skip rows with errors** goes on and lists every skipped row in the log, which you can filter and save. **Confirm before commit** lets you review a successful import in one transaction, then **Commit** or **Roll Back** |
+| Did every row arrive, and what happened when it stopped? | A **migration report** for every import and export, successful, failed, cancelled or rolled back: source, target and options, each table with its source rows, written and skipped rows, the rows counted in the target afterwards and a ✓ or ✗ against the written rows, the objects which were created, every skipped row with its error, where the transfer stopped and the error which ended it. It opens on its own page with **View Report**, and **Transfer → Import History** lists every report. Export one as Markdown, HTML or JSON |
+| A copy has to stay up to date | **Sync Tasks** copy the rows which changed since the last run into another database, found by a column of the update time or an increasing key, every N minutes or every day at a time. The first run copies all rows, the watermark moves on only after the commit, errors of the connection are run again and errors of the data are not. SqlJam runs the tasks while it is open, or registers them with the **system scheduler** (crontab, Task Scheduler of Windows) so that they run when it is closed. Collections of vector databases sync the same way, and every run leaves a migration report |
 | Some rows exist already | **Update or insert by key** updates the rows of the same primary key, or of the columns you choose, and inserts the others. **Skip existing by key** keeps them and inserts the new rows only. Insert is the default |
 | Warehouses live apart from OLTP databases | **DuckDB and ClickHouse data sources**, grouped as OLAP databases next to the relational ones |
 | The rows come from a join or a report, not from one table | **SQL Query** editor with syntax highlighting: run the SQL, check the first rows, then export all rows of the query as a table into SQL, Parquet, CSV or another database |
 | Only part of a table is needed | **Data viewer query**: columns, WHERE, GROUP BY and ORDER BY, then export the rows of the query. Missing target tables are created with the selected columns |
+| Target columns are named or typed differently | **Map Columns…** renames a column, gives it a type of the target or leaves it out, for tables and for the fields of vector database collections. Keys, indexes and foreign keys follow the new names. Columns which are not changed are imported as they are |
 | A copy next to the original | **Copy in the same schema** with a table name such as `{table}_copy`. Keys, indexes and constraints get their own names and the source tables are protected |
 | What is inside this package? | **Package viewer**: files with size and modified time, previews of manifest, SQL, LOB, Parquet and CSV files |
 | Custom and modern types | PostgreSQL enums and domains, DuckDB unions and fixed arrays, ClickHouse variants, maps and tuples |
 | Embeddings move with their search | Vectors of pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse keep their dimensions, and vector indexes (HNSW, IVF) keep their distances and options |
 | Embeddings live in a vector database | **Vector databases** sit in the connection tree like the other data sources: Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma, read by their REST APIs. Expand one to its databases, collections, partitions, tenants or namespaces, open a collection to browse its fields and records page by page, then **Import…** writes it straight into a database with vectors: ids and vectors become columns, every top-level field becomes a column of its type and the whole payload is kept as JSON. Conditions, native filters and nearest neighbor searches choose the rows |
 | The database sits behind a bastion host | **SSH tunnel** per data source, with a password or a private key (ed25519, RSA, ECDSA, with a passphrase). Host keys are trusted on first use and remembered, a changed host key is refused. A broken tunnel opens again by itself |
-| Which server is this, and is it well? | **Info** opens the overview (product, version, driver, session, features SqlJam detected) and the health of a data source or a vector database (uptime, connections, size, cluster state, load), refreshed when you ask |
+| Which server is this, and is it well? | **Info** opens the overview (product, version, driver, session, features SqlJam detected) and the health of a data source or a vector database (uptime, connections, size, cluster state, load), refreshed when you ask. Its **Dashboard** draws live charts of the last 5 minutes, sampled every 1 to 30 seconds: sessions, transactions, statements, rows, cache hits, locks, network, CPU, memory and size, read from the statistics of each database. Embedded databases show the CPU and the memory of SqlJam, in which they run. Metrics which a server does not tell are listed with the reason |
 | Long values and rows for a chat or a ticket | Cells show one line, a **double click** or **Shift+Enter** opens the whole value with JSON indented and vectors described. Select rows and **Copy Rows As** CSV, TSV, JSON or Markdown, or press **Ctrl+C** to paste them into a spreadsheet |
 | Many data sources, one is needed | Data sources are grouped as **relational, OLAP and vector databases** with their logos, and the **filter** above the tree finds them by name or type |
 
@@ -151,7 +154,7 @@ bin/
 ├── sqljam.properties                       # configuration, edit and restart
 ├── sqljam.vmoptions                        # JVM options, one per line
 ├── sqljam.png                              # Dock icon of macOS
-├── sqljam-tutorial.mp4                     # tutorial video, SQL and vector databases in under 4 minutes
+├── sqljam-sql.mp4 / sqljam-vectors.mp4 / sqljam-sync.mp4   # tutorial videos of about 2 minutes each
 ├── sqljam-1.0.0-SNAPSHOT-sources.jar
 └── sqljam-1.0.0-SNAPSHOT-javadoc.jar
 ```
@@ -162,7 +165,7 @@ SqlJam starts with a splash screen while it loads the configuration, the data so
 
 <p align="center"><img src="docs/assets/splash.png" alt="SqlJam splash screen" width="520"></p>
 
-1. Create a **data source** on the login page and click **Connect**. Choose its category first (relational, OLAP or vector databases), the types and the fields follow it. **Connect through SSH tunnel** reaches a database behind a bastion host. The first start brings an **Example Shop (H2)** data source with a few e-commerce tables to try everything right away. **Example** on the login page or **Help → Restore Example Database** brings it back at any time.
+1. SqlJam opens its main window with the data sources in the tree, where it was closed, and connects again the data sources which were connected then. Expand a data source to connect it. **+** on the toolbar creates one: choose its category first (relational, OLAP or vector databases), the types and the fields follow it. **Connect through SSH tunnel** reaches a database behind a bastion host. A password which is not saved is asked when the data source is connected, and asked again when the database refuses it. The first start brings an **Example Shop (H2)** data source with a few e-commerce tables to try everything right away. **Help → Restore Example Database** brings it back at any time.
 2. Right-click a database or schema → **Export…**
 3. Pick tables, choose **SQL scripts**, **Parquet** or **CSV** (folder) or **Database** (another data source, or a new one from the **+** button next to it), press **Start**. An import into a database runs in one transaction or commits every N rows (N is typed next to it), check **Skip rows with errors** to go on after bad rows and **Confirm before commit** to review it first, and choose **Update or insert by key** or **Skip existing by key** for rows which exist already.
 4. Open a table, narrow its rows on the **Data** tab with columns, WHERE, GROUP BY and ORDER BY, then **Export…** just those rows. A header sorts the rows of the page, a double click shows a whole value and **Copy Rows As** copies the selected rows. **Info** on the toolbar or a right-click shows the overview and the health of the data source.
@@ -170,11 +173,17 @@ SqlJam starts with a splash screen while it loads the configuration, the data so
 6. Create a data source of the **Vector databases** category for Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch or Chroma, with an API key, a user and password or neither, as the database asks. Expand it in the tree to its databases, collections and partitions (tenants of Weaviate, namespaces of Pinecone), open a collection to see its fields and its records page by page, narrowed by conditions, a native filter or a nearest neighbor search. **Import…** on the collection tab, a right-click or **File → Import from Vector Database…** opens the wizard which imports the checked collections into a data source with vectors. Only such data sources are offered as targets.
 7. Right-click a connected data source → **Disconnect** when you are done, its table tabs close with it. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and the author, and the GitHub icon at the bottom right opens the repository.
 
-A short [tutorial video](docs/assets/sqljam-tutorial.mp4) walks through the example database: query rows, export into files, import the package into PostgreSQL, copy the tables straight into SQL Server, then browse a Qdrant collection, import it into PostgreSQL and open a tenant of Weaviate.
+Three tutorial videos of about 2 minutes each walk through SqlJam:
 
-| Login | Export wizard | Progress |
+| Video | Shows |
+|---|---|
+| [SQL databases](docs/assets/sqljam-sql.mp4) | Query rows of the example database, export them into files, import the package into PostgreSQL, query with the SQL editor and copy the tables straight into SQL Server |
+| [Vector databases](docs/assets/sqljam-vectors.mp4) | Browse a Qdrant collection page by page, narrow it by conditions and nearest neighbors, import it into PostgreSQL and open a tenant of Weaviate |
+| [Scheduled sync and reports](docs/assets/sqljam-sync.mp4) | Create a sync task of the shop into PostgreSQL, copy all rows, then only the changed ones, read the reports and let the system scheduler run it |
+
+| Data source | Export wizard | Progress |
 |---|---|---|
-| ![login](docs/assets/login.png) | ![export](docs/assets/export-wizard.png) | ![progress](docs/assets/progress.png) |
+| ![data source](docs/assets/data-source.png) | ![export](docs/assets/export-wizard.png) | ![progress](docs/assets/progress.png) |
 
 | Data query | Package viewer | Parquet files |
 |---|---|---|
@@ -187,6 +196,14 @@ A short [tutorial video](docs/assets/sqljam-tutorial.mp4) walks through the exam
 | Vector database collection | Vector database import | Database info |
 |---|---|---|
 | ![collection](docs/assets/vdb-collection.png) | ![vdb import](docs/assets/import-vdb.png) | ![info](docs/assets/database-info.png) |
+
+| Migration report | Import history | Sync tasks |
+|---|---|---|
+| ![report](docs/assets/report.png) | ![history](docs/assets/import-history.png) | ![sync](docs/assets/sync-tasks.png) |
+
+| Dashboard | Column mapping | Feature map |
+|---|---|---|
+| ![dashboard](docs/assets/dashboard.png) | ![mapping](docs/assets/column-mapping.png) | ![features](docs/assets/feature-map.png) |
 
 Expected export package:
 
@@ -370,6 +387,8 @@ try (ManualTransaction transaction = new ManualTransaction(connection, DbType.PO
 | Keep **one transaction** for imports | An error rolls back everything, **Confirm before commit** shows the log and the row counts before the commit |
 | Load again with **Update or insert by key** | Kept tables are updated by their primary keys, nothing is dropped |
 | Shape a report in **SQL Query** first | The first rows show the columns and values, **Export…** then reads all rows by one cursor |
+| Remember the passwords of the data sources of **sync tasks** | A run on a schedule has nobody to ask, a password which is not remembered fails the run |
+| Read the **migration report** after a long import | The target rows are counted again after the end, a ✗ shows a table whose rows differ from the written rows |
 | Copy with a **target table name** | `{table}_copy` keeps the originals, a copy in the same schema without a new name is refused |
 
 ---
@@ -406,6 +425,12 @@ All settings live in `sqljam.properties`, placed next to the runnable jar in `bi
 | `sqljam.export.csv-delimiter` | `,` | Delimiter of CSV files: `,` `;` `\|` or `\t` |
 | `sqljam.import.confirm-commit.reminder-minutes` | `10` | An import waiting for commit reminds you after these minutes, its transaction holds locks and log space (0 = off) |
 | `sqljam.export.data-file-strategy` | `SINGLE_FILE` | `SINGLE_FILE` or `FILE_PER_TABLE` |
+| `sqljam.reports.dir` | `~/.sqljam/reports` | Folder of the migration reports, one JSON file a report |
+| `sqljam.reports.keep` | `200` | Reports kept in the history, the oldest are deleted beyond it |
+| `sqljam.sync.file` | `~/.sqljam/sync-tasks.json` | Sync tasks with their schedules and watermarks |
+| `sqljam.sync.enabled` | `true` | The scheduler of SqlJam runs the sync tasks while it is open |
+| `sqljam.sync.tick-seconds` | `30` | How often the scheduler of SqlJam looks for tasks which are due |
+| `sqljam.sync.retry-delay-seconds` | `30` | First delay before a run after an error of the connection, it doubles with each attempt |
 | `sqljam.export.lob-separated` | `true` | Write LOBs as files |
 | `sqljam.pool.maximum-size` | `10` | HikariCP max pool size |
 | `sqljam.pool.minimum-idle` | `1` | HikariCP min idle connections |
@@ -423,6 +448,17 @@ JVM options live in `sqljam.vmoptions` next to the runnable jar, one option per 
 -Dfile.encoding=UTF-8
 ```
 
+Sync tasks run from the command line too, which is what the system scheduler calls (`sqljam.bat` on Windows):
+
+| Command | Does |
+|---|---|
+| `sqljam.sh sync --list` | Lists the tasks with their schedules, next and last runs |
+| `sqljam.sh sync --task NAME` | Runs a task now, by its name or id |
+| `sqljam.sh sync --task NAME --if-due` | Runs it only when it is due |
+| `sqljam.sh sync --due` | Runs every task which is due, one line of cron for all of them |
+
+The exit code is `0` when the runs completed, `1` when one failed or was cancelled, `2` for a wrong command. A task never runs twice at once, in SqlJam and on the command line.
+
 Export options (UI / `ExportConfiguration`):
 
 | Option | Default | Description |
@@ -437,6 +473,7 @@ Export options (UI / `ExportConfiguration`):
 | `writeMode` / `keyColumnNames` | `INSERT` | `UPSERT` updates the rows of the same key (the primary key or chosen columns) and inserts the others, `SKIP_EXISTING` keeps them and inserts the others |
 | `CsvOptions` | comma, `"`, UTF-8 | Delimiter, quote, NULL text, header, encoding and date format of CSV files |
 | `tableNamePattern` | | Target table name, `{table}` is the source name, e.g. `{table}_copy` |
+| `columnMappings` | | Target name, type or no column of a source column, by table and column, e.g. `ORDERS.NOTE → REMARK TEXT`. Other columns are imported as they are |
 | `tableQueries` | | Columns, WHERE and ORDER BY per table, e.g. rows narrowed in the data viewer |
 | `queries` | | Free queries exported as tables, SQL by table name, e.g. the query of the SQL editor |
 
@@ -448,20 +485,28 @@ Export options (UI / `ExportConfiguration`):
 
 | Scenario (200,000 rows × 6 columns) | Time | Rows/s |
 |---|---|---|
-| H2 → Oracle 23ai | 2.1 s | 95.3k |
-| H2 → export package (PostgreSQL, 32 MB, 4 files) | 2.9 s | 69.4k |
-| H2 → PostgreSQL 16 | 3.2 s | 62.4k |
-| H2 → MySQL 9.6 | 3.3 s | 60.7k |
-| H2 → SQL Server 2022 | 5.0 s | 40.1k |
-| Export package → PostgreSQL | 4.5 s | 44.5k |
+| H2 → MySQL | 10.3 s | 19.5k |
+| H2 → MariaDB | 9.5 s | 21.1k |
+| H2 → PostgreSQL | 6.4 s | 31.3k |
+| H2 → Oracle | 4.2 s | 47.9k |
+| H2 → SQL Server | 12.0 s | 16.7k |
+| H2 → Db2 | 9.3 s | 21.6k |
+| H2 → ClickHouse | 4.2 s | 47.4k |
+| H2 → DuckDB | 5.7 s | 35.1k |
+| H2 → SQL package | 2.6 s | 76.1k |
+| H2 → Parquet package | 5.7 s | 35.4k |
+| H2 → CSV package | 5.8 s | 34.7k |
+| SQL package → PostgreSQL | 24.3 s | 8.2k |
+| Qdrant → PostgreSQL (20,000 points, 256-d vectors and payload) | 18.4 s | 1.1k |
 
-Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Server in Docker. Default settings.
+Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a server of the local network (about 100 Mbit/s), H2, DuckDB and the packages are local. Default settings. Each scenario is measured by `TransferBenchmark`.
 
 | Design choice | Benefit |
 |---|---|
 | Rows paged by primary key | Stable, deterministic reads on every database |
 | Tables copied one by one | Predictable load on production servers |
-| Packages contain plain SQL | Readable, editable and portable. Direct import uses batched inserts for maximum speed |
+| Packages contain plain SQL, Parquet or CSV | Readable, editable and portable, or columnar for analytics |
+| Writes sized for each database | Batched inserts, rewritten into multi-row statements for PostgreSQL and MySQL, several rows a statement for DuckDB, with the same value conversions everywhere |
 
 ---
 
@@ -493,7 +538,8 @@ Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Ser
 | Are partitioned tables kept? | Yes. The same database type creates the partitioning again with its partitions, bounds and rows: range, list, hash, key and subpartitions of MySQL and MariaDB (system time too), range, list, hash, default and nested partitions of PostgreSQL, range, list, hash, interval, automatic list, composite and reference partitions of Oracle, partition functions of SQL Server, range partitions of Db2 and partition keys of ClickHouse. Other databases get the tables with all rows. In the tree a partitioned table shows its partitioning next to its name and PostgreSQL partitions are listed under their table |
 | How are vectors copied? | As vectors of the target with their dimensions: `vector(n)` of pgvector, `VECTOR(n)` of MySQL, MariaDB, SQL Server and Db2, `VECTOR(n, FLOAT32)` of Oracle, `FLOAT[n]` of DuckDB and `Array(Float32)` of ClickHouse. A vector index becomes the vector index of the target with the same distance. Vectors which the target can not keep exactly, e.g. doubles into pgvector, stay text and keep every digit |
 | Can I generate scripts for an older server? | Yes, choose the target version (e.g. Oracle `11.2`, SQL Server `2008`) and a compatible dialect is used |
-| Can I keep the password out of disk? | Uncheck *Remember password* on the login page, it stays in memory for the session, and so does the password or passphrase of the SSH tunnel |
+| Can I keep the password out of disk? | Uncheck *Remember password* in the data source, or *Save* when SqlJam asks for it. It stays in memory for the session, and so does the password or passphrase of the SSH tunnel |
+| Can I rename columns or change their types? | Yes. **Map Columns…** next to the target data source renames a column, writes the type you type as it is, or leaves the column out. Keys, indexes, foreign keys and identity values follow the new names. In code, set `columnMappings` of the import configuration |
 | Can I reach a database behind a bastion host? | Yes. Check **Connect through SSH tunnel** and enter the SSH server, its user and a password or a private key. The host and port of the data source are those which the SSH server reaches, e.g. `localhost:5432`. Exports, imports, queries and Info all go through the tunnel |
 | Can I paste rows into a spreadsheet or a ticket? | Yes. Select rows of any data table and press **Ctrl+C** (**⌘+C** on macOS) for tab separated values, **Ctrl+Shift+C** with the headers, or right-click **Copy Rows As** CSV, TSV, JSON or Markdown |
 | How do I run the tests? | `mvn verify`, integration tests use local databases and are skipped when unreachable |

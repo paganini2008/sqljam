@@ -85,8 +85,7 @@ public final class DbTypeCells {
     static void setCategoryStart(ListCell<?> cell, boolean start) {
         cell.getStyleClass().remove(CATEGORY_START);
         // Inline, dialogs have the theme without the stylesheet of the application
-        cell.setStyle(start ? "-fx-cell-size: " + (cell.getListView() != null
-                && cell.getListView().getStyleClass().contains("profile-list") ? "4.6em" : "4em") : null);
+        cell.setStyle(start ? "-fx-cell-size: 4em" : null);
         if (start) {
             cell.getStyleClass().add(CATEGORY_START);
         }
@@ -146,37 +145,6 @@ public final class DbTypeCells {
             @Override
             public ConnectionProfile fromString(String text) {
                 return null;
-            }
-        });
-    }
-
-    /**
-     * Profiles ordered by category have a category header before the first profile of each category
-     */
-    public static void setupProfileList(ListView<ConnectionProfile> listView) {
-        listView.getStyleClass().add("profile-list");
-        listView.setCellFactory(view -> new ListCell<>() {
-            @Override
-            protected void updateItem(ConnectionProfile item, boolean empty) {
-                super.updateItem(item, empty);
-                setCategoryStart(this, false);
-                if (empty || item == null) {
-                    setText(null);
-                    setGraphic(null);
-                    return;
-                }
-                String text = item.getName() + "\n" + (item.getDbType() != null ? item.getDbType().getDisplayName()
-                        : "");
-                if (isCategoryStart(view.getItems(), getIndex(), DbTypeCells::categoryOf)) {
-                    setCategoryStart(this, true);
-                    setText(null);
-                    // The gap of the icon and text of a cell
-                    setGraphic(withHeader(categoryOf(item), new HBox(getGraphicTextGap(), iconOf(item),
-                            new Label(text))));
-                } else {
-                    setText(text);
-                    setGraphic(iconOf(item));
-                }
             }
         });
     }

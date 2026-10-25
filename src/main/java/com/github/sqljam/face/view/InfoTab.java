@@ -22,7 +22,9 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.Callable;
+import java.util.function.Supplier;
 
+import com.github.sqljam.face.service.MetricSource;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -59,6 +61,8 @@ public class InfoTab extends Tab {
     private final TableView<List<String>> healthTable = table("infoHealthTable");
     private final Label refreshedLabel = new Label();
     private final Button refreshButton = new Button(Messages.get("action.refresh"), Icons.of(Icons.REFRESH));
+    private DashboardPane dashboardPane;
+    private TabPane tabs;
 
     /**
      * @param overview sections of the overview, read in the background
@@ -66,6 +70,14 @@ public class InfoTab extends Tab {
      */
     public InfoTab(String name, Node graphic, Callable<Map<String, Map<String, String>>> overview,
                    Callable<Map<String, Map<String, String>>> health) {
+        this(name, graphic, overview, health, null);
+    }
+
+    /**
+     * @param dashboard the metrics of the live charts of the dashboard, null for sources without
+     */
+    public InfoTab(String name, Node graphic, Callable<Map<String, Map<String, String>>> overview,
+                   Callable<Map<String, Map<String, String>>> health, Supplier<MetricSource> dashboard) {
         this.overview = overview;
         this.health = health;
         setText(Messages.format("info.title", name));
@@ -83,6 +95,31 @@ public class InfoTab extends Tab {
         Tab healthTab = new Tab(Messages.get("info.health"), healthTable);
         healthTab.setGraphic(Icons.of(Icons.HEALTH));
         tabs.getTabs().addAll(overviewTab, healthTab);
+        if (dashboard != null) {
+            dashboardPane = new DashboardPane(dashboard);
+            Tab dashboardTab = new Tab(Messages.get("info.dashboard"), dashboardPane);
+            dashboardTab.setId("infoDashboardTab");
+            dashboardTab.setGraphic(Icons.of(Icons.HEALTH));
+            tabs.getTabs().add(dashboardTab);
+            // Samples are read while the dashboard is shown only: its page and this tab are selected
+            Runnable follow = () -> {
+                if (dashboardTab.isSelected() && isSelected()) {
+                    dashboardPane.start();
+                } else {
+                    dashboardPane.stop();
+                }
+            };
+            dashboardTab.selectedProperty().addListener((observable, was, selected) -> follow.run());
+            selectedProperty().addListener((observable, was, selected) -> follow.run());
+            // Closed by the user or removed, e.g. when its data source is disconnected
+            tabPaneProperty().addListener((observable, old, pane) -> {
+                if (pane == null) {
+                    dashboardPane.close();
+                }
+            });
+            setOnClosed(event -> dashboardPane.close());
+        }
+        this.tabs = tabs;
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
         HBox bar = new HBox(8, spacer, refreshedLabel, refreshButton);
@@ -171,5 +208,20 @@ public class InfoTab extends Tab {
     private void done() {
         refreshButton.setDisable(false);
         refreshedLabel.setText(Messages.format("info.refreshed", LocalTime.now().format(TIME)));
+    }
+
+    /**
+     * The dashboard of the tab, null for sources without
+     */
+    DashboardPane getDashboard() {
+        return dashboardPane;
+    }
+
+    /**
+     * Shows the dashboard, it starts its samples
+     */
+    public void showDashboard() {
+        tabs.getTabs().stream().filter(tab -> "infoDashboardTab".equals(tab.getId())).findFirst().ifPresent(tab ->
+                tabs.getSelectionModel().select(tab));
     }
 }

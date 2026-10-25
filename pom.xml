@@ -603,10 +603,12 @@
                                     </includes>
                                 </resource>
                                 <resource>
-                                    <!-- Tutorial video: export and import with the example database -->
+                                    <!-- Tutorial videos: SQL databases, vector databases, scheduled sync and reports -->
                                     <directory>${project.basedir}/docs/assets</directory>
                                     <includes>
-                                        <include>sqljam-tutorial.mp4</include>
+                                        <include>sqljam-sql.mp4</include>
+                                        <include>sqljam-vectors.mp4</include>
+                                        <include>sqljam-sync.mp4</include>
                                     </includes>
                                 </resource>
                             </resources>

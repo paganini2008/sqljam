@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.github.sqljam.jdbc.page;
+package com.github.sqljam.page;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -30,9 +30,6 @@ import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.PooledConnectionFactory;
 import com.github.sqljam.jdbc.ConnectionFactory;
 import com.github.sqljam.jdbc.JdbcUtils;
-import com.github.sqljam.page.DefaultPageContent;
-import com.github.sqljam.page.PageContent;
-import com.github.sqljam.page.PageReader;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 
 /**

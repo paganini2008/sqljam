@@ -35,6 +35,12 @@ public final class Launcher {
     }
 
     public static void main(String[] args) {
+        // sqljam sync runs sync tasks without the window, e.g. started by the scheduler of the system
+        if (SyncCommand.isCommand(args)) {
+            Locale.setDefault(Locale.ENGLISH);
+            System.exit(SyncCommand.run(args, System.out, System.err));
+            return;
+        }
         // Started by double click: start again with the JVM options of sqljam.vmoptions
         if (JvmOptions.relaunchIfNeeded(args)) {
             return;

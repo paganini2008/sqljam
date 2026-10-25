@@ -37,6 +37,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.ArrayUtils;
@@ -104,6 +105,11 @@ public class ImportExportHandler implements ExportHandler {
          * Key columns of upserts by source table name, the primary key of the table by default
          */
         private Map<String, List<String>> keyColumnNames = new HashMap<>();
+        /**
+         * Target columns which the user mapped by source table and source column: another name, a type of the
+         * target written as it is, or no column. Columns without a mapping are imported as they are.
+         */
+        private Map<String, Map<String, ColumnMapping>> columnMappings = new HashMap<>();
         /**
          * Whether target tables are dropped and created, existing tables, indexes and constraints are skipped when
          * they are kept
@@ -305,6 +311,7 @@ public class ImportExportHandler implements ExportHandler {
                     if (!existingSkipped) {
                         JdbcUtils.execute(connection, sql);
                     }
+                    exportListener.onDdlExecuted(sql, true);
                     if (log.isInfoEnabled()) {
                         log.info("Execute ddl: {}", sql);
                     }
@@ -321,6 +328,7 @@ public class ImportExportHandler implements ExportHandler {
                     }
                     exportListener.onError(String.format("Unable to execute sql: %s, cause: %s", sql,
                             e.getMessage()), e);
+                    exportListener.onDdlExecuted(sql, false);
                 }
             }
         } finally {
@@ -418,19 +426,22 @@ public class ImportExportHandler implements ExportHandler {
         identityValueTracker.track(tableMetaData, identityColumnNames, rowList);
         boolean identityIncluded = identityColumnNames.stream().anyMatch(template::containsKey);
 
-        String[] columns = template.keySet().toArray(new String[0]);
-        int[] nullTypes = new int[columns.length];
-        for (int i = 0; i < columns.length; i++) {
-            nullTypes[i] = dialect.getNullSqlType(getNullType(tableMetaData.findColumnMetaData(columns[i]).orElse(null)));
+        String[] sourceColumns = template.keySet().toArray(new String[0]);
+        int[] nullTypes = new int[sourceColumns.length];
+        for (int i = 0; i < sourceColumns.length; i++) {
+            nullTypes[i] = dialect.getNullSqlType(getNullType(tableMetaData.findColumnMetaData(sourceColumns[i])
+                    .orElse(null)));
         }
         // Empty LOBs of databases which store empty values as NULL (Oracle) are bound as LOB objects
-        int[] emptyLobTypes = new int[columns.length];
+        int[] emptyLobTypes = new int[sourceColumns.length];
         if (dialect.isEmptyValueNull()) {
-            for (int i = 0; i < columns.length; i++) {
-                emptyLobTypes[i] = getLobType(dialect.getRegisteredColumnTypeName(tableName, columns[i]),
-                        tableMetaData.findColumnMetaData(columns[i]).orElse(null));
+            for (int i = 0; i < sourceColumns.length; i++) {
+                emptyLobTypes[i] = getLobType(dialect.getRegisteredColumnTypeName(tableName, sourceColumns[i]),
+                        tableMetaData.findColumnMetaData(sourceColumns[i]).orElse(null));
             }
         }
+        // Target names of the columns as the user mapped them, the rows keep the source names
+        String[] columns = dialect.getTargetColumnNames(tableName, sourceColumns);
         String targetTableName = dialect.getTargetTableName(tableName);
         Map<String, String> targetTypes = Collections.emptyMap();
         boolean upsert = configuration.getWriteMode().isKeyed();
@@ -469,7 +480,8 @@ public class ImportExportHandler implements ExportHandler {
                 Set<String> fixed = new HashSet<>();
                 Arrays.stream(keys).forEach(name -> fixed.add(name.toLowerCase(Locale.ENGLISH)));
                 // Identity values of existing rows are kept
-                identityColumnNames.forEach(name -> fixed.add(name.toLowerCase(Locale.ENGLISH)));
+                identityColumnNames.forEach(name -> fixed.add(dialect.getTargetColumnName(tableName, name)
+                        .toLowerCase(Locale.ENGLISH)));
                 if (!dialect.isIndexedColumnUpdatable()) {
                     fixed.addAll(dialect.getIndexedColumns(connection, getTargetCatalog(connection),
                             getTargetSchema(connection, schemaName), dialect.foldIdentifier(targetTableName)));
@@ -494,35 +506,32 @@ public class ImportExportHandler implements ExportHandler {
                 Map<Integer, Boolean> arrayParameters = new HashMap<>();
                 final Map<String, String> types = targetTypes;
                 final Connection target = connection;
-                RowBinder binder = (statement, row) -> bindRow(target, statement, row, columns, nullTypes,
-                        emptyLobTypes, types, arrayColumns, arrayParameters);
+                RowBinder binder = (statement, row, offset) -> bindRow(target, statement, row, offset, columns,
+                        nullTypes, emptyLobTypes, types, arrayColumns, arrayParameters);
                 Savepoint savepoint = configuration.isSkipErrors() && transactional ? setSavepointQuietly(connection)
                         : null;
+                int rowsPerStatement = upsert ? 1 : dialect.getRowsPerInsert();
                 try {
-                    for (Map<String, Object> row : rowList) {
-                        binder.bind(ps, row);
-                        ps.addBatch();
-                    }
-                    int[] counts = ps.executeBatch();
-                    releaseQuietly(connection, savepoint);
-                    if (upsert) {
-                        // Updated rows count twice in MySQL, every row is written once
-                        rows = rowList.size();
+                    if (rowsPerStatement > 1 && rowList.size() > 1) {
+                        // Several rows a statement for databases which run a batch row by row (DuckDB)
+                        rows = insertRows(connection, catalogName, schemaName, targetTableName, columns, rowList,
+                                binder, rowsPerStatement);
+                        releaseQuietly(connection, savepoint);
                     } else {
-                        for (int n : counts) {
-                            rows += n > 0 ? n : (n == Statement.SUCCESS_NO_INFO ? 1 : 0);
-                        }
+                        rows = executeBatch(ps, rowList, binder, upsert);
+                        releaseQuietly(connection, savepoint);
                     }
                 } catch (SQLException e) {
                     if (!configuration.isSkipErrors()) {
                         throw e;
                     }
-                    // Rows are named by their keys in the log, or by their first columns
-                    List<String> named = keys != null && keys.length > 0 ? Arrays.asList(keys)
-                            : tableMetaData.getPrimaryKeyColumnNames();
+                    // Rows are named by their keys in the log, or by their first columns, by the source names
+                    // which the rows keep
+                    List<String> named = keys != null && keys.length > 0 ? toSourceColumns(keys, columns,
+                            sourceColumns) : tableMetaData.getPrimaryKeyColumnNames();
                     rows = writeRowByRow(connection, ps, insertSql, savepoint, transactional, rowList, binder, tableName,
-                            named.isEmpty() ? Arrays.asList(columns).subList(0, Math.min(3, columns.length))
-                                    : named, e);
+                            named.isEmpty() ? Arrays.asList(sourceColumns).subList(0, Math.min(3,
+                                    sourceColumns.length)) : named, e);
                 }
             }
             executeQuietly(connection, dialect.getStatementAfterInsert(catalogName, schemaName, targetTableName,
@@ -561,33 +570,127 @@ public class ImportExportHandler implements ExportHandler {
     }
 
     /**
+     * Source columns of target columns, by their positions in the columns which are written
+     */
+    static List<String> toSourceColumns(String[] targetNames, String[] columns, String[] sourceColumns) {
+        List<String> names = new ArrayList<>();
+        for (String name : targetNames) {
+            int index = 0;
+            while (index < columns.length && !columns[index].equalsIgnoreCase(name)) {
+                index++;
+            }
+            names.add(index < columns.length ? sourceColumns[index] : name);
+        }
+        return names;
+    }
+
+    /**
+     * Writes the rows by the batch of the statement
+     *
+     * @return rows written
+     */
+    private static int executeBatch(PreparedStatement ps, List<Map<String, Object>> rowList, RowBinder binder,
+                                    boolean upsert) throws SQLException {
+        for (Map<String, Object> row : rowList) {
+            binder.bind(ps, row);
+            ps.addBatch();
+        }
+        int[] counts = ps.executeBatch();
+        if (upsert) {
+            // Updated rows count twice in MySQL, every row is written once
+            return rowList.size();
+        }
+        int rows = 0;
+        for (int n : counts) {
+            rows += n > 0 ? n : (n == Statement.SUCCESS_NO_INFO ? 1 : 0);
+        }
+        return rows;
+    }
+
+    /**
+     * Writes the rows by statements of several rows each, e.g. 256 rows of DuckDB, which runs the rows of a batch
+     * one by one. The values are bound like those of a statement of one row.
+     *
+     * @return rows written
+     */
+    private int insertRows(Connection connection, String catalogName, String schemaName, String tableName,
+                           String[] columns, List<Map<String, Object>> rowList, RowBinder binder,
+                           int rowsPerStatement) throws SQLException {
+        int rows = 0;
+        PreparedStatement full = null;
+        try {
+            for (int from = 0; from < rowList.size(); from += rowsPerStatement) {
+                List<Map<String, Object>> part = rowList.subList(from, Math.min(from + rowsPerStatement,
+                        rowList.size()));
+                PreparedStatement statement;
+                if (part.size() == rowsPerStatement) {
+                    if (full == null) {
+                        full = connection.prepareStatement(dialect.getInsertTableStatement(catalogName, schemaName,
+                                tableName, columns, rowsPerStatement));
+                    }
+                    statement = full;
+                } else {
+                    statement = connection.prepareStatement(dialect.getInsertTableStatement(catalogName, schemaName,
+                            tableName, columns, part.size()));
+                }
+                try {
+                    for (int i = 0; i < part.size(); i++) {
+                        binder.bind(statement, part.get(i), i * columns.length);
+                    }
+                    int count = statement.executeUpdate();
+                    rows += count >= 0 ? count : part.size();
+                } finally {
+                    if (statement != full) {
+                        statement.close();
+                    }
+                }
+            }
+        } finally {
+            if (full != null) {
+                full.close();
+            }
+        }
+        return rows;
+    }
+
+    /**
      * Binds the values of a row to the parameters of the statement
      */
     @FunctionalInterface
     private interface RowBinder {
-        void bind(PreparedStatement ps, Map<String, Object> row) throws SQLException;
+
+        void bind(PreparedStatement ps, Map<String, Object> row, int offset) throws SQLException;
+
+        default void bind(PreparedStatement ps, Map<String, Object> row) throws SQLException {
+            bind(ps, row, 0);
+        }
     }
 
-    private void bindRow(Connection connection, PreparedStatement ps, Map<String, Object> row, String[] columns,
-                         int[] nullTypes, int[] emptyLobTypes, Map<String, String> targetTypes,
+    /**
+     * Binds the values of the row to the parameters after the offset, 0 for a statement of one row, a multiple of
+     * the columns for the next row of a statement of several rows
+     */
+    private void bindRow(Connection connection, PreparedStatement ps, Map<String, Object> row, int offset,
+                         String[] columns, int[] nullTypes, int[] emptyLobTypes, Map<String, String> targetTypes,
                          Set<String> arrayColumns, Map<Integer, Boolean> arrayParameters) throws SQLException {
         int index = 0;
         for (Object value : row.values()) {
+            int parameter = offset + index + 1;
             if (value == null) {
-                ps.setNull(index + 1, nullTypes[index]);
+                ps.setNull(parameter, nullTypes[index]);
             } else {
                 if (isArrayText(value) && dialect.isArrayParameterSupported()
                         && (arrayColumns.contains(columns[index].toLowerCase(Locale.ENGLISH))
-                        || isArrayParameter(ps, index + 1, arrayParameters))) {
+                        || isArrayParameter(ps, parameter, arrayParameters))) {
                     // Arrays kept as text (Parquet packages) are bound as arrays
                     value = parseArrayText(value.toString());
                 }
                 if (emptyLobTypes[index] == Types.BLOB && value instanceof byte[] && ((byte[]) value).length == 0) {
-                    ps.setBlob(index + 1, connection.createBlob());
+                    ps.setBlob(parameter, connection.createBlob());
                 } else if (emptyLobTypes[index] == Types.CLOB && "".equals(value)) {
-                    ps.setClob(index + 1, connection.createClob());
+                    ps.setClob(parameter, connection.createClob());
                 } else {
-                    ps.setObject(index + 1, targetTypes.isEmpty() ? value : dialect.getTargetJdbcValue(value,
+                    ps.setObject(parameter, targetTypes.isEmpty() ? value : dialect.getTargetJdbcValue(value,
                             targetTypes.get(columns[index].toLowerCase(Locale.ENGLISH))));
                 }
             }
@@ -674,12 +777,13 @@ public class ImportExportHandler implements ExportHandler {
                 connection.rollback();
             }
             skippedRows.computeIfAbsent(tableName, name -> new AtomicLong()).incrementAndGet();
-            String message = String.format("Skipped row of table '%s' (%s): %s", tableName,
-                    describeRow(row, namedColumns), e.getMessage());
+            String key = describeRow(row, namedColumns);
+            String message = String.format("Skipped row of table '%s' (%s): %s", tableName, key, e.getMessage());
             if (log.isWarnEnabled()) {
                 log.warn(message);
             }
             exportListener.onError(message, e);
+            exportListener.onRowSkipped(null, null, tableName, key, e);
             return false;
         }
     }
@@ -728,9 +832,11 @@ public class ImportExportHandler implements ExportHandler {
             // The existing table by its own name
             String targetTableName = targetDialect.getTargetTableName(tableName);
             Map<String, String> existingNames = targetNames.getOrDefault(targetTableName, Collections.emptyMap());
+            // The identity column by the name which the user mapped
+            String columnName = targetDialect.getTargetColumnName(tableName, entry.getKey());
             String sql = targetDialect.getResetIdentityStatement(catalogName, schemaName, existingNames.getOrDefault(
-                    "", targetTableName), existingNames.getOrDefault(entry.getKey().toLowerCase(Locale.ENGLISH),
-                    entry.getKey()), entry.getValue() + 1);
+                    "", targetTableName), existingNames.getOrDefault(columnName.toLowerCase(Locale.ENGLISH),
+                    columnName), entry.getValue() + 1);
             if (StringUtils.isNotBlank(sql)) {
                 sqls.add(sql);
             }
@@ -781,6 +887,10 @@ public class ImportExportHandler implements ExportHandler {
                 .orElse(null);
         if (CollectionUtils.isEmpty(keys)) {
             keys = tableMetaData.getPrimaryKeyColumnNames();
+        }
+        if (CollectionUtils.isNotEmpty(keys)) {
+            // Keys of the source are named as the user mapped them
+            keys = keys.stream().map(key -> dialect.getTargetColumnName(tableName, key)).collect(Collectors.toList());
         }
         if (CollectionUtils.isEmpty(keys)) {
             keys = dialect.getPrimaryKeyColumns(connection, getTargetCatalog(connection), getTargetSchema(connection,

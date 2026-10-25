@@ -30,16 +30,19 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 | Analytics needs Parquet | Parquet packages through an embedded DuckDB, Parquet files of other tools loaded into any table |
 | Spreadsheets need CSV | CSV packages with your delimiter, quote, NULL text, header, encoding (UTF-8 with BOM, GBK and more) and date format, exact types kept in `manifest.json`, CSV files of other tools loaded too |
 | An import went wrong | **One transaction** by default, rolled back on any error, or **commit every N rows**. **Skip rows with errors** goes on and logs each skipped row. **Confirm before commit** reviews a successful import first |
+| Did every row arrive? | A **migration report** for every import and export, also when it fails or is cancelled: rows per table, skipped rows with their errors, target rows counted afterwards, created objects and where it stopped. **Import History** lists every report, Markdown, HTML or JSON on export |
+| A copy has to stay up to date | **Sync Tasks** copy the changed rows by an update time or an increasing key, every N minutes or every day, run by SqlJam or by the system scheduler when it is closed, vector collections included, a report for every run |
 | Rows exist already | **Update or insert by key** or **skip existing by key**: the primary key or the columns of a unique index match the rows, insert is the default |
 | Warehouses apart from OLTP | DuckDB and ClickHouse data sources, grouped as OLAP databases |
 | Only part of a table | Data viewer query (columns, WHERE, GROUP BY, ORDER BY) and export of the rows of the query |
 | Rows of a join or a report | **SQL Query** editor with syntax highlighting, the first rows are shown and all rows of the query are exported as a table |
+| Columns named or typed differently | **Map Columns…** renames a column, gives it a type of the target or leaves it out, for tables and collections. Keys, indexes and foreign keys follow the new names |
 | A copy next to the original | Copies in the same schema with `{table}_copy`, keys and indexes renamed, source tables protected |
 | Custom and modern types | PostgreSQL enums and domains, unions, maps, tuples and variants |
 | Embeddings move with their search | Vectors of pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse keep their dimensions, vector indexes keep their distances and options |
 | Embeddings live in a vector database | Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma sit in the tree as **vector databases**: browse their databases, collections, partitions, tenants and namespaces, page through the records, then import collections straight into a database with vectors: ids, vectors, a column of each field and the whole payload as JSON |
 | Database behind a bastion host | **SSH tunnel** per data source with a password or a private key, host keys trusted on first use, a broken tunnel opens again by itself |
-| Which server, how healthy? | **Info** shows the overview and the health of a data source or a vector database, refreshed when you ask |
+| Which server, how healthy? | **Info** shows the overview and the health of a data source or a vector database, and a **Dashboard** of live charts: sessions, transactions, rows, cache, locks, network, CPU and memory |
 | Long values, rows for a ticket | One line per cell, a double click shows the whole value, **Copy Rows As** CSV, TSV, JSON or Markdown |
 | Many data sources | Grouped as relational, OLAP and vector databases with their logos, a **filter** above the tree |
 
@@ -61,7 +64,7 @@ bin/
 ├── sqljam.properties                       # configuration, edit and restart
 ├── sqljam.vmoptions                        # JVM options, one per line
 ├── sqljam.png                              # Dock icon of macOS
-└── sqljam-tutorial.mp4                     # tutorial video, SQL and vector databases in under 4 minutes
+└── sqljam-sql.mp4 / sqljam-vectors.mp4 / sqljam-sync.mp4   # tutorial videos of about 2 minutes each
 ```
 
 `sqljam.properties` and `sqljam.vmoptions` sit next to the runnable jar. Edit them and restart, no rebuild needed.
@@ -70,7 +73,7 @@ A splash screen shows the loading of the configuration, the data sources and the
 
 <p align="center"><img src="https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/splash.png" alt="SqlJam splash screen" width="520"></p>
 
-The first start brings an **Example Shop (H2)** data source with a few e-commerce tables (categories, customers, products, orders, order_items) to try everything right away. **Example** on the login page or **Help → Restore Example Database** brings it back at any time.
+SqlJam opens its main window like DBeaver and DataGrip, where it was closed, with the data sources in the tree, and connects again those which were connected then. A password which is not saved is asked when a data source is connected. The first start brings an **Example Shop (H2)** data source with a few e-commerce tables (categories, customers, products, orders, order_items) to try everything right away. **Help → Restore Example Database** brings it back at any time.
 
 Right-click a data source to **Connect**, and once it is connected the same menu offers **Disconnect**, which also closes its table tabs. When an import or export needs a target data source, the **+** button next to it creates one on the spot. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and how to reach the author, and the GitHub icon at the bottom right opens the repository.
 
@@ -84,11 +87,11 @@ A vector database is a data source of the **Vector databases** category, with an
 
 Every data table shows one line per cell. A double click or **Shift+Enter** opens the whole value with JSON indented and vectors described, a header sorts the rows of the page, and **Copy Rows As** copies the selected rows as CSV, TSV, JSON or Markdown. **Info** on the toolbar shows the server, the driver, the session and the health of the selected data source.
 
-A short [tutorial video](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-tutorial.mp4) walks through the example database: query rows, export into files, import the package into PostgreSQL, copy the tables straight into SQL Server, then browse a Qdrant collection, import it into PostgreSQL and open a tenant of Weaviate.
+Three tutorial videos of about 2 minutes each walk through SqlJam: [SQL databases](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sql.mp4) (query, export into files, import into PostgreSQL, the SQL editor, a copy into SQL Server), [vector databases](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-vectors.mp4) (a Qdrant collection, its import into PostgreSQL, tenants of Weaviate) and [scheduled sync and reports](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sync.mp4) (a sync task of the shop into PostgreSQL, its reports and the system scheduler).
 
-| 1. Log in to a data source | 2. Export wizard | 3. Progress |
+| 1. Data source | 2. Export wizard | 3. Progress |
 |---|---|---|
-| ![login](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/login.png) | ![export](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/export-wizard.png) | ![progress](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/progress.png) |
+| ![data source](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/data-source.png) | ![export](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/export-wizard.png) | ![progress](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/progress.png) |
 
 | 4. Data query | 5. Package viewer | 6. Parquet files |
 |---|---|---|
@@ -97,6 +100,14 @@ A short [tutorial video](https://github.com/paganini2008/sqljam/blob/master/docs
 | 7. Vector database collection | 8. Vector database import | 9. Database info |
 |---|---|---|
 | ![collection](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/vdb-collection.png) | ![vdb import](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/import-vdb.png) | ![info](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/database-info.png) |
+
+| 10. Migration report | 11. Import history | 12. Sync tasks |
+|---|---|---|
+| ![report](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/report.png) | ![history](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/import-history.png) | ![sync](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sync-tasks.png) |
+
+| 13. Dashboard | 14. Column mapping | 15. Feature map |
+|---|---|---|
+| ![dashboard](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/dashboard.png) | ![mapping](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/column-mapping.png) | ![features](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/feature-map.png) |
 
 ## 4. Requirements
 
@@ -279,14 +290,21 @@ All settings live in `bin/sqljam.properties` next to the runnable jar. Settings 
 
 | Scenario (200,000 rows × 6 columns) | Time | Rows/s |
 |---|---|---|
-| H2 → Oracle 23ai | 2.1 s | 95.3k |
-| H2 → export package (32 MB, 4 files) | 2.9 s | 69.4k |
-| H2 → PostgreSQL 16 | 3.2 s | 62.4k |
-| H2 → MySQL 9.6 | 3.3 s | 60.7k |
-| H2 → SQL Server 2022 | 5.0 s | 40.1k |
-| Export package → PostgreSQL | 4.5 s | 44.5k |
+| H2 → MySQL | 10.3 s | 19.5k |
+| H2 → MariaDB | 9.5 s | 21.1k |
+| H2 → PostgreSQL | 6.4 s | 31.3k |
+| H2 → Oracle | 4.2 s | 47.9k |
+| H2 → SQL Server | 12.0 s | 16.7k |
+| H2 → Db2 | 9.3 s | 21.6k |
+| H2 → ClickHouse | 4.2 s | 47.4k |
+| H2 → DuckDB | 5.7 s | 35.1k |
+| H2 → SQL package | 2.6 s | 76.1k |
+| H2 → Parquet package | 5.7 s | 35.4k |
+| H2 → CSV package | 5.8 s | 34.7k |
+| SQL package → PostgreSQL | 24.3 s | 8.2k |
+| Qdrant → PostgreSQL (20,000 points, 256-d vectors and payload) | 18.4 s | 1.1k |
 
-Environment: Apple M2 Max, 32 GB, JDK 17. MySQL/PostgreSQL local, Oracle/SQL Server in Docker. Default settings.
+Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a server of the local network (about 100 Mbit/s), H2, DuckDB and the packages are local. Default settings. Each scenario is measured by `TransferBenchmark`.
 
 **Quality**: a full cross-database import matrix with every column type of every database, SQL, Parquet and CSV package round trips, commit and roll back verified on every database, copies in the same schema, old-version SQL executed on real servers, UI and boundary tests.
 

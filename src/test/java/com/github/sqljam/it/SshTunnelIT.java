@@ -20,10 +20,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
@@ -38,7 +40,7 @@ import com.github.sqljam.face.service.DatabaseInfo;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.utils.EmbeddedSshServer;
 import com.github.sqljam.utils.SshSettings;
-import com.github.sqljam.utils.SshTunnels;
+import com.github.sqljam.utils.SshUtils;
 
 /**
  * @Description: SshTunnelIT connects to the server databases of the tests through SSH tunnels of an embedded SSH
@@ -58,13 +60,13 @@ class SshTunnelIT {
 
     @BeforeAll
     static void startServer() throws Exception {
-        SshTunnels.setKnownHostsFile(dir.resolve("known_hosts"));
+        SshUtils.setKnownHostsFile(dir.resolve("known_hosts"));
         server = new EmbeddedSshServer(dir.resolve("host.key"), 0);
     }
 
     @AfterAll
     static void stopServer() throws Exception {
-        SshTunnels.closeAll();
+        SshUtils.closeAll();
         server.close();
     }
 
@@ -77,7 +79,7 @@ class SshTunnelIT {
     /**
      * Catalogs of the database, schemas of a database without catalogs (Oracle)
      */
-    static java.util.List<String> browse(DatabaseSession session) throws Exception {
+    static List<String> browse(DatabaseSession session) throws Exception {
         return session.getDbType().isCatalogSupported() ? session.getCatalogs() : session.getSchemas(null);
     }
 
@@ -87,13 +89,13 @@ class SshTunnelIT {
         assumeTrue(database.isAvailable());
         ConnectionProfile profile = tunneled(database, server.passwordSettings());
         String url = profile.getJdbcUrl();
-        assertTrue(url.contains(SshTunnels.LOCALHOST_ADDRESS + ":" + SshTunnels.getLocalPort(profile.getId())),
+        assertTrue(url.contains(SshUtils.LOCALHOST_ADDRESS + ":" + SshUtils.getLocalPort(profile.getId())),
                 url);
         assertFalse(url.contains(database.getSourceProfile().getHostname()), url);
         // A tunnel opened for the test is closed after it
-        SshTunnels.close(profile.getId());
+        SshUtils.close(profile.getId());
         assertFalse(StringUtils.isBlank(DatabaseSession.testConnection(profile)));
-        assertFalse(SshTunnels.isOpen(profile.getId()));
+        assertFalse(SshUtils.isOpen(profile.getId()));
 
         try (DatabaseSession session = new DatabaseSession(profile)) {
             assertFalse(browse(session).isEmpty());
@@ -107,17 +109,17 @@ class SshTunnelIT {
             String tunnel = overview.get("Server").get("SSH tunnel");
             assertTrue(tunnel.startsWith(EmbeddedSshServer.USER + "@127.0.0.1:" + server.getPort()), tunnel);
             // A broken tunnel is opened again on its port, the pool of the session reaches it
-            int port = SshTunnels.getLocalPort(profile.getId());
+            int port = SshUtils.getLocalPort(profile.getId());
             server.dropSessions();
             long deadline = System.currentTimeMillis() + 5000;
-            while (SshTunnels.isOpen(profile.getId()) && System.currentTimeMillis() < deadline) {
+            while (SshUtils.isOpen(profile.getId()) && System.currentTimeMillis() < deadline) {
                 Thread.sleep(50);
             }
             assertFalse(browse(session).isEmpty());
-            assertEquals(port, SshTunnels.getLocalPort(profile.getId()));
+            assertEquals(port, SshUtils.getLocalPort(profile.getId()));
         }
         // The session closes its tunnel
-        assertFalse(SshTunnels.isOpen(profile.getId()));
+        assertFalse(SshUtils.isOpen(profile.getId()));
     }
 
     /**
@@ -149,20 +151,24 @@ class SshTunnelIT {
         profile.setHostname(null);
         profile.setSsh(server.passwordSettings());
         String url = profile.getJdbcUrl();
-        assertTrue(url.startsWith("jdbc:mysql://127.0.0.1:" + SshTunnels.getLocalPort(profile.getId())), url);
+        assertTrue(url.startsWith("jdbc:mysql://127.0.0.1:" + SshUtils.getLocalPort(profile.getId())), url);
         assertFalse(StringUtils.isBlank(DatabaseSession.testConnection(profile)));
-        SshTunnels.close(profile.getId());
+        SshUtils.close(profile.getId());
     }
 
     /**
-     * A real SSH server, e.g. of a Tailscale network, to the target of -Dsqljam.it.ssh.target (a database of the
-     * tests, MYSQL by default)
+     * A real SSH server, e.g. OpenSSH of Windows or of a Tailscale network: -Dsqljam.it.ssh.host (with .port,
+     * .user, .password or .key and .passphrase). The databases of the tests are reached as -Dsqljam.it.ssh.targetHost
+     * names them from the SSH server, e.g. localhost, their own host by default. -Dsqljam.it.ssh.targets limits
+     * the databases, e.g. MYSQL,ORACLE.
      */
-    @Test
-    void connectsThroughRealServer() throws Exception {
+    @ParameterizedTest
+    @EnumSource(value = ItDatabase.class, names = {"MYSQL", "POSTGRESQL", "SQLSERVER", "ORACLE"})
+    void connectsThroughRealServer(ItDatabase database) throws Exception {
         String host = System.getProperty("sqljam.it.ssh.host");
         assumeTrue(StringUtils.isNotBlank(host), "-Dsqljam.it.ssh.host is not given");
-        ItDatabase database = ItDatabase.valueOf(System.getProperty("sqljam.it.ssh.target", "MYSQL"));
+        String targets = System.getProperty("sqljam.it.ssh.targets", "");
+        assumeTrue(targets.isBlank() || List.of(targets.split(",")).contains(database.name()));
         assumeTrue(database.isAvailable());
         SshSettings settings = new SshSettings();
         settings.setEnabled(true);
@@ -178,12 +184,29 @@ class SshTunnelIT {
             settings.setPassword(System.getProperty("sqljam.it.ssh.password"));
         }
         // Host keys of a real server are kept apart from those of the embedded one
-        SshTunnels.setKnownHostsFile(dir.resolve("real_known_hosts"));
+        Path knownHosts = dir.resolve("real_known_hosts");
+        SshUtils.setKnownHostsFile(knownHosts);
         try {
             ConnectionProfile profile = tunneled(database, settings);
+            String targetHost = System.getProperty("sqljam.it.ssh.targetHost");
+            if (StringUtils.isNotBlank(targetHost)) {
+                profile.setHostname(targetHost);
+            }
             assertFalse(StringUtils.isBlank(DatabaseSession.testConnection(profile)));
+            assertTrue(Files.readString(knownHosts).contains(host), "The host key is remembered");
+            try (DatabaseSession session = new DatabaseSession(profile)) {
+                assertFalse(browse(session).isEmpty());
+                try (Connection connection = session.openSqlConnection(null, null); Statement statement = connection
+                        .createStatement(); ResultSet rs = statement.executeQuery(database == ItDatabase.ORACLE
+                                ? "SELECT 1 FROM DUAL" : "SELECT 1")) {
+                    assertTrue(rs.next());
+                }
+                String tunnel = new DatabaseInfo(profile, session).getOverview().get("Server").get("SSH tunnel");
+                assertTrue(tunnel.startsWith(settings.getUsername() + "@" + host), tunnel);
+            }
+            assertFalse(SshUtils.isOpen(profile.getId()));
         } finally {
-            SshTunnels.setKnownHostsFile(dir.resolve("known_hosts"));
+            SshUtils.setKnownHostsFile(dir.resolve("known_hosts"));
         }
     }
 }

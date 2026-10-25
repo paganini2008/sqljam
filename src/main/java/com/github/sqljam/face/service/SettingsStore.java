@@ -16,6 +16,8 @@
 package com.github.sqljam.face.service;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.config.Config;
@@ -41,6 +43,11 @@ public class SettingsStore {
         settings.setTheme(config.getString("sqljam.ui.theme", AppSettings.DEFAULT_THEME));
         settings.setWindowWidth(config.getDouble("sqljam.ui.window.width", settings.getWindowWidth()));
         settings.setWindowHeight(config.getDouble("sqljam.ui.window.height", settings.getWindowHeight()));
+        settings.setWindowX(config.getDouble("sqljam.ui.window.x", Double.NaN));
+        settings.setWindowY(config.getDouble("sqljam.ui.window.y", Double.NaN));
+        settings.setWindowMaximized(config.getBoolean("sqljam.ui.window.maximized", false));
+        settings.setConnectedSources(new ArrayList<>(Arrays.asList(StringUtils.split(StringUtils.defaultString(
+                config.getString("sqljam.ui.connected-sources", "")), ','))));
         settings.setDataPageSize(config.getInt("sqljam.ui.data.page-size", settings.getDataPageSize()));
         settings.setTransferPageSize(config.getInt("sqljam.export.page-size", settings.getTransferPageSize()));
         settings.setLobPageSize(config.getInt("sqljam.export.lob-page-size", settings.getLobPageSize()));
@@ -69,6 +76,10 @@ public class SettingsStore {
         config.set("sqljam.ui.theme", settings.getTheme());
         config.set("sqljam.ui.window.width", (long) settings.getWindowWidth());
         config.set("sqljam.ui.window.height", (long) settings.getWindowHeight());
+        config.set("sqljam.ui.window.x", Double.isNaN(settings.getWindowX()) ? null : (long) settings.getWindowX());
+        config.set("sqljam.ui.window.y", Double.isNaN(settings.getWindowY()) ? null : (long) settings.getWindowY());
+        config.set("sqljam.ui.window.maximized", settings.isWindowMaximized());
+        config.set("sqljam.ui.connected-sources", String.join(",", settings.getConnectedSources()));
         config.set("sqljam.ui.data.page-size", settings.getDataPageSize());
         config.set("sqljam.export.page-size", settings.getTransferPageSize());
         config.set("sqljam.export.max-file-size", settings.getMaxDataFileSize());

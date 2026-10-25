@@ -18,6 +18,8 @@ package com.github.sqljam.face.view;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.Base64;
+import java.nio.charset.StandardCharsets;
 import java.io.File;
 import java.nio.file.Files;
 import java.util.List;
@@ -29,6 +31,12 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.service.SettingsStore;
+import javafx.scene.paint.Color;
+import javafx.scene.control.TableView;
+import javafx.scene.control.TableRow;
+import javafx.scene.control.TableColumn;
+import javafx.scene.control.Label;
+import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.application.Application;
 import javafx.scene.Scene;
 import javafx.scene.control.Menu;
@@ -73,13 +81,67 @@ class ThemeManagerTest {
     @Test
     void appliesTheme() {
         assertEquals("Nord Dark", FxTestSupport.call(() -> ThemeManager.apply("Nord Dark")));
-        assertEquals(new NordDark().getUserAgentStylesheet(), Application.getUserAgentStylesheet());
+        assertTrue(Application.getUserAgentStylesheet().startsWith("data:text/css;base64,"));
+        assertTrue(stylesheet().contains(new NordDark().getUserAgentStylesheet()), stylesheet());
+    }
+
+    private static String stylesheet() {
+        String url = Application.getUserAgentStylesheet();
+        return new String(Base64.getDecoder().decode(url.substring(url.indexOf(',') + 1)),
+                StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Text and selected rows as the themes render them: text of dark themes is never gray, text of light themes
+     * has clear contrast, selected rows are blue
+     */
+    @Test
+    void rendersTextAndSelection() {
+        for (String name : ThemeManager.getThemeNames()) {
+            FxTestSupport.run(() -> ThemeManager.apply(name));
+            boolean dark = !name.contains("Light");
+            Color[] colors = FxTestSupport.call(() -> {
+                Label text = new Label("text");
+                Label muted = new Label("muted");
+                muted.getStyleClass().add("muted");
+                TableView<String> table = new TableView<>();
+                TableColumn<String, String> column = new TableColumn<>("c");
+                column.setCellValueFactory(features -> new ReadOnlyStringWrapper(features.getValue()));
+                table.getColumns().add(column);
+                table.getItems().setAll("a", "b");
+                VBox box = new VBox(text, muted, table);
+                Scene scene = new Scene(box, 300, 300);
+                scene.getStylesheets().add(ThemeManagerTest.class.getResource("/com/github/sqljam/face/app.css")
+                        .toExternalForm());
+                table.getSelectionModel().select(0);
+                box.applyCss();
+                box.layout();
+                TableRow<?> row = (TableRow<?>) table.lookupAll(".table-row-cell").stream().filter(node ->
+                        ((TableRow<?>) node).getIndex() == 0).findFirst().orElseThrow();
+                Color background = (Color) row.getBackground().getFills().get(row.getBackground().getFills().size()
+                        - 1).getFill();
+                return new Color[]{(Color) text.getTextFill(), (Color) muted.getTextFill(), background};
+            });
+            for (int i = 0; i < 2; i++) {
+                Color color = colors[i];
+                if (dark) {
+                    // White or near white, never gray
+                    assertTrue(color.getBrightness() > 0.93 && color.getSaturation() < 0.1, name + " " + color);
+                } else {
+                    assertTrue(color.getBrightness() < 0.26, name + " " + color);
+                }
+            }
+            // Selected rows are blue
+            Color selection = colors[2];
+            assertTrue(selection.getBlue() > selection.getRed() + 0.1, name + " selection " + selection);
+        }
+        FxTestSupport.run(() -> ThemeManager.apply(ThemeManager.DEFAULT_THEME));
     }
 
     @Test
     void unknownThemeFallsBackToDefault() {
         assertEquals("Primer Dark", FxTestSupport.call(() -> ThemeManager.apply("No Such Theme")));
-        assertEquals(new PrimerDark().getUserAgentStylesheet(), Application.getUserAgentStylesheet());
+        assertTrue(stylesheet().contains(new PrimerDark().getUserAgentStylesheet()), stylesheet());
         assertEquals("Primer Dark", FxTestSupport.call(() -> ThemeManager.apply(null)));
         assertEquals("Primer Dark", FxTestSupport.call(() -> ThemeManager.apply("")));
     }

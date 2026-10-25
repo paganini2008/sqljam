@@ -118,13 +118,15 @@ public class CombinedIndexMetaData implements TiedMetaData {
             return null;
         }
         String method = IndexMetaData.getIndexMethod(getDialect(), getDetail());
-        String indexName = getDialect().getIndexNameStatement(catalogName, schemaName, tableName, columnNames, unique,
-                method);
+        // Columns of the target, as the user mapped them
+        String[] targetColumnNames = getDialect().getTargetColumnNames(getTableName(), columnNames);
+        String indexName = getDialect().getIndexNameStatement(catalogName, schemaName, tableName, targetColumnNames,
+                unique, method);
         String statement = method != null ? getDialect().getCreateIndexStatement(catalogName, schemaName, tableName,
-                partition, columnNames, indexName, unique, method, indexMetaDatas.stream().map(md -> (String) md
+                partition, targetColumnNames, indexName, unique, method, indexMetaDatas.stream().map(md -> (String) md
                         .getDetail().get(IndexMetaData.OPERATOR_CLASS)).toArray(String[]::new),
                 (String) getDetail().get(IndexMetaData.INDEX_OPTIONS))
-                : getDialect().getCreateIndexStatement(catalogName, schemaName, tableName, partition, columnNames,
+                : getDialect().getCreateIndexStatement(catalogName, schemaName, tableName, partition, targetColumnNames,
                 indexName, unique, null);
         return new String[]{statement};
     }

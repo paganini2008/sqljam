@@ -107,6 +107,7 @@ public abstract class Dialect {
      * Name pattern of target tables, {table} is replaced with the source table name, e.g. {table}_copy
      */
     private String tableNamePattern;
+    private Map<String, Map<String, ColumnMapping>> columnMappings = Collections.emptyMap();
     private IdentifierCase identifierCase = IdentifierCase.AUTO;
     /**
      * Names of existing target tables and columns, they are used as they are
@@ -228,6 +229,67 @@ public abstract class Dialect {
         this.sourceDbType = sourceDbType;
     }
 
+    /**
+     * Columns which the user mapped, by source table and source column, none for an import as it is
+     */
+    public void setColumnMappings(Map<String, Map<String, ColumnMapping>> columnMappings) {
+        this.columnMappings = columnMappings != null ? columnMappings : Collections.emptyMap();
+    }
+
+    public Map<String, Map<String, ColumnMapping>> getColumnMappings() {
+        return columnMappings;
+    }
+
+    /**
+     * Mapping of a column of a source table, null if it has none
+     */
+    public ColumnMapping getColumnMapping(String sourceTable, String column) {
+        if (columnMappings.isEmpty() || sourceTable == null || column == null) {
+            return null;
+        }
+        Map<String, ColumnMapping> mappings = columnMappings.get(sourceTable);
+        return mappings != null ? mappings.get(column) : null;
+    }
+
+    /**
+     * Name of the target column of a column of a source table, its own name without a mapping
+     */
+    public String getTargetColumnName(String sourceTable, String column) {
+        ColumnMapping mapping = getColumnMapping(sourceTable, column);
+        return mapping != null ? mapping.getTargetName(column) : column;
+    }
+
+    public String[] getTargetColumnNames(String sourceTable, String[] columns) {
+        if (columnMappings.isEmpty() || columns == null) {
+            return columns;
+        }
+        return Arrays.stream(columns).map(column -> getTargetColumnName(sourceTable, column)).toArray(String[]::new);
+    }
+
+    /**
+     * Target columns of a list of columns separated by commas, e.g. of a composite primary key
+     */
+    public String getTargetColumnNames(String sourceTable, String columns) {
+        if (columnMappings.isEmpty() || columns == null) {
+            return columns;
+        }
+        return String.join(",", getTargetColumnNames(sourceTable, columns.split(",")));
+    }
+
+    public boolean isColumnSkipped(String sourceTable, String column) {
+        ColumnMapping mapping = getColumnMapping(sourceTable, column);
+        return mapping != null && mapping.isSkipped();
+    }
+
+    /**
+     * Type of the target column which the user wrote, written as it is, null for the translated type
+     */
+    public String getMappedColumnType(String sourceTable, String column) {
+        ColumnMapping mapping = getColumnMapping(sourceTable, column);
+        return mapping != null && mapping.getTargetType() != null ? VERBATIM_TYPE_PREFIX + mapping.getTargetType()
+                : null;
+    }
+
     public String getTableNamePattern() {
         return tableNamePattern;
     }
@@ -346,6 +408,7 @@ public abstract class Dialect {
         dialect.setSourceDbType(sourceDbType);
         dialect.setReadTargetDbType(readTargetDbType);
         dialect.setTableNamePattern(tableNamePattern);
+        dialect.setColumnMappings(columnMappings);
         dialect.setIdentifierCase(identifierCase);
         dialect.setTargetCatalogName(targetCatalogName);
         dialect.setTargetSchemaName(targetSchemaName);
@@ -1300,6 +1363,24 @@ public abstract class Dialect {
         String values = Arrays.stream(columnNames).map(name -> "?").collect(Collectors.joining(","));
         return String.format("INSERT INTO %s(%s) VALUES (%s)", getQualifiedTableName(catalog, schema, tableName), getIdentifiers(columnNames),
                 values);
+    }
+
+    /**
+     * Statement which inserts the rows, each row with a parameter of each column
+     */
+    public String getInsertTableStatement(String catalog, String schema, String tableName, String[] columnNames,
+                                          int rows) {
+        String values = "(" + Arrays.stream(columnNames).map(name -> "?").collect(Collectors.joining(",")) + ")";
+        return String.format("INSERT INTO %s(%s) VALUES %s", getQualifiedTableName(catalog, schema, tableName),
+                getIdentifiers(columnNames), String.join(",", Collections.nCopies(rows, values)));
+    }
+
+    /**
+     * Rows which a statement inserts at most, 1 for a batch of statements of one row. A database which runs the
+     * statements of a batch one by one (DuckDB) inserts several rows a statement.
+     */
+    public int getRowsPerInsert() {
+        return 1;
     }
 
     public String getInsertTableStatement(String catalog, String schema, String tableName, String[] columnNames,

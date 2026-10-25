@@ -16,6 +16,8 @@
 package com.github.sqljam.face.vdb;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
 import java.io.IOException;
@@ -32,6 +34,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import com.github.sqljam.face.view.DataSourceExtension;
 import com.github.sqljam.face.view.SourceItem;
+import com.github.sqljam.utils.RestException;
 import com.github.sqljam.vdb.VdbType;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -119,5 +122,14 @@ class VdbSourceItemsTest {
         List<SourceItem> collections = source.loadItems(databases.get(0));
         assertEquals(List.of("COLLECTION docs", "COLLECTION faq"), names(collections));
         assertEquals(List.of(), source.loadItems(collections.get(1)));
+    }
+
+    @Test
+    void tellsRefusedKeys() {
+        assertTrue(VdbDataSourceExtension.VdbSourceItem.isAccessDenied(new RestException("denied", 401, null)));
+        assertTrue(VdbDataSourceExtension.VdbSourceItem.isAccessDenied(new IllegalStateException(new RestException(
+                "Milvus: denied (code 1800)", 403, null))));
+        assertFalse(VdbDataSourceExtension.VdbSourceItem.isAccessDenied(new RestException("missing", 404, null)));
+        assertFalse(VdbDataSourceExtension.VdbSourceItem.isAccessDenied(new IOException("refused")));
     }
 }

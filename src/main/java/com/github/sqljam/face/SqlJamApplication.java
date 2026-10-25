@@ -27,15 +27,15 @@ import com.github.sqljam.face.service.JsonStore;
 import com.github.sqljam.face.service.SettingsStore;
 import com.github.sqljam.face.view.AppContext;
 import com.github.sqljam.face.view.Branding;
-import com.github.sqljam.face.view.LoginView;
 import com.github.sqljam.face.view.MainView;
 import com.github.sqljam.face.view.Messages;
 import com.github.sqljam.face.view.ProfileRegistry;
 import com.github.sqljam.face.view.TaskRunner;
 import com.github.sqljam.face.view.ThemeManager;
+import com.github.sqljam.face.view.WindowPlacement;
 import com.github.sqljam.impexp.DbType;
 import javafx.application.Application;
-import javafx.scene.Parent;
+import javafx.application.Platform;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 import lombok.extern.slf4j.Slf4j;
@@ -124,7 +124,8 @@ public class SqlJamApplication extends Application {
 
         stage.setTitle(Messages.get("app.title"));
         Branding.applyIcons(stage);
-        showConnectionLogin();
+        // Straight into the main window like DBeaver and DataGrip, data sources are connected in its tree
+        showMainView();
         if (SplashPreloader.isActive()) {
             notifyPreloader(new SplashPreloader.Status(Messages.get("splash.ready"), 1));
             notifyPreloader(new SplashPreloader.Ready(stage::show));
@@ -133,34 +134,35 @@ public class SqlJamApplication extends Application {
         }
     }
 
-    private void showPage(Parent root, double width, double height) {
-        Scene scene = new Scene(root, width, height);
-        scene.getStylesheets().add(getClass().getResource(STYLESHEET).toExternalForm());
-        stage.setScene(scene);
-        stage.centerOnScreen();
-    }
-
-    private void showConnectionLogin() {
-        LoginView loginView = new LoginView(context, this::showMainView);
-        showPage(loginView, 860, 620);
-        stage.setTitle(Messages.get("app.title"));
-    }
-
-    private void showMainView(ConnectionProfile profile) {
+    /**
+     * The main window where it was closed, the data sources which were connected then are connected again
+     */
+    private void showMainView() {
         AppSettings settings = context.getSettings();
         MainView mainView = new MainView(context);
-        showPage(mainView, settings.getWindowWidth(), settings.getWindowHeight());
+        Scene scene = new Scene(mainView, settings.getWindowWidth(), settings.getWindowHeight());
+        scene.getStylesheets().add(getClass().getResource(STYLESHEET).toExternalForm());
+        stage.setScene(scene);
+        WindowPlacement.restore(stage, settings);
         stage.setOnCloseRequest(event -> {
-            settings.setWindowWidth(stage.getWidth());
-            settings.setWindowHeight(stage.getHeight());
+            WindowPlacement.save(stage, settings);
             context.saveSettings();
         });
-        mainView.selectConnection(profile);
+        // After the window is shown, a password which is asked has its owner
+        stage.setOnShown(event -> Platform.runLater(() -> {
+            mainView.restoreConnected();
+            // Sync tasks run while SqlJam is open, a run which was missed meanwhile runs now
+            Config config = Config.getInstance();
+            if (config.getBoolean("sqljam.sync.enabled", true)) {
+                context.getSyncScheduler().start(config.getInt("sqljam.sync.tick-seconds", 30));
+            }
+        }));
     }
 
     @Override
     public void stop() {
         if (context != null) {
+            context.closeSyncScheduler();
             context.getSessionManager().closeAll();
         }
         TaskRunner.shutdown();

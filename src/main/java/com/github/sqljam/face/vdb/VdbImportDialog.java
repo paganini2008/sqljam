@@ -15,26 +15,26 @@
  */
 package com.github.sqljam.face.vdb;
 
-import java.io.PrintWriter;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.SQLFeatureNotSupportedException;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.logging.Logger;
+import java.util.stream.Collectors;
 
-import javax.sql.DataSource;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.model.TransferReport;
+import com.github.sqljam.face.service.TransferService;
 import com.github.sqljam.face.view.AppContext;
 import com.github.sqljam.face.view.Branding;
+import com.github.sqljam.face.view.ColumnMappingDialog;
 import com.github.sqljam.face.view.ConnectionDialog;
 import com.github.sqljam.face.view.DbIcons;
 import com.github.sqljam.face.view.DbTypeCells;
@@ -51,6 +51,7 @@ import com.github.sqljam.vdb.VdbExportConfiguration;
 import com.github.sqljam.vdb.VdbExportListener;
 import com.github.sqljam.vdb.VdbExportResult;
 import com.github.sqljam.vdb.VdbExporter;
+import com.github.sqljam.vdb.VdbFieldMapping;
 import com.github.sqljam.vdb.VdbQuery;
 import com.github.sqljam.vdb.dialect.VdbDialect;
 import javafx.beans.property.ReadOnlyObjectWrapper;
@@ -75,12 +76,14 @@ import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.ToggleGroup;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.CheckBoxTableCell;
 import javafx.scene.control.cell.TextFieldTableCell;
 import javafx.scene.layout.ColumnConstraints;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.stage.Window;
 
@@ -129,6 +132,12 @@ public class VdbImportDialog extends Dialog<Boolean> {
     private final Label databaseLabel = new Label(Messages.get("connection.database"));
     private final TableView<CollectionItem> collectionTable = new TableView<>();
     private final CheckBox allCheck = new CheckBox(Messages.get("export.tables.all"));
+    /**
+     * Fields which the user mapped by collection, none imports the collections as they are
+     */
+    private final Button mapColumnsButton = new Button(Messages.get("mapping.button"), Icons.of(Icons.COLUMNS));
+    private final Label mappingLabel = new Label();
+    private Map<String, Map<String, ColumnMappingDialog.Mapping>> fieldMappings = new HashMap<>();
     private final Label queryLabel = new Label();
     private final ComboBox<ConnectionProfile> targetCombo = new ComboBox<>();
     private final ComboBox<String> schemaCombo = new ComboBox<>();
@@ -286,7 +295,17 @@ public class VdbImportDialog extends Dialog<Boolean> {
         grid.addRow(0, new Label(Messages.get("vdb.connection")), sourceCombo);
         grid.addRow(1, databaseLabel, databaseCombo);
         grid.addRow(2, new Label(Messages.get("vdb.rows")), queryLabel);
-        return new VBox(8, grid, allCheck, collectionTable);
+        mapColumnsButton.setId("vdbMapColumnsButton");
+        mapColumnsButton.setTooltip(new Tooltip(Messages.get("mapping.button.tooltip")));
+        mapColumnsButton.setOnAction(event -> mapColumns());
+        mappingLabel.setId("vdbMappingLabel");
+        mappingLabel.getStyleClass().add("muted");
+        updateMappingLabel();
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+        HBox collectionBar = new HBox(10, allCheck, spacer, mappingLabel, mapColumnsButton);
+        collectionBar.setAlignment(Pos.CENTER_LEFT);
+        return new VBox(8, grid, collectionBar, collectionTable);
     }
 
     /**
@@ -379,6 +398,9 @@ public class VdbImportDialog extends Dialog<Boolean> {
 
     private void loadCollections() {
         collectionTable.getItems().clear();
+        // Mappings belong to the collections which were shown
+        fieldMappings = new HashMap<>();
+        updateMappingLabel();
         VdbProfile profile = getSourceProfile();
         if (profile == null) {
             return;
@@ -584,12 +606,46 @@ public class VdbImportDialog extends Dialog<Boolean> {
         return null;
     }
 
+    /**
+     * Target names and types of the fields of the checked collections, the id of a collection is always imported
+     */
+    private void mapColumns() {
+        VdbProfile profile = getSourceProfile();
+        List<String> collections = getSelectedCollections().stream().map(item -> item.name).collect(Collectors
+                .toList());
+        if (profile == null || collections.isEmpty()) {
+            showStatus("status-error", Messages.get("vdb.collections.choose"));
+            return;
+        }
+        new ColumnMappingDialog(getDialogPane().getScene().getWindow(), collections, collection -> {
+            try (VdbClient client = profile.getType().createClient(profile.toSource())) {
+                return client.describe(collection).getFields().stream().map(field -> new ColumnMappingDialog.Column(
+                        field.getName(), VdbCollectionTab.describeType(field), field.isPrimaryKey())).collect(
+                        Collectors.toList());
+            }
+        }, fieldMappings).showAndWait().ifPresent(mappings -> {
+            fieldMappings = new HashMap<>(mappings);
+            updateMappingLabel();
+        });
+    }
+
+    private void updateMappingLabel() {
+        long changed = fieldMappings.values().stream().mapToLong(Map::size).sum();
+        mappingLabel.setText(changed == 0 ? Messages.get("mapping.unchanged") : Messages.format("mapping.changed",
+                changed));
+    }
+
     VdbExportConfiguration buildConfiguration() {
         VdbExportConfiguration configuration = new VdbExportConfiguration();
         configuration.setDialect(targetDialect);
         configuration.setTargetSchema(StringUtils.trimToNull(schemaCombo.getEditor().getText()));
         for (CollectionItem item : getSelectedCollections()) {
             configuration.addCollection(item.name, StringUtils.trimToNull(item.tableName.get()));
+            // Fields which the user mapped, the others are imported as they are
+            Map<String, VdbFieldMapping> fields = configuration.getMappings().get(configuration.getMappings().size()
+                    - 1).getFields();
+            fieldMappings.getOrDefault(item.name, Map.of()).forEach((field, mapping) -> fields.put(field,
+                    new VdbFieldMapping(mapping.getName(), mapping.getType(), mapping.isSkipped())));
         }
         configuration.setQuery(query);
         configuration.setTableRecreated(recreateRadio.isSelected());
@@ -649,38 +705,15 @@ public class VdbImportDialog extends Dialog<Boolean> {
         progress.setSkipErrors(configuration.isErrorSkipped());
         ExportListener listener = progress.getListener();
         String schema = configuration.getTargetSchema();
-        VdbExportListener adapter = new VdbExportListener() {
-            @Override
-            public void onTableStarted(VdbExportResult.TableResult table) {
-                listener.onTableStart(null, schema, table.getTableName(), table.getTotal());
+        describeReport(progress.getReport(), source, target, configuration);
+        progress.setReportVerifier(report -> {
+            try (Connection connection = new ProfileDataSource(target).getConnection()) {
+                // Tables which are created by the import hold its rows only
+                TransferService.countTargetRows(connection, null, schema, report, name -> name, configuration
+                        .isTableRecreated());
             }
-
-            @Override
-            public void onRowsWritten(VdbExportResult.TableResult table) {
-                listener.onTableProgress(null, schema, table.getTableName(), table.getRead(), table.getTotal());
-            }
-
-            @Override
-            public void onRowSkipped(VdbExportResult.TableResult table, String key, Exception e) {
-                listener.onError(Messages.format("vdb.progress.skipped", table.getTableName(), key, e.getMessage()),
-                        e);
-            }
-
-            @Override
-            public void onStatementSkipped(VdbExportResult.TableResult table, String statement, Exception e) {
-                listener.onMessage(Messages.format("vdb.progress.statementSkipped", e.getMessage(), statement));
-            }
-
-            @Override
-            public void onTableFinished(VdbExportResult.TableResult table) {
-                listener.onTableEnd(null, schema, table.getTableName(), table.getWritten());
-            }
-
-            @Override
-            public boolean isCancelled() {
-                return listener.isCancelled();
-            }
-        };
+        });
+        VdbExportListener adapter = VdbListeners.adapt(listener, schema);
         progress.run(() -> {
             try (VdbClient client = source.getType().createClient(source.toSource())) {
                 return new VdbExporter(client, new ProfileDataSource(target), configuration, adapter).export();
@@ -689,67 +722,31 @@ public class VdbImportDialog extends Dialog<Boolean> {
                 () -> context.getSessionManager().closeSession(target.getId()));
     }
 
+    /**
+     * Header of the report of an import of collections, the collections are its tables
+     */
+    static void describeReport(TransferReport report, VdbProfile source, ConnectionProfile target,
+                               VdbExportConfiguration configuration) {
+        report.setKind(TransferReport.Kind.VECTOR_IMPORT);
+        report.setSource(source.getName() + " (" + source.getType() + ")" + (StringUtils.isNotBlank(source
+                .getDatabase()) ? " / " + source.getDatabase() : ""));
+        report.setTarget(target.getName() + (StringUtils.isNotBlank(configuration.getTargetSchema()) ? " / "
+                + configuration.getTargetSchema() : ""));
+        report.setTransaction(configuration.isTransactional() ? TransferReport.Transaction.EVERY_ROWS
+                : TransferReport.Transaction.NONE);
+        report.getOptions().put("Write mode", String.valueOf(configuration.getWriteMode()));
+        report.getOptions().put("Recreate tables", String.valueOf(configuration.isTableRecreated()));
+        report.getOptions().put("Vector indexes", String.valueOf(configuration.isVectorIndexCreated()));
+        report.getOptions().put("Page size", String.valueOf(configuration.getPageSize()));
+        report.getOptions().put("Skip rows with errors", String.valueOf(configuration.isErrorSkipped()));
+        for (VdbExportConfiguration.Mapping mapping : configuration.getMappings()) {
+            report.table(null, configuration.getTargetSchema(), mapping.getTableName());
+        }
+    }
+
     private void showStatus(String styleClass, String text) {
         statusLabel.getStyleClass().setAll("label", styleClass);
         statusLabel.setText(text);
     }
 
-    /**
-     * Connections of a data source of the jdbc line, the vdb line writes by plain JDBC
-     */
-    static final class ProfileDataSource implements DataSource {
-
-        private final ConnectionProfile profile;
-
-        ProfileDataSource(ConnectionProfile profile) {
-            this.profile = profile;
-        }
-
-        @Override
-        public Connection getConnection() throws SQLException {
-            String url = profile.getJdbcUrl();
-            return StringUtils.isBlank(profile.getUsername()) ? DriverManager.getConnection(url)
-                    : DriverManager.getConnection(url, profile.getUsername(), profile.getPassword());
-        }
-
-        @Override
-        public Connection getConnection(String username, String password) throws SQLException {
-            return DriverManager.getConnection(profile.getJdbcUrl(), username, password);
-        }
-
-        @Override
-        public PrintWriter getLogWriter() {
-            return null;
-        }
-
-        @Override
-        public void setLogWriter(PrintWriter out) {
-            // Not used
-        }
-
-        @Override
-        public void setLoginTimeout(int seconds) {
-            // DriverManager has its own timeout
-        }
-
-        @Override
-        public int getLoginTimeout() {
-            return 0;
-        }
-
-        @Override
-        public Logger getParentLogger() throws SQLFeatureNotSupportedException {
-            throw new SQLFeatureNotSupportedException();
-        }
-
-        @Override
-        public <T> T unwrap(Class<T> type) throws SQLException {
-            throw new SQLException("Not a wrapper of " + type);
-        }
-
-        @Override
-        public boolean isWrapperFor(Class<?> type) {
-            return false;
-        }
-    }
 }

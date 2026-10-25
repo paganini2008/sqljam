@@ -23,7 +23,7 @@ import org.apache.commons.lang3.StringUtils;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.utils.SshSettings;
-import com.github.sqljam.utils.SshTunnels;
+import com.github.sqljam.utils.SshUtils;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -104,6 +104,22 @@ public class ConnectionProfile {
      * a local port. The tunnel is opened when the url is first asked for.
      */
     private String getTunnelUrl(boolean custom, String catalog) {
+        String[] target = tunnelTarget(custom);
+        int localPort = SshUtils.open(id, ssh, target[0], Integer.parseInt(target[1]));
+        if (custom) {
+            Matcher matcher = URL_ADDRESS.matcher(url);
+            String local = matcher.find() ? matcher.replaceFirst(SshUtils.LOCALHOST_ADDRESS + ":" + localPort)
+                    : url;
+            return dbType != null ? dbType.normalizeUrl(local) : local;
+        }
+        return dbType.getUrl(SshUtils.LOCALHOST_ADDRESS, localPort, StringUtils.defaultIfBlank(catalog, database));
+    }
+
+    /**
+     * Host and port which the SSH server forwards to: those of the fields with the default port of the type, or
+     * those of a custom url, a host in brackets (IPv6) without them
+     */
+    public String[] tunnelTarget(boolean custom) {
         String targetHost = hostname;
         int targetPort = port > 0 ? port : dbType.getDefaultPort();
         Matcher matcher = URL_ADDRESS.matcher(StringUtils.defaultString(url));
@@ -114,13 +130,7 @@ public class ConnectionProfile {
         if (StringUtils.isBlank(targetHost)) {
             throw new IllegalStateException("No host of " + name + " to reach through SSH");
         }
-        int localPort = SshTunnels.open(id, ssh, targetHost.replaceAll("^\\[|\\]$", ""), targetPort);
-        if (custom) {
-            String local = matcher.find(0) ? matcher.replaceFirst(SshTunnels.LOCALHOST_ADDRESS + ":" + localPort)
-                    : url;
-            return dbType != null ? dbType.normalizeUrl(local) : local;
-        }
-        return dbType.getUrl(SshTunnels.LOCALHOST_ADDRESS, localPort, StringUtils.defaultIfBlank(catalog, database));
+        return new String[]{targetHost.replaceAll("^\\[|\\]$", ""), String.valueOf(targetPort)};
     }
 
     public ConnectionProfile copy() {

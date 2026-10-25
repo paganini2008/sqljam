@@ -3,6 +3,9 @@ rem
 rem SqlJam launcher for Windows. It runs the runnable jar of Windows next to this script
 rem with Java 17 or later, without a console window.
 rem
+rem   sqljam.bat sync --task NAME   runs a sync task in this console and returns its exit code,
+rem                                 e.g. for the Task Scheduler of Windows
+rem
 rem JVM options are read from sqljam.vmoptions next to this script (one option per line),
 rem JAVA_OPTS adds more and wins, e.g. set JAVA_OPTS=-Xmx4g. JAVA_HOME selects the Java runtime.
 rem
@@ -42,9 +45,16 @@ if not exist "%DIR%sqljam.vmoptions" goto start
 for /f "usebackq eol=# tokens=* delims=" %%o in ("%DIR%sqljam.vmoptions") do call set "VMOPTIONS=%%VMOPTIONS%% %%o"
 
 :start
+if /i "%~1"=="sync" goto sync
 start "SqlJam" "%JAVAW%" %VMOPTIONS% -Dsqljam.vmoptions.applied=true %JAVA_OPTS% -jar "%JAR%" %*
 endlocal
 exit /b 0
+
+:sync
+rem Sync tasks run in the console, their output and exit code are kept
+"%JAVA%" %VMOPTIONS% -Dsqljam.vmoptions.applied=true %JAVA_OPTS% -jar "%JAR%" %*
+set "CODE=%ERRORLEVEL%"
+endlocal & exit /b %CODE%
 
 :noJar
 echo Runnable jar not found: "%JAR%"

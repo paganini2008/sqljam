@@ -53,6 +53,12 @@ import com.github.sqljam.impexp.VectorType;
 public class DuckDBDialect extends Dialect {
 
     /**
+     * Rows of a statement which inserts rows
+     */
+    static final int ROWS_PER_INSERT = 256;
+
+
+    /**
      * Max precision of DECIMAL
      */
     public static final int MAX_DECIMAL_PRECISION = 38;
@@ -622,5 +628,13 @@ public class DuckDBDialect extends Dialect {
             }
         }
         return columns;
+    }
+
+    /**
+     * DuckDB runs the statements of a batch one by one, statements of several rows insert many times faster
+     */
+    @Override
+    public int getRowsPerInsert() {
+        return ROWS_PER_INSERT;
     }
 }

@@ -29,6 +29,7 @@ import com.github.sqljam.config.Config;
 import com.github.sqljam.face.service.ConnectionStore;
 import com.github.sqljam.face.service.ExampleDatabase;
 import com.github.sqljam.face.service.SettingsStore;
+import com.github.sqljam.face.service.SystemScheduler;
 import javafx.application.Platform;
 import javafx.collections.ListChangeListener;
 import javafx.scene.Scene;
@@ -99,11 +100,17 @@ public final class FxTestSupport {
         Config config = new Config(new File(dir, Config.FILE_NAME));
         // Vector databases of tests are not read from the home directory of the user either
         config.set("sqljam.vdb.connections.file", new File(dir, "vdb-connections.json").getAbsolutePath());
+        // Nor the reports of the transfers
+        config.set("sqljam.reports.dir", new File(dir, "reports").getAbsolutePath());
+        config.set("sqljam.sync.file", new File(dir, "sync-tasks.json").getAbsolutePath());
         Config.setInstance(config);
         AppContext context = new AppContext(new SettingsStore(config), new ProfileRegistry(new ConnectionStore(
                 new File(dir, "connections.json"))), null);
         // The example database of tests is not created in the home directory of the user
         context.setExampleDatabase(new ExampleDatabase(true, new File(dir, "example")));
+        // Nor is the crontab or the Task Scheduler of this machine changed
+        context.setSystemScheduler(new SystemScheduler("Linux", List.of("sqljam"), new File(dir, "sync.log"),
+                (command, input) -> new SystemScheduler.Result(command.contains("-l") ? 1 : 0, "")));
         return context;
     }
 
@@ -175,5 +182,25 @@ public final class FxTestSupport {
             Platform.runLater(() -> pane.getScene().getWindow().hide());
         }
         WaitForAsyncUtils.waitForFxEvents();
+    }
+
+    /**
+     * The item of the id in any menu of the menu bar of the root, also in sub menus
+     */
+    public static javafx.scene.control.MenuItem menuItem(javafx.scene.Node root, String id) {
+        return call(() -> {
+            javafx.scene.control.MenuBar bar = (javafx.scene.control.MenuBar) root.lookup(".menu-bar");
+            java.util.Deque<javafx.scene.control.MenuItem> items = new java.util.ArrayDeque<>(bar.getMenus());
+            while (!items.isEmpty()) {
+                javafx.scene.control.MenuItem item = items.removeFirst();
+                if (id.equals(item.getId())) {
+                    return item;
+                }
+                if (item instanceof javafx.scene.control.Menu) {
+                    items.addAll(((javafx.scene.control.Menu) item).getItems());
+                }
+            }
+            throw new IllegalArgumentException("No menu item " + id);
+        });
     }
 }

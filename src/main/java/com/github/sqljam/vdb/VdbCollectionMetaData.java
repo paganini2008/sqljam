@@ -18,9 +18,11 @@ package com.github.sqljam.vdb;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -66,18 +68,79 @@ public class VdbCollectionMetaData implements VdbMetaData {
 
     private List<VdbDialect.Column> createColumns() {
         VdbDialect dialect = getDialect();
+        Map<String, VdbFieldMapping> mappings = getFieldMappings();
+        checkFieldMappings(mappings);
         Set<String> used = new HashSet<>();
+        // Names which the user chose are kept, other names give way to them
+        mappings.values().stream().filter(mapping -> !mapping.isSkipped() && mapping.getColumnName() != null)
+                .forEach(mapping -> used.add(key(dialect, mapping.getColumnName())));
         List<VdbDialect.Column> list = new ArrayList<>();
         for (VdbField field : collection.getFields()) {
-            String name = field.getName();
-            // Names of the target are compared without their cases, e.g. Title and title of PostgreSQL
-            String unique = name;
-            for (int i = 2; !used.add(key(dialect, unique)); i++) {
-                unique = name + "_" + i;
+            VdbFieldMapping mapping = mappings.get(field.getName());
+            if (mapping != null && mapping.isSkipped()) {
+                continue;
             }
-            list.add(new VdbDialect.Column(unique, field, dialect.getTypeName(field)));
+            String unique;
+            if (mapping != null && mapping.getColumnName() != null) {
+                unique = mapping.getColumnName();
+            } else {
+                String name = field.getName();
+                // Names of the target are compared without their cases, e.g. Title and title of PostgreSQL
+                unique = name;
+                for (int i = 2; !used.add(key(dialect, unique)); i++) {
+                    unique = name + "_" + i;
+                }
+            }
+            String typeName = mapping != null && mapping.getTypeName() != null ? mapping.getTypeName()
+                    : dialect.getTypeName(field);
+            list.add(new VdbDialect.Column(unique, field, typeName));
         }
         return list;
+    }
+
+    /**
+     * Fields of the collection which the user mapped, none for an import as it is
+     */
+    private Map<String, VdbFieldMapping> getFieldMappings() {
+        if (configuration == null) {
+            return Collections.emptyMap();
+        }
+        return configuration.getMappings().stream().filter(mapping -> mapping.getCollection().equals(collection
+                .getName())).findFirst().map(VdbExportConfiguration.Mapping::getFields).orElse(Collections
+                .emptyMap());
+    }
+
+    /**
+     * Mappings which can not be imported are refused before a table is created: a field which the collection does
+     * not have, a skipped id, and two fields with the same column
+     */
+    private void checkFieldMappings(Map<String, VdbFieldMapping> mappings) {
+        if (mappings.isEmpty()) {
+            return;
+        }
+        VdbDialect dialect = getDialect();
+        Set<String> names = new HashSet<>();
+        collection.getFields().forEach(field -> names.add(field.getName()));
+        Map<String, String> columns = new HashMap<>();
+        for (Map.Entry<String, VdbFieldMapping> entry : mappings.entrySet()) {
+            if (!names.contains(entry.getKey())) {
+                throw new VdbException(String.format("Field %s of the mapping is not a field of collection %s",
+                        entry.getKey(), collection.getName()));
+            }
+            VdbFieldMapping mapping = entry.getValue();
+            if (mapping.isSkipped() && collection.findField(entry.getKey()).map(VdbField::isPrimaryKey)
+                    .orElse(false)) {
+                throw new VdbException(String.format("Field %s is the id of collection %s, it can not be skipped",
+                        entry.getKey(), collection.getName()));
+            }
+            if (!mapping.isSkipped() && mapping.getColumnName() != null) {
+                String other = columns.putIfAbsent(key(dialect, mapping.getColumnName()), entry.getKey());
+                if (other != null) {
+                    throw new VdbException(String.format("Fields %s and %s of collection %s are both mapped to %s",
+                            other, entry.getKey(), collection.getName(), mapping.getColumnName()));
+                }
+            }
+        }
     }
 
     private static String key(VdbDialect dialect, String name) {

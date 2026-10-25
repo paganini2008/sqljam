@@ -146,9 +146,10 @@ public class IndexMetaData implements TiedMetaData {
             indexType = method;
         }
         boolean unique = isUnique(detail);
-        String indexName = getDialect().getIndexNameStatement(catalogName, schemaName, tableName, new String[]{columnName},
-                unique,
-                indexType);
+        // Column of the target, as the user mapped it
+        String targetColumnName = getDialect().getTargetColumnName(getTableName(), columnName);
+        String indexName = getDialect().getIndexNameStatement(catalogName, schemaName, tableName,
+                new String[]{targetColumnName}, unique, indexType);
         VectorIndexing vectorIndexing = getVectorIndexing(tableMetaData, new String[]{columnName});
         if (vectorIndexing == VectorIndexing.SKIPPED) {
             log.info("Index of vector column is skipped, the target has no index for it: {}.{}", tableName,
@@ -168,7 +169,7 @@ public class IndexMetaData implements TiedMetaData {
             String columnTypeName = ColumnMetaData.getTargetVectorTypeName(getDialect(), column.getDetail());
             boolean nullable = !"NO".equalsIgnoreCase((String) column.getDetail().get("IS_NULLABLE"));
             String statement = getDialect().getCreateVectorIndexStatement(catalogName, schemaName, tableName,
-                    indexName, columnName, columnTypeName, VectorType.of(column.getDetail()), nullable,
+                    indexName, targetColumnName, columnTypeName, VectorType.of(column.getDetail()), nullable,
                     vectorIndex);
             if (statement == null) {
                 log.info("Vector index is skipped, the target has no index of {}: {}.{}", vectorIndex, tableName,
@@ -178,10 +179,10 @@ public class IndexMetaData implements TiedMetaData {
             return new String[]{statement};
         }
         String statement = method != null ? getDialect().getCreateIndexStatement(catalogName, schemaName, tableName,
-                partition, new String[]{columnName}, indexName, unique, indexType,
+                partition, new String[]{targetColumnName}, indexName, unique, indexType,
                 new String[]{(String) detail.get(OPERATOR_CLASS)}, (String) detail.get(INDEX_OPTIONS))
                 : getDialect().getCreateIndexStatement(catalogName, schemaName, tableName, partition,
-                new String[]{columnName}, indexName, unique, indexType);
+                new String[]{targetColumnName}, indexName, unique, indexType);
         return new String[]{statement};
     }
 

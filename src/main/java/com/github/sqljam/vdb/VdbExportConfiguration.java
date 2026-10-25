@@ -16,7 +16,9 @@
 package com.github.sqljam.vdb;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import lombok.Getter;
 import lombok.Setter;
@@ -46,6 +48,10 @@ public class VdbExportConfiguration {
 
         private final String collection;
         private final String tableName;
+        /**
+         * Target columns of fields which the user mapped by field name, the other fields are imported as they are
+         */
+        private final Map<String, VdbFieldMapping> fields = new LinkedHashMap<>();
 
         public Mapping(String collection, String tableName) {
             this.collection = collection;

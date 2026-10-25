@@ -19,23 +19,26 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.face.model.ColumnInfo;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.face.service.DatabaseSession;
-import com.github.sqljam.impexp.DataFileStrategy;
+import com.github.sqljam.impexp.ColumnMapping;
 import com.github.sqljam.impexp.CsvExporter;
 import com.github.sqljam.impexp.CsvOptions;
-import com.github.sqljam.impexp.DuckDBWorkspace;
+import com.github.sqljam.impexp.DataFileStrategy;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
+import com.github.sqljam.impexp.DuckDBWorkspace;
 import com.github.sqljam.impexp.ExportMode;
 import com.github.sqljam.impexp.Exporter;
 import com.github.sqljam.impexp.IdentifierCase;
@@ -153,6 +156,12 @@ public class ExportDialog extends Dialog<TransferRequest> {
     private final RadioButton skipExistingRadio = new RadioButton(Messages.get("export.writeMode.skip"));
     private final Button keyColumnsButton = new Button(Messages.get("export.writeMode.keys"));
     /**
+     * Columns which the user mapped for an import into a database, none imports the tables as they are
+     */
+    private final Button mapColumnsButton = new Button(Messages.get("mapping.button"), Icons.of(Icons.COLUMNS));
+    private final Label mappingLabel = new Label();
+    private Map<String, Map<String, ColumnMappingDialog.Mapping>> columnMappings = new HashMap<>();
+    /**
      * Chosen key columns of upserts by table, the primary key of the other tables
      */
     private Map<String, List<String>> keyColumnNames = new HashMap<>();
@@ -177,6 +186,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
     private final TextField queryTableField = new TextField(DEFAULT_QUERY_TABLE);
     private VBox tablesBox;
     private Label tableNamePatternLabel;
+    private Label mappingColumnsLabel;
     private final CheckBox createSchemaCheck = new CheckBox(Messages.get("export.database.createSchema"));
     private final Label errorLabel = new Label();
     private Button startButton;
@@ -641,6 +651,16 @@ public class ExportDialog extends Dialog<TransferRequest> {
             }
         });
         databaseGrid.addRow(6, new Label(Messages.get("import.transaction")), transactionOption.getNode());
+        mapColumnsButton.setId("mapColumnsButton");
+        mapColumnsButton.setTooltip(new Tooltip(Messages.get("mapping.button.tooltip")));
+        mapColumnsButton.setOnAction(event -> mapColumns());
+        mappingLabel.setId("mappingLabel");
+        mappingLabel.getStyleClass().add("muted");
+        updateMappingLabel();
+        HBox mappingBox = new HBox(10, mapColumnsButton, mappingLabel);
+        mappingBox.setAlignment(Pos.CENTER_LEFT);
+        mappingColumnsLabel = new Label(Messages.get("mapping.columns"));
+        databaseGrid.addRow(7, mappingColumnsLabel, mappingBox);
         VBox databasePane = new VBox(databaseGrid);
         databasePane.getStyleClass().add("target-pane");
 
@@ -717,7 +737,8 @@ public class ExportDialog extends Dialog<TransferRequest> {
             control.setFocusTraversable(false);
         }
         for (Node option : new Node[]{idReusedCheck, indexCheck, foreignKeyCheck, commentCheck, sequenceCheck,
-                keyColumnsButton, tableNamePatternField, tableNamePatternLabel}) {
+                keyColumnsButton, tableNamePatternField, tableNamePatternLabel, mapColumnsButton, mappingLabel,
+                mappingColumnsLabel}) {
             option.setVisible(false);
             option.setManaged(false);
         }
@@ -757,6 +778,57 @@ public class ExportDialog extends Dialog<TransferRequest> {
         new KeyColumnsDialog(getDialogPane().getScene().getWindow(), getSession(source), catalogCombo.isDisabled()
                 ? null : catalogCombo.getValue(), schemaCombo.isDisabled() ? null : schemaCombo.getValue(), tables,
                 keyColumnNames).showAndWait().ifPresent(keys -> keyColumnNames = new HashMap<>(keys));
+    }
+
+    /**
+     * Target names and types of the columns of the selected tables, all tables when none is selected
+     */
+    private void mapColumns() {
+        ConnectionProfile source = sourceCombo.getValue();
+        if (source == null) {
+            return;
+        }
+        List<String> tables = tableChoices.stream().filter(choice -> choice.selected.get())
+                .map(choice -> choice.table.getName()).collect(Collectors.toList());
+        if (tables.isEmpty()) {
+            tables = tableChoices.stream().map(choice -> choice.table.getName()).collect(Collectors.toList());
+        }
+        DatabaseSession session = getSession(source);
+        String catalog = catalogCombo.isDisabled() ? null : catalogCombo.getValue();
+        String schema = schemaCombo.isDisabled() ? null : schemaCombo.getValue();
+        new ColumnMappingDialog(getDialogPane().getScene().getWindow(), tables, table -> session.getColumns(catalog,
+                schema, table).stream().map(column -> new ColumnMappingDialog.Column(column.getName(),
+                describe(column), false)).collect(Collectors.toList()), columnMappings).showAndWait()
+                .ifPresent(mappings -> {
+                    columnMappings = new HashMap<>(mappings);
+                    updateMappingLabel();
+                });
+    }
+
+    private static String describe(ColumnInfo column) {
+        return column.getTypeName() + (column.getSize() > 0 && column.getSize() < Integer.MAX_VALUE ? "("
+                + column.getSize() + (column.getScale() > 0 ? "," + column.getScale() : "") + ")" : "");
+    }
+
+    private void updateMappingLabel() {
+        long changed = columnMappings.values().stream().mapToLong(Map::size).sum();
+        mappingLabel.setText(changed == 0 ? Messages.get("mapping.unchanged") : Messages.format("mapping.changed",
+                changed));
+    }
+
+    /**
+     * Mappings of the dialog as mappings of the import
+     */
+    static Map<String, Map<String, ColumnMapping>> toColumnMappings(
+            Map<String, Map<String, ColumnMappingDialog.Mapping>> mappings) {
+        Map<String, Map<String, ColumnMapping>> result = new HashMap<>();
+        mappings.forEach((table, columns) -> {
+            Map<String, ColumnMapping> converted = new LinkedHashMap<>();
+            columns.forEach((column, mapping) -> converted.put(column, new ColumnMapping(mapping.getName(),
+                    mapping.getType(), mapping.isSkipped())));
+            result.put(table, converted);
+        });
+        return result;
     }
 
     /**
@@ -869,6 +941,9 @@ public class ExportDialog extends Dialog<TransferRequest> {
     }
 
     private void loadTables(String catalog, String schema, String table) {
+        // Mappings belong to the tables of the schema which was shown
+        columnMappings = new HashMap<>();
+        updateMappingLabel();
         ConnectionProfile profile = sourceCombo.getValue();
         tableChoices.clear();
         if (profile == null) {
@@ -1114,6 +1189,8 @@ public class ExportDialog extends Dialog<TransferRequest> {
             // The table of a query has its own name
             request.setTableNamePattern(freeQuery != null ? null : StringUtils.trimToNull(
                     tableNamePatternField.getText()));
+            // Columns which the user mapped, the table of a query has its own columns
+            request.setColumnMappings(freeQuery != null ? new HashMap<>() : toColumnMappings(columnMappings));
             request.setOneTransaction(transactionOption.isOneTransaction());
             request.setConfirmCommit(transactionOption.isConfirmCommit());
             request.setFailFast(!transactionOption.isSkipErrors());

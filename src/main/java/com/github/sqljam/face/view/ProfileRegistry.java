@@ -81,6 +81,10 @@ public class ProfileRegistry {
      */
     public void saveProfile(ConnectionProfile profile, boolean passwordRemembered) throws IOException {
         ConnectionProfile saved = profile.copy();
+        if (passwordRemembered && saved.getPassword() == null) {
+            // An empty password which is remembered, apart from one which is not (null)
+            saved.setPassword("");
+        }
         if (passwordRemembered) {
             sessionPasswords.remove(profile.getId());
             sessionSshSecrets.remove(profile.getId());

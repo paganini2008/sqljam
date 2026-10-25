@@ -101,21 +101,15 @@ class MainViewIT {
         profile.setName("MySQL fixture");
         context.getProfileRegistry().saveProfile(profile, true);
 
-        // Login
-        LoginView loginView = FxTestSupport.call(() -> {
-            LoginView view = new LoginView(context, loggedIn -> {
-                MainView main = new MainView(context);
-                root.getChildren().setAll(main);
-                main.selectConnection(loggedIn);
-                mainView.set(main);
-            });
-            root.getChildren().setAll(view);
-            view.applyCss();
-            view.layout();
-            return view;
+        // The main window, the data source is connected in its tree
+        FxTestSupport.run(() -> {
+            MainView main = new MainView(context);
+            root.getChildren().setAll(main);
+            main.applyCss();
+            main.layout();
+            main.selectConnection(profile);
+            mainView.set(main);
         });
-        FxTestSupport.run(() -> ((Button) loginView.lookup("#loginButton")).fire());
-        FxTestSupport.waitUntil(() -> mainView.get() != null);
 
         // Browse: data source -> database -> table
         ConnectionTree tree = (ConnectionTree) FxTestSupport.call(() -> mainView.get().lookup("#connectionTree"));

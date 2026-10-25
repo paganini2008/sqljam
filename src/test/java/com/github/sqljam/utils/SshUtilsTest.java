@@ -15,6 +15,7 @@
  */
 package com.github.sqljam.utils;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -44,14 +45,14 @@ import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.impexp.DbType;
 
 /**
- * @Description: SshTunnelsTest opens tunnels through an embedded SSH server to a local echo server: by a password,
+ * @Description: SshUtilsTest opens tunnels through an embedded SSH server to a local echo server: by a password,
  *               by a key with or without a passphrase, shared and opened again on the same local port, refused for
  *               a wrong password, a missing key or a changed host key
  * @Author: Fred Feng
  * @Date: 24/10/2026
  * @Version 1.0.0
  */
-class SshTunnelsTest {
+class SshUtilsTest {
 
     static ServerSocket echo;
     static Path knownHosts;
@@ -67,7 +68,7 @@ class SshTunnelsTest {
     @BeforeAll
     static void startEcho(@TempDir Path hostsDir) throws IOException {
         knownHosts = hostsDir.resolve("known_hosts");
-        SshTunnels.setKnownHostsFile(knownHosts);
+        SshUtils.setKnownHostsFile(knownHosts);
         echo = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
         Thread thread = new Thread(() -> {
             while (!echo.isClosed()) {
@@ -97,12 +98,12 @@ class SshTunnelsTest {
     @AfterAll
     static void stopEcho() throws IOException {
         echo.close();
-        SshTunnels.closeAll();
+        SshUtils.closeAll();
     }
 
     @AfterEach
     void stopServer() throws IOException {
-        SshTunnels.closeAll();
+        SshUtils.closeAll();
         if (server != null) {
             server.close();
         }
@@ -114,7 +115,7 @@ class SshTunnelsTest {
     }
 
     static String send(int port, String text) throws IOException {
-        try (Socket socket = new Socket(SshTunnels.LOCALHOST_ADDRESS, port); PrintWriter out = new PrintWriter(socket
+        try (Socket socket = new Socket(SshUtils.LOCALHOST_ADDRESS, port); PrintWriter out = new PrintWriter(socket
                 .getOutputStream(), true, StandardCharsets.UTF_8); BufferedReader in = new BufferedReader(
                 new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8))) {
             socket.setSoTimeout(10000);
@@ -127,12 +128,12 @@ class SshTunnelsTest {
     void forwardsByPassword() throws Exception {
         start();
         SshSettings settings = server.passwordSettings();
-        int port = SshTunnels.open("a", settings, "127.0.0.1", echo.getLocalPort());
+        int port = SshUtils.open("a", settings, "127.0.0.1", echo.getLocalPort());
         assertEquals("echo hello", send(port, "hello"));
-        assertTrue(SshTunnels.isOpen("a"));
-        assertEquals(port, SshTunnels.getLocalPort("a"));
+        assertTrue(SshUtils.isOpen("a"));
+        assertEquals(port, SshUtils.getLocalPort("a"));
         // Shared by the connections of the data source
-        assertEquals(port, SshTunnels.open("a", settings, "127.0.0.1", echo.getLocalPort()));
+        assertEquals(port, SshUtils.open("a", settings, "127.0.0.1", echo.getLocalPort()));
         assertEquals(1, server.getSessions());
         // The host key is remembered
         assertTrue(Files.readString(knownHosts).contains("127.0.0.1"));
@@ -140,23 +141,23 @@ class SshTunnelsTest {
         // A broken session is opened again on its local port
         server.dropSessions();
         long deadline = System.currentTimeMillis() + 5000;
-        while (SshTunnels.isOpen("a") && System.currentTimeMillis() < deadline) {
+        while (SshUtils.isOpen("a") && System.currentTimeMillis() < deadline) {
             Thread.sleep(50);
         }
-        assertFalse(SshTunnels.isOpen("a"));
-        assertEquals(-1, SshTunnels.getLocalPort("a"));
-        assertEquals(port, SshTunnels.open("a", settings, "127.0.0.1", echo.getLocalPort()));
+        assertFalse(SshUtils.isOpen("a"));
+        assertEquals(-1, SshUtils.getLocalPort("a"));
+        assertEquals(port, SshUtils.open("a", settings, "127.0.0.1", echo.getLocalPort()));
         assertEquals("echo again", send(port, "again"));
 
         // Other settings open another tunnel, closed ones are gone
         SshSettings other = settings.copy();
         other.setPort(settings.getPort());
-        int second = SshTunnels.open("b", other, "127.0.0.1", echo.getLocalPort());
+        int second = SshUtils.open("b", other, "127.0.0.1", echo.getLocalPort());
         assertNotEquals(port, second);
-        SshTunnels.close("a");
-        SshTunnels.close("missing");
-        assertFalse(SshTunnels.isOpen("a"));
-        assertTrue(SshTunnels.isOpen("b"));
+        SshUtils.close("a");
+        SshUtils.close("missing");
+        assertFalse(SshUtils.isOpen("a"));
+        assertTrue(SshUtils.isOpen("b"));
         assertThrows(IOException.class, () -> send(port, "closed"));
     }
 
@@ -167,27 +168,27 @@ class SshTunnelsTest {
         settings.setPassword(null);
         settings.setAuthentication(SshSettings.Authentication.KEY);
         settings.setPrivateKeyFile(server.writeUserKey(dir.resolve("id_plain"), null).toString());
-        int port = SshTunnels.open("key", settings, "127.0.0.1", echo.getLocalPort());
+        int port = SshUtils.open("key", settings, "127.0.0.1", echo.getLocalPort());
         assertEquals("echo key", send(port, "key"));
 
         settings.setPrivateKeyFile(server.writeUserKey(dir.resolve("id_secret"), "phrase").toString());
         settings.setPassphrase("phrase");
-        int encrypted = SshTunnels.open("encrypted", settings, "127.0.0.1", echo.getLocalPort());
+        int encrypted = SshUtils.open("encrypted", settings, "127.0.0.1", echo.getLocalPort());
         assertEquals("echo phrase", send(encrypted, "phrase"));
 
         // A wrong passphrase, a missing key
         settings.setPassphrase("wrong");
-        assertThrows(UncheckedIOException.class, () -> SshTunnels.open("wrong", settings, "127.0.0.1", echo
+        assertThrows(UncheckedIOException.class, () -> SshUtils.open("wrong", settings, "127.0.0.1", echo
                 .getLocalPort()));
         settings.setPrivateKeyFile(dir.resolve("missing").toString());
-        UncheckedIOException missing = assertThrows(UncheckedIOException.class, () -> SshTunnels.open("missing",
+        UncheckedIOException missing = assertThrows(UncheckedIOException.class, () -> SshUtils.open("missing",
                 settings, "127.0.0.1", echo.getLocalPort()));
         assertTrue(missing.getMessage().contains("private key file not found"), missing.getMessage());
         settings.setPrivateKeyFile("~/sqljam-missing-key");
-        assertThrows(UncheckedIOException.class, () -> SshTunnels.open("home", settings, "127.0.0.1", echo
+        assertThrows(UncheckedIOException.class, () -> SshUtils.open("home", settings, "127.0.0.1", echo
                 .getLocalPort()));
         settings.setPrivateKeyFile(Files.writeString(dir.resolve("not_a_key"), "not a key").toString());
-        assertThrows(UncheckedIOException.class, () -> SshTunnels.open("invalid", settings, "127.0.0.1", echo
+        assertThrows(UncheckedIOException.class, () -> SshUtils.open("invalid", settings, "127.0.0.1", echo
                 .getLocalPort()));
     }
 
@@ -202,19 +203,19 @@ class SshTunnelsTest {
         settings.setAuthentication(SshSettings.Authentication.KEY);
         server.setUserKey(KeyUtils.generateKeyPair(KeyPairProvider.SSH_ED25519, 256));
         settings.setPrivateKeyFile(server.writeUserKey(dir.resolve("id_ed25519"), null).toString());
-        assertEquals("echo ed25519", send(SshTunnels.open("ed25519", settings, "127.0.0.1", echo.getLocalPort()),
+        assertEquals("echo ed25519", send(SshUtils.open("ed25519", settings, "127.0.0.1", echo.getLocalPort()),
                 "ed25519"));
         settings.setPrivateKeyFile(server.writeUserKey(dir.resolve("id_ed25519_secret"), "phrase").toString());
         settings.setPassphrase("phrase");
-        assertEquals("echo secret", send(SshTunnels.open("ed25519 secret", settings, "127.0.0.1", echo
+        assertEquals("echo secret", send(SshUtils.open("ed25519 secret", settings, "127.0.0.1", echo
                 .getLocalPort()), "secret"));
         server.setUserKey(KeyUtils.generateKeyPair(KeyPairProvider.SSH_RSA, 2048));
         settings.setPassphrase(null);
         settings.setPrivateKeyFile(server.writeUserKey(dir.resolve("id_rsa"), null).toString());
-        assertEquals("echo rsa", send(SshTunnels.open("rsa", settings, "127.0.0.1", echo.getLocalPort()), "rsa"));
+        assertEquals("echo rsa", send(SshUtils.open("rsa", settings, "127.0.0.1", echo.getLocalPort()), "rsa"));
         // A key which the server does not know
         server.setUserKey(KeyUtils.generateKeyPair(KeyPairProvider.SSH_ED25519, 256));
-        assertThrows(UncheckedIOException.class, () -> SshTunnels.open("unknown", settings, "127.0.0.1", echo
+        assertThrows(UncheckedIOException.class, () -> SshUtils.open("unknown", settings, "127.0.0.1", echo
                 .getLocalPort()));
     }
 
@@ -227,12 +228,13 @@ class SshTunnelsTest {
         start();
         // A directory which does not exist yet keeps the host keys
         Path nested = other.resolve("missing/dir/known_hosts");
-        SshTunnels.setKnownHostsFile(nested);
+        SshUtils.setKnownHostsFile(nested);
         try {
-            int port = SshTunnels.open("nested", server.passwordSettings(), "127.0.0.1", echo.getLocalPort());
+            int port = SshUtils.open("nested", server.passwordSettings(), "127.0.0.1", echo.getLocalPort());
             assertEquals("echo nested", send(port, "nested"));
+            assertTrue(Files.readString(nested).contains("127.0.0.1"), "The host key is remembered");
         } finally {
-            SshTunnels.setKnownHostsFile(knownHosts);
+            SshUtils.setKnownHostsFile(knownHosts);
         }
 
         // A target which the server does not reach, e.g. a database which is down, is told when the tunnel opens
@@ -240,22 +242,22 @@ class SshTunnelsTest {
         try (ServerSocket socket = new ServerSocket(0, 1, InetAddress.getLoopbackAddress())) {
             closedPort = socket.getLocalPort();
         }
-        UncheckedIOException down = assertThrows(UncheckedIOException.class, () -> SshTunnels.open("down", server
+        UncheckedIOException down = assertThrows(UncheckedIOException.class, () -> SshUtils.open("down", server
                 .passwordSettings(), "127.0.0.1", closedPort));
         assertTrue(down.getMessage().contains("does not reach 127.0.0.1:" + closedPort), down.getMessage());
-        assertFalse(SshTunnels.isOpen("down"));
+        assertFalse(SshUtils.isOpen("down"));
 
         // An unknown host of the SSH server
         SshSettings unknown = server.passwordSettings();
         unknown.setHost("sqljam-no-such-host.invalid");
-        UncheckedIOException unresolved = assertThrows(UncheckedIOException.class, () -> SshTunnels.open(
+        UncheckedIOException unresolved = assertThrows(UncheckedIOException.class, () -> SshUtils.open(
                 "unknown", unknown, "127.0.0.1", echo.getLocalPort()));
         assertTrue(unresolved.getMessage().contains("sqljam-no-such-host.invalid"), unresolved.getMessage());
 
         // A server which allows no forwarding
         server.refuseForwarding();
-        SshTunnels.closeAll();
-        UncheckedIOException refused = assertThrows(UncheckedIOException.class, () -> SshTunnels.open("refused",
+        SshUtils.closeAll();
+        UncheckedIOException refused = assertThrows(UncheckedIOException.class, () -> SshUtils.open("refused",
                 server.passwordSettings(), "127.0.0.1", echo.getLocalPort()));
         assertTrue(refused.getMessage().startsWith("SSH tunnel through") && refused.getMessage().contains(
                 "may allow no forwarding"), refused.getMessage());
@@ -266,15 +268,15 @@ class SshTunnelsTest {
         start();
         SshSettings settings = server.passwordSettings();
         settings.setPassword("wrong");
-        UncheckedIOException wrong = assertThrows(UncheckedIOException.class, () -> SshTunnels.open("w", settings,
+        UncheckedIOException wrong = assertThrows(UncheckedIOException.class, () -> SshUtils.open("w", settings,
                 "127.0.0.1", echo.getLocalPort()));
         assertTrue(wrong.getMessage().startsWith("SSH tunnel through " + EmbeddedSshServer.USER + "@127.0.0.1:"),
                 wrong.getMessage());
         settings.setPassword(null);
-        assertThrows(UncheckedIOException.class, () -> SshTunnels.open("w", settings, "127.0.0.1", echo
+        assertThrows(UncheckedIOException.class, () -> SshUtils.open("w", settings, "127.0.0.1", echo
                 .getLocalPort()));
         settings.setHost(" ");
-        assertTrue(assertThrows(UncheckedIOException.class, () -> SshTunnels.open("w", settings, "127.0.0.1", echo
+        assertTrue(assertThrows(UncheckedIOException.class, () -> SshUtils.open("w", settings, "127.0.0.1", echo
                 .getLocalPort())).getMessage().contains("no SSH host"));
         // Nobody listens
         SshSettings closed = server.passwordSettings();
@@ -282,9 +284,9 @@ class SshTunnelsTest {
         server.close();
         server = null;
         closed.setPort(port);
-        assertThrows(UncheckedIOException.class, () -> SshTunnels.open("c", closed, "127.0.0.1", echo
+        assertThrows(UncheckedIOException.class, () -> SshUtils.open("c", closed, "127.0.0.1", echo
                 .getLocalPort()));
-        assertFalse(SshTunnels.isOpen("w"));
+        assertFalse(SshUtils.isOpen("w"));
     }
 
     @Test
@@ -292,12 +294,12 @@ class SshTunnelsTest {
         start();
         int port = server.getPort();
         SshSettings settings = server.passwordSettings();
-        assertEquals("echo first", send(SshTunnels.open("h", settings, "127.0.0.1", echo.getLocalPort()), "first"));
-        SshTunnels.closeAll();
+        assertEquals("echo first", send(SshUtils.open("h", settings, "127.0.0.1", echo.getLocalPort()), "first"));
+        SshUtils.closeAll();
         server.close();
         // Another server with another host key on the same address
         server = new EmbeddedSshServer(other.resolve("other.key"), port);
-        UncheckedIOException changed = assertThrows(UncheckedIOException.class, () -> SshTunnels.open("h",
+        UncheckedIOException changed = assertThrows(UncheckedIOException.class, () -> SshUtils.open("h",
                 settings, "127.0.0.1", echo.getLocalPort()));
         assertTrue(changed.getMessage().startsWith("SSH tunnel through"), changed.getMessage());
     }
@@ -313,13 +315,13 @@ class SshTunnelsTest {
         profile.setHostname("127.0.0.1");
         profile.setDatabase("shop");
         profile.setSsh(server.passwordSettings());
-        // The default port of the type
-        String url = profile.getJdbcUrl();
-        int port = SshTunnels.getLocalPort(profile.getId());
-        assertTrue(url.startsWith("jdbc:mysql://127.0.0.1:" + port + "/shop?"), url);
+        // The default port of the type, worked out without a database listening on it
+        assertArrayEquals(new String[]{"127.0.0.1", "3306"}, profile.tunnelTarget(false));
         profile.setPort(echo.getLocalPort());
-        assertTrue(profile.getJdbcUrl().startsWith("jdbc:mysql://127.0.0.1:"));
-        assertEquals("echo url", send(SshTunnels.getLocalPort(profile.getId()), "url"));
+        String url = profile.getJdbcUrl();
+        int port = SshUtils.getLocalPort(profile.getId());
+        assertTrue(url.startsWith("jdbc:mysql://127.0.0.1:" + port + "/shop?"), url);
+        assertEquals("echo url", send(port, "url"));
 
         // A custom url, e.g. Oracle, with its host and port
         ConnectionProfile oracle = new ConnectionProfile();
@@ -327,12 +329,13 @@ class SshTunnelsTest {
         oracle.setUrl("jdbc:oracle:thin:@//127.0.0.1:" + echo.getLocalPort() + "/DEMO");
         oracle.setSsh(server.passwordSettings());
         String oracleUrl = oracle.getJdbcUrl();
-        assertEquals("jdbc:oracle:thin:@//127.0.0.1:" + SshTunnels.getLocalPort(oracle.getId()) + "/DEMO",
+        assertEquals("jdbc:oracle:thin:@//127.0.0.1:" + SshUtils.getLocalPort(oracle.getId()) + "/DEMO",
                 oracleUrl);
         ConnectionProfile ipv6 = new ConnectionProfile();
         ipv6.setDbType(DbType.POSTGRESQL);
         ipv6.setUrl("jdbc:postgresql://[::1]:" + echo.getLocalPort() + "/app");
         ipv6.setSsh(server.passwordSettings());
+        assertArrayEquals(new String[]{"::1", String.valueOf(echo.getLocalPort())}, ipv6.tunnelTarget(true));
         // The host in brackets is the target, the echo server listens on IPv4 only, so it is not reached
         UncheckedIOException ipv6Error = assertThrows(UncheckedIOException.class, ipv6::getJdbcUrl);
         assertTrue(ipv6Error.getMessage().contains("does not reach ::1:" + echo.getLocalPort()), ipv6Error
@@ -355,7 +358,7 @@ class SshTunnelsTest {
         file.setSsh(server.passwordSettings());
         assertFalse(file.isSshEnabled());
         assertFalse(file.getJdbcUrl().contains("127.0.0.1"));
-        assertFalse(SshTunnels.isOpen(file.getId()));
+        assertFalse(SshUtils.isOpen(file.getId()));
     }
 
     @Test
@@ -379,12 +382,12 @@ class SshTunnelsTest {
         assertFalse(settings.toString().contains("other"));
         assertFalse(settings.copy().toString().contains("phrase"));
         assertEquals(settings.getKey(), settings.copy().getKey());
-        assertEquals(knownHosts, SshTunnels.getKnownHostsFile());
+        assertEquals(knownHosts, SshUtils.getKnownHostsFile());
         // The file of sqljam.ssh.known-hosts.file by default
-        SshTunnels.setKnownHostsFile(null);
-        assertTrue(SshTunnels.getKnownHostsFile().endsWith("ssh_known_hosts"), SshTunnels.getKnownHostsFile()
+        SshUtils.setKnownHostsFile(null);
+        assertTrue(SshUtils.getKnownHostsFile().endsWith("ssh_known_hosts"), SshUtils.getKnownHostsFile()
                 .toString());
-        SshTunnels.setKnownHostsFile(knownHosts);
-        assertTrue(SshTunnels.describe(settings, new IOException()).endsWith("IOException"));
+        SshUtils.setKnownHostsFile(knownHosts);
+        assertTrue(SshUtils.describe(settings, new IOException()).endsWith("IOException"));
     }
 }

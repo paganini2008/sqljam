@@ -54,7 +54,7 @@ import com.github.sqljam.vdb.dialect.VdbDialect;
  * @Date: 24/10/2026
  * @Version 1.0.0
  */
-class VdbImportIT {
+public class VdbImportIT {
 
     static final ItDatabase[] TARGETS = {ItDatabase.POSTGRESQL, ItDatabase.MYSQL, ItDatabase.MARIADB,
             ItDatabase.ORACLE, ItDatabase.SQLSERVER, ItDatabase.DB2, ItDatabase.DUCKDB, ItDatabase.CLICKHOUSE};
@@ -99,11 +99,11 @@ class VdbImportIT {
     /**
      * Schema of the target tables, the database of MySQL and MariaDB
      */
-    static String getSchema(ItDatabase target) {
+    public static String getSchema(ItDatabase target) {
         return target.getTargetSchema() != null ? target.getTargetSchema() : target.getTargetCatalog();
     }
 
-    static DataSource dataSource(ItDatabase target) {
+    public static DataSource dataSource(ItDatabase target) {
         return new AbstractDataSource() {
             @Override
             public Connection getConnection() throws SQLException {

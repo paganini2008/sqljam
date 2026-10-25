@@ -135,7 +135,8 @@ public enum DbType {
             Validate.notBlank(catalogName,
                     "Catalog name must be required while using jdbc api to operate postgresql database.");
             return String.format(
-                    "jdbc:postgresql://%s:%d/%s?characterEncoding=utf8&allowMultiQueries=true&useSSL=false&stringtype=unspecified",
+                    "jdbc:postgresql://%s:%d/%s?characterEncoding=utf8&allowMultiQueries=true&useSSL=false&stringtype=unspecified"
+                            + "&reWriteBatchedInserts=true",
                     hostname, port, catalogName);
         }
     },
