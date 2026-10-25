@@ -30,7 +30,9 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.VectorIndex;
 import com.github.sqljam.jdbc.JdbcUtils;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * @Description: MariaDBMetaDataOperations reads MariaDB like MySQL, with the differences of MariaDB: column defaults
@@ -41,12 +43,87 @@ import com.github.sqljam.jdbc.JdbcUtils;
  * @Date: 26/03/2023
  * @Version 1.0.0
  */
+@Slf4j
 public class MariaDBMetaDataOperations extends MySQLMetaDataOperations {
 
     private static final Set<String> SPATIAL_TYPES = new HashSet<>(Arrays.asList("geometry", "point",
             "linestring", "polygon", "multipoint", "multilinestring", "multipolygon", "geometrycollection"));
     private static final Pattern FRACTION = Pattern.compile("^(?:datetime|timestamp|time)\\((\\d)\\)$");
     private static final Pattern JSON_VALID = Pattern.compile("(?i)^\\s*json_valid\\(\\s*`?([^`)]+)`?\\s*\\)\\s*$");
+
+    /**
+     * VECTOR KEY `name` (`column`) `M`='8' `DISTANCE`='cosine' of SHOW CREATE TABLE
+     */
+    private static final Pattern VECTOR_KEY = Pattern.compile(
+            "VECTOR KEY `((?:[^`]|``)+)` \\(`(?:[^`]|``)+`\\)((?: `[A-Z_]+`='[^']*')*)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern VECTOR_KEY_OPTION = Pattern.compile("`([A-Z_]+)`='([^']*)'",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * VECTOR INDEX (HNSW) is a vector index of other databases, its distance (euclidean by default) and number of
+     * neighbors (M) are read from SHOW CREATE TABLE
+     */
+    @Override
+    public List<Map<String, Object>> getIndexInfos(DatabaseMetaData databaseMetaData, String catalogName,
+                                                   String schemaName, String tableName) throws SQLException {
+        List<Map<String, Object>> indexInfos = super.getIndexInfos(databaseMetaData, catalogName, schemaName,
+                tableName);
+        String sql = "SELECT INDEX_NAME FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?"
+                + " AND INDEX_TYPE = 'VECTOR'";
+        Set<String> vectorIndexes = new HashSet<>();
+        for (Map<String, Object> row : JdbcUtils.fetchAll(databaseMetaData.getConnection(), sql,
+                new Object[]{catalogName, tableName})) {
+            vectorIndexes.add((String) row.get("INDEX_NAME"));
+        }
+        if (vectorIndexes.isEmpty()) {
+            return indexInfos;
+        }
+        Map<String, String> definitions = new LinkedHashMap<>();
+        try {
+            List<Map<String, Object>> createTable = JdbcUtils.fetchAll(databaseMetaData.getConnection(),
+                    "SHOW CREATE TABLE `" + catalogName.replace("`", "``") + "`.`" + tableName.replace("`", "``")
+                            + "`", new Object[0]);
+            definitions = getVectorIndexes(createTable.isEmpty() ? null
+                    : (String) createTable.get(0).get("Create Table"));
+        } catch (SQLException e) {
+            // The defaults of MariaDB are taken: euclidean distance
+            log.warn("Definition of {}.{} is not readable, vector indexes take the default distance: {}",
+                    catalogName, tableName, e.getMessage());
+        }
+        for (Map<String, Object> indexInfo : indexInfos) {
+            String indexName = (String) indexInfo.get("INDEX_NAME");
+            if (vectorIndexes.contains(indexName)) {
+                indexInfo.put(VectorIndex.DETAIL_KEY, definitions.getOrDefault(indexName, new VectorIndex(
+                        VectorIndex.Kind.HNSW, VectorIndex.Distance.EUCLIDEAN, null).toString()));
+            }
+        }
+        return indexInfos;
+    }
+
+    /**
+     * Vector indexes by their names, of the definition of a table
+     */
+    static Map<String, String> getVectorIndexes(String createTable) {
+        Map<String, String> indexes = new LinkedHashMap<>();
+        Matcher matcher = VECTOR_KEY.matcher(StringUtils.defaultString(createTable));
+        while (matcher.find()) {
+            VectorIndex.Distance distance = VectorIndex.Distance.EUCLIDEAN;
+            Map<String, String> options = new LinkedHashMap<>();
+            Matcher option = VECTOR_KEY_OPTION.matcher(matcher.group(2));
+            while (option.find()) {
+                String name = option.group(1).toLowerCase(Locale.ENGLISH);
+                if ("distance".equals(name)) {
+                    distance = "cosine".equalsIgnoreCase(option.group(2)) ? VectorIndex.Distance.COSINE
+                            : VectorIndex.Distance.EUCLIDEAN;
+                } else {
+                    options.put(name, option.group(2));
+                }
+            }
+            indexes.put(matcher.group(1).replace("``", "`"), new VectorIndex(VectorIndex.Kind.HNSW, distance,
+                    options).toString());
+        }
+        return indexes;
+    }
 
     /**
      * System versioned tables keep WITH SYSTEM VERSIONING for MariaDB targets, it is required by SYSTEM_TIME

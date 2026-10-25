@@ -655,7 +655,9 @@ public class JdbcUtils {
         ResultSet rs = null;
         DisposableObservable ob = new DisposableObservable();
         try {
-            rs = databaseMetaData.getIndexInfo(catalog, schema, tableName, false, false);
+            // Approximate statistics: the driver of Oracle analyzes the table for exact ones, which a user who may
+            // only read the table can not, and which takes long for a large table
+            rs = databaseMetaData.getIndexInfo(catalog, schema, tableName, false, true);
             return new MapCursor(rs, ob, false);
         } finally {
             closeLazily(ob, rs, null, null);
@@ -759,8 +761,28 @@ public class JdbcUtils {
         }
         if (StringUtils.isNotBlank(schema)) {
             if (!StringUtils.equals(connection.getSchema(), schema)) {
-                connection.setSchema(schema);
+                setSchema(connection, schema);
             }
+        }
+    }
+
+    /**
+     * Sets the schema of the connection. The schema of PostgreSQL is put in front of its search path, the other
+     * schemas are kept: types and operators of extensions (pgvector) are found in theirs, e.g. public.
+     */
+    public static void setSchema(Connection connection, String schema) throws SQLException {
+        if (!"PostgreSQL".equalsIgnoreCase(connection.getMetaData().getDatabaseProductName())) {
+            connection.setSchema(schema);
+            return;
+        }
+        String path;
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT current_setting('search_path')")) {
+            path = rs.next() ? StringUtils.trimToEmpty(rs.getString(1)) : "";
+        }
+        String quoted = "\"" + schema.replace("\"", "\"\"") + "\"";
+        try (Statement statement = connection.createStatement()) {
+            statement.execute("SET search_path TO " + quoted + (path.isEmpty() ? "" : ", " + path));
         }
     }
 

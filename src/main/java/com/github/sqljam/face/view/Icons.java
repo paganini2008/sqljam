@@ -40,6 +40,8 @@ public final class Icons {
     public static final String IMPORT = "fth-upload";
     public static final String COPY = "fth-copy";
     public static final String CANCEL = "fth-x";
+    public static final String SEARCH = "fth-search";
+    public static final String HISTORY = "fth-clock";
     public static final String START = "fth-play";
     public static final String FOLDER = "fth-folder";
     public static final String SETTINGS = "fth-settings";
@@ -57,6 +59,12 @@ public final class Icons {
     public static final String EXIT = "fth-log-out";
     public static final String SAVE = "fth-save";
     public static final String SQL = "fth-terminal";
+    public static final String COLUMNS = "fth-columns";
+    public static final String INDEXES = "fth-list";
+    public static final String FOREIGN_KEYS = "fth-link-2";
+    public static final String DDL = "fth-code";
+    public static final String DATA = "fth-database";
+    public static final String HEALTH = "fth-activity";
 
     private Icons() {
     }

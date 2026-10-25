@@ -17,22 +17,34 @@ package com.github.sqljam.impexp.db;
 
 
 import java.sql.Connection;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.math.NumberUtils;
 import org.postgresql.util.PGobject;
+import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.ImpExpException;
 import com.github.sqljam.impexp.StringHelper;
 import com.github.sqljam.impexp.TypeNames;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 
 /**
- * @Description: PostgreSQLDialect for PostgreSQL 12 and later versions
+ * @Description: PostgreSQLDialect for PostgreSQL 12 and later versions.
+ *               PostgreSQL 9.x and later are supported, older versions by PostgreSQL9Dialect and PostgreSQL10Dialect.
+ *               Vectors of pgvector, detected on the connection: vector and IVFFlat of pgvector 0.4, HNSW of 0.5.0,
+ *               halfvec, sparsevec and the Manhattan distance of HNSW of 0.7.0.
  * @Author: Fred Feng
  * @Date: 24/03/2023
  * @Version 1.0.0
@@ -265,6 +277,194 @@ public class PostgreSQLDialect extends Dialect {
         String sql = super.getCreateIndexStatement(catalog, schema, tableName, partition, columnNames, indexName,
                 unique, indexType);
         return sql.replace("IF NOT EXISTS ", getIfNotExists());
+    }
+
+    /**
+     * Index of another access method (gin, gist, hnsw) with the operator classes of its columns and its options
+     */
+    @Override
+    public String getCreateIndexStatement(String catalog, String schema, String tableName, boolean partition,
+                                          String[] columnNames, String indexName, boolean unique, String indexType,
+                                          String[] operatorClasses, String options) {
+        if (StringUtils.isBlank(indexType)) {
+            return getCreateIndexStatement(catalog, schema, tableName, partition, columnNames, indexName, unique,
+                    indexType);
+        }
+        StringBuilder columns = new StringBuilder();
+        for (int i = 0; i < columnNames.length; i++) {
+            String operatorClass = operatorClasses != null && i < operatorClasses.length ? operatorClasses[i] : null;
+            columns.append(i > 0 ? ", " : "").append(getIdentifier(columnNames[i]))
+                    .append(StringUtils.isNotBlank(operatorClass) ? " " + operatorClass : "");
+        }
+        return String.format("CREATE %sINDEX %s%s ON %s USING %s (%s)%s", unique ? "UNIQUE " : "", getIfNotExists(),
+                quoteIdentifier(indexName), getQualifiedTableName(catalog, schema, tableName), indexType, columns,
+                StringUtils.isNotBlank(options) ? " WITH (" + options + ")" : "");
+    }
+
+    // ------------------------------------------------------------------
+    // Vectors of pgvector
+    // ------------------------------------------------------------------
+
+    /**
+     * Dimensions of vector and halfvec columns
+     */
+    static final int MAX_VECTOR_DIMENSIONS = 16000;
+    /**
+     * Dimensions of an index of vector and of halfvec columns
+     */
+    static final int MAX_VECTOR_INDEX_DIMENSIONS = 2000;
+    static final int MAX_HALFVEC_INDEX_DIMENSIONS = 4000;
+
+    /**
+     * Types (vector, halfvec, sparsevec) and index methods (hnsw, ivfflat) of pgvector which the database has,
+     * the types are found by the search path. The queries do not fail for a missing type: a failed query aborts
+     * the transaction of PostgreSQL.
+     */
+    @Override
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+        try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(
+                "SELECT to_regtype('vector') IS NOT NULL, to_regtype('halfvec') IS NOT NULL,"
+                        + " to_regtype('sparsevec') IS NOT NULL,"
+                        + " EXISTS (SELECT 1 FROM pg_am WHERE amname = 'hnsw'),"
+                        + " EXISTS (SELECT 1 FROM pg_am WHERE amname = 'ivfflat')")) {
+            if (rs.next()) {
+                DatabaseFeature[] columns = {DatabaseFeature.VECTOR, DatabaseFeature.HALF_VECTOR,
+                        DatabaseFeature.SPARSE_VECTOR, DatabaseFeature.HNSW_INDEX, DatabaseFeature.IVF_INDEX};
+                for (int i = 0; i < columns.length; i++) {
+                    if (rs.getBoolean(i + 1)) {
+                        features.add(columns[i]);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * The schema of pgvector is added to the search path if it is not in it, e.g. of a url with currentSchema: the
+     * types (vector) and operator classes (vector_cosine_ops) of pgvector are found by the search path
+     */
+    @Override
+    public void prepareSession(Connection connection) {
+        try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(
+                "SELECT n.nspname, current_setting('search_path') FROM pg_extension e"
+                        + " JOIN pg_namespace n ON n.oid = e.extnamespace WHERE e.extname = 'vector'"
+                        + " AND NOT n.nspname = ANY (current_schemas(false))")) {
+            if (rs.next()) {
+                String path = StringUtils.trimToEmpty(rs.getString(2));
+                String schema = "\"" + rs.getString(1).replace("\"", "\"\"") + "\"";
+                try (Statement set = connection.createStatement()) {
+                    set.execute("SET search_path TO " + (path.isEmpty() ? schema : path + ", " + schema));
+                }
+            }
+        } catch (SQLException e) {
+            // The search path is kept, vectors are found if pgvector is in it
+        }
+    }
+
+    /**
+     * vector (32-bit floats, also of bytes), halfvec (16-bit floats) and sparsevec of pgvector. Doubles and bits
+     * are kept as text.
+     */
+    @Override
+    public String getVectorTypeName(VectorType vectorType) {
+        if (vectorType.getDimensions() > MAX_VECTOR_DIMENSIONS || !vectorType.isFloat32Compatible()) {
+            return null;
+        }
+        String dimensions = vectorType.getDimensions() > 0 ? "(" + vectorType.getDimensions() + ")" : "";
+        if (vectorType.isSparse()) {
+            // sparsevec of pgvector 0.7.0 and later
+            return hasDatabaseFeature(DatabaseFeature.SPARSE_VECTOR, true) ? "sparsevec" + dimensions : null;
+        }
+        if (vectorType.getElement() == VectorType.Element.FLOAT16 && hasDatabaseFeature(DatabaseFeature.HALF_VECTOR,
+                true)) {
+            return "halfvec" + dimensions;
+        }
+        // 16-bit floats are kept by vectors of 32-bit floats of older versions
+        return hasDatabaseFeature(DatabaseFeature.VECTOR, true) ? "vector" + dimensions : null;
+    }
+
+    @Override
+    public Object getVectorValue(VectorType.Values values, VectorType vectorType) {
+        return vectorType.isSparse() ? values.toPostgreSqlSparseText() : values.toDenseText();
+    }
+
+    /**
+     * HNSW or IVFFlat index with the operator class of the distance, e.g. vector_cosine_ops. Columns of more
+     * dimensions than an index takes, and columns without dimensions, have no index.
+     */
+    @Override
+    public String getCreateVectorIndexStatement(String catalog, String schema, String tableName, String indexName,
+                                                String columnName, String columnTypeName, VectorType vectorType,
+                                                boolean nullable, VectorIndex vectorIndex) {
+        String type = StringUtils.substringBefore(StringUtils.defaultString(columnTypeName), "(").trim()
+                .toLowerCase(Locale.ENGLISH);
+        int dimensions = NumberUtils.toInt(StringUtils.substringBetween(columnTypeName, "(", ")"), 0);
+        String operator = getVectorOperator(vectorIndex.getDistance());
+        if (operator == null || dimensions <= 0 || ("vector".equals(type) && dimensions > MAX_VECTOR_INDEX_DIMENSIONS)
+                || ("halfvec".equals(type) && dimensions > MAX_HALFVEC_INDEX_DIMENSIONS)) {
+            return null;
+        }
+        // HNSW of pgvector 0.5.0 and later, IVFFlat has no sparse vectors: the other kind is taken if the database
+        // has not the kind of the index or not for the vectors
+        // IVFFlat has no Manhattan distance (l1)
+        boolean hnswAvailable = hasDatabaseFeature(DatabaseFeature.HNSW_INDEX, true);
+        boolean ivfAvailable = hasDatabaseFeature(DatabaseFeature.IVF_INDEX, true) && !"sparsevec".equals(type)
+                && vectorIndex.getDistance() != VectorIndex.Distance.MANHATTAN;
+        if (!hnswAvailable && !ivfAvailable) {
+            return null;
+        }
+        boolean ivf = ivfAvailable && (vectorIndex.getKind() == VectorIndex.Kind.IVF || !hnswAvailable);
+        List<String> options = new ArrayList<>();
+        for (String option : ivf ? new String[]{"lists"} : new String[]{"m", "ef_construction"}) {
+            String value = vectorIndex.getOption(option);
+            if (NumberUtils.isDigits(value)) {
+                options.add(option + " = " + value);
+            }
+        }
+        return String.format("CREATE INDEX %s%s ON %s USING %s (%s %s_%s_ops)%s", getIfNotExists(),
+                quoteIdentifier(indexName), getQualifiedTableName(catalog, schema, tableName), ivf ? "ivfflat" : "hnsw",
+                getIdentifier(columnName), type, operator, options.isEmpty() ? "" : " WITH (" + String.join(", ",
+                        options) + ")");
+    }
+
+    /**
+     * Operator of a distance in the names of the operator classes, e.g. cosine of vector_cosine_ops
+     */
+    static String getVectorOperator(VectorIndex.Distance distance) {
+        switch (distance) {
+            case EUCLIDEAN:
+                return "l2";
+            case COSINE:
+                return "cosine";
+            case DOT:
+                return "ip";
+            case MANHATTAN:
+                return "l1";
+            default:
+                // Hamming and Jaccard distances are of bit vectors
+                return null;
+        }
+    }
+
+    /**
+     * Distance of an operator class of pgvector, e.g. vector_cosine_ops, null for other operator classes
+     */
+    static VectorIndex.Distance getVectorDistance(String operatorClass) {
+        String name = StringUtils.defaultString(operatorClass).toLowerCase(Locale.ENGLISH);
+        if (name.endsWith("_l2_ops")) {
+            return VectorIndex.Distance.EUCLIDEAN;
+        } else if (name.endsWith("_cosine_ops")) {
+            return VectorIndex.Distance.COSINE;
+        } else if (name.endsWith("_ip_ops")) {
+            return VectorIndex.Distance.DOT;
+        } else if (name.endsWith("_l1_ops")) {
+            return VectorIndex.Distance.MANHATTAN;
+        } else if (name.endsWith("_hamming_ops")) {
+            return VectorIndex.Distance.HAMMING;
+        } else if (name.endsWith("_jaccard_ops")) {
+            return VectorIndex.Distance.JACCARD;
+        }
+        return null;
     }
 
     @Override

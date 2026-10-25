@@ -422,6 +422,16 @@ public abstract class DataFileExporter {
                 }
 
                 @Override
+                public void onRowSkipped(String catalog, String schema, String table, String key, Throwable e) {
+                    delegate.onRowSkipped(catalog, schema, table, key, e);
+                }
+
+                @Override
+                public void onDdlExecuted(String statement, boolean successful) {
+                    delegate.onDdlExecuted(statement, successful);
+                }
+
+                @Override
                 public void onEnd(boolean successful) {
                     if (!successful) {
                         failed = true;

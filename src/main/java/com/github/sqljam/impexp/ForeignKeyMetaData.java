@@ -17,8 +17,11 @@ package com.github.sqljam.impexp;
 
 import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * @Description: ForeignKeyMetaData generates a foreign key constraint, which is created after rows imported
@@ -26,6 +29,7 @@ import java.util.Map;
  * @Date: 26/03/2023
  * @Version 1.0.0
  */
+@Slf4j
 public class ForeignKeyMetaData implements TiedMetaData {
 
     private final String foreignKeyName;
@@ -50,6 +54,16 @@ public class ForeignKeyMetaData implements TiedMetaData {
                 .toArray(String[]::new);
         Dialect dialect = getDialect();
         String refTableName = getReferencedTableName();
+        String sourceRefTableName = refTableName;
+        // A key on a column which the user skipped has no column, other columns are named as the user mapped them
+        if (Arrays.stream(columnNames).anyMatch(column -> dialect.isColumnSkipped(getTableName(), column))
+                || Arrays.stream(refColumnNames).anyMatch(column -> dialect.isColumnSkipped(sourceRefTableName,
+                column))) {
+            log.info("Foreign key is skipped, a column of it is not imported: {}", foreignKeyName);
+            return null;
+        }
+        columnNames = dialect.getTargetColumnNames(getTableName(), columnNames);
+        refColumnNames = dialect.getTargetColumnNames(sourceRefTableName, refColumnNames);
         String fkName = foreignKeyName;
         if (dialect.isTableRenamed()) {
             // Copies reference copies of tables which are copied together, other tables are referenced as they are

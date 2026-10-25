@@ -30,12 +30,21 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 | 分析要 Parquet | 内置 DuckDB 生成 Parquet 导出包，也能把其他工具产出的 Parquet 文件加载进任意表 |
 | 表格工具要 CSV | CSV 导出包可选分隔符、引号、NULL 表示、表头、编码（Excel 用的 UTF-8 BOM、GBK 等）和日期格式，`manifest.json` 记录每列类型，导回时精确还原，也能加载其他工具的 CSV 文件 |
 | 导错了怎么办 | 默认**一个事务**：出错整体回滚，也可以**每 N 行提交一次**。勾选**跳过出错的行**则继续导入，每条跳过的记录都写进日志，可筛选、可保存。勾选**提交前确认**，导入成功后先看结果再 **Commit** 或 **Roll Back** |
+| 数据到底全过去了没有 | 每次导入导出都有**迁移报告**，成功、失败、取消或回滚都有：每张表的源行数、写入行数、跳过行数，结束后重新统计的目标行数和 ✓ / ✗ 核对结果，创建了哪些对象，每条跳过的行和原因，停在哪张表的第几行，以及中断的错误。**View Report** 单独一页打开，**Transfer → Import History** 列出全部历史报告，可导出 Markdown、HTML、JSON |
+| 副本要一直保持最新 | **Sync Tasks** 定时同步：按更新时间列或递增主键找出上次之后变化的行，每 N 分钟或每天定点运行。首次全量，提交成功后才移动水位，连接类错误自动重试，数据类错误不重试。可以由 SqlJam 在打开时运行，也可以登记到**系统调度器**（crontab、Windows 任务计划），SqlJam 关着也照跑。向量库集合同样可以同步，每次同步都有迁移报告 |
 | 目标已有部分数据 | **按主键更新或插入**：主键（或自选的唯一索引列）相同的行更新，其余插入。**按主键跳过已存在的行**：已有的行保持不变，只插入新行。默认是插入 |
 | 数仓和业务库割裂 | DuckDB、ClickHouse 作为 OLAP 数据源，和关系型数据库分组展示 |
 | 只要表的一部分 | 数据页查询（列、WHERE、GROUP BY、ORDER BY），只导出查询结果的行 |
 | 数据来自多表关联或报表 | **SQL Query** 查询器带语法高亮，先看前几行，再把查询的全部结果当作一张表导出 |
+| 目标列的名字或类型不一样 | **Map Columns…** 逐列改目标列名、指定目标类型或不导入某列，表和向量库集合都可以。键、索引、外键跟着新名字走，没改的列原样导入 |
 | 原地复制一份表 | 同一 schema 内按 `{table}_copy` 复制，键、索引、约束自动改名，原表受保护 |
-| 自定义和新型类型 | PostgreSQL 枚举与域、向量、联合、Map、Tuple、Variant |
+| 自定义和新型类型 | PostgreSQL 枚举与域、联合、Map、Tuple、Variant |
+| 向量检索跟着数据走 | pgvector、MySQL、MariaDB、Oracle、SQL Server、Db2、DuckDB、ClickHouse 的向量保留维度，向量索引保留距离和参数 |
+| 向量存在向量数据库里 | Milvus、Qdrant、Weaviate、Pinecone、Elasticsearch、OpenSearch、Chroma 作为**向量数据库**出现在连接树中：浏览数据库、集合、分区、租户和命名空间，分页查看记录，再把集合直接写进支持向量的数据库：id、向量、每个字段各成一列，完整 payload 保存为 JSON |
+| 数据库在跳板机后面 | 每个数据源可配 **SSH 隧道**，用密码或私钥认证，主机密钥首次信任后记住，隧道断开后自动重连 |
+| 连的是哪台服务器，状态如何 | **信息页**显示数据源或向量数据库的概览和健康状况。**Dashboard** 子页画最近 5 分钟的实时曲线，每 1 到 30 秒采样一次：会话、事务、语句、行数、缓存命中、锁等待、网络、CPU、内存和库大小，取自各数据库自己的统计视图。嵌入式数据库跑在 SqlJam 进程里，显示 SqlJam 的 CPU 和内存。服务器不提供的指标会列出原因 |
+| 长内容，要把几行贴进工单 | 单元格只显示一行，双击查看完整内容，**Copy Rows As** 复制为 CSV、TSV、JSON 或 Markdown |
+| 数据源太多 | 按关系型、OLAP、向量数据库分组并显示各自的图标，树上方的**过滤框**按名称或类型查找 |
 
 ## 3. Quick Start
 
@@ -55,7 +64,7 @@ bin/
 ├── sqljam.properties                       # 外置配置，改完重启即可
 ├── sqljam.vmoptions                        # JVM 参数，一行一个
 ├── sqljam.png                              # macOS 程序坞图标
-└── sqljam-tutorial.mp4                     # 教学视频，3 分钟内看完导出与导入
+└── sqljam-sql.mp4 / sqljam-vectors.mp4 / sqljam-sync.mp4   # 三段教学视频，每段约 2 分钟
 ```
 
 `sqljam.properties`、`sqljam.vmoptions` 和可运行 jar 放在一起。整个目录拷到任何地方都能用，双击启动也能找到配置。
@@ -64,7 +73,7 @@ bin/
 
 <p align="center"><img src="https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/splash.png" alt="SqlJam 启动画面" width="520"></p>
 
-首次启动会自带一个 **Example Shop (H2)** 示例数据源，包含几张电商表（categories、customers、products、orders、order_items），装好就能直接体验。删掉了也没关系，登录页的 **Example** 按钮或菜单 **Help → Restore Example Database** 随时可以恢复。
+启动后和 DBeaver、DataGrip 一样直接进入主界面，窗口在上次关闭的位置，树中列出所有数据源，上次连着的数据源会自动重新连接。没有保存密码的数据源在连接时询问密码。首次启动会自带一个 **Example Shop (H2)** 示例数据源，包含几张电商表（categories、customers、products、orders、order_items），装好就能直接体验。删掉了也没关系，菜单 **Help → Restore Example Database** 随时可以恢复。
 
 右键数据源选 **Connect**，连上之后同一个菜单变成 **Disconnect**，断开时它的表页签一起关闭。导入导出选目标数据源时，旁边的 **+** 按钮可以当场新建一个。工具栏最右边是 **Exit**。**Help → About SqlJam** 里有版本、主页、仓库地址和作者联系方式，右下角的 GitHub 图标点一下直接打开仓库。
 
@@ -72,15 +81,33 @@ bin/
 
 ![SQL Query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sql-editor.png)
 
-[教学视频](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-tutorial.mp4)以示例库演示一遍：筛选行、导出到文件、导出包导入 PostgreSQL，再直接复制到 SQL Server 和 Oracle。
+新建数据源先选类别：关系型、OLAP 或向量数据库，类型和字段随类别变化。勾选 **Connect through SSH tunnel** 可以经跳板机连接数据库，用密码或私钥认证。
 
-| 1. 登录数据源 | 2. 导出向导 | 3. 进度 |
+向量数据库是**向量数据库**类别的数据源，按各库的要求填 API key、用户和密码，或者都不填。在树中展开到数据库、集合和分区（Weaviate 的租户、Pinecone 的命名空间），打开集合就能看到字段和分页的记录，可以按条件、原生过滤或最近邻搜索筛选。**Import…** 打开导入向导，把勾选的集合写进支持向量的数据源。目标列表只显示支持向量的数据源。
+
+所有数据表格每格只显示一行，双击或 **Shift+Enter** 查看完整内容（JSON 自动缩进，向量显示维度），点表头对本页排序，**Copy Rows As** 把选中的行复制为 CSV、TSV、JSON 或 Markdown。工具栏的 **Info** 显示所选数据源的服务器、驱动、会话和健康状况。
+
+三段教学视频，每段约 2 分钟：[SQL 数据库](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sql.mp4)（筛选行、导出到文件、导出包导入 PostgreSQL、SQL 查询器、直接复制到 SQL Server），[向量数据库](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-vectors.mp4)（浏览 Qdrant 集合、导入 PostgreSQL、Weaviate 租户），[定时同步与迁移报告](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sync.mp4)（示例库同步到 PostgreSQL、首次全量和增量、查看报告、交给系统调度器）。
+
+| 1. 数据源 | 2. 导出向导 | 3. 进度 |
 |---|---|---|
-| ![login](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/login.png) | ![export](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/export-wizard.png) | ![progress](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/progress.png) |
+| ![data source](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/data-source.png) | ![export](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/export-wizard.png) | ![progress](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/progress.png) |
 
 | 4. 数据查询 | 5. 导出包浏览 | 6. Parquet 文件 |
 |---|---|---|
 | ![query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/table-data.png) | ![viewer](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/package-viewer.png) | ![parquet](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/import-parquet.png) |
+
+| 7. 向量数据库集合 | 8. 向量数据库导入 | 9. 数据库信息 |
+|---|---|---|
+| ![collection](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/vdb-collection.png) | ![vdb import](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/import-vdb.png) | ![info](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/database-info.png) |
+
+| 10. 迁移报告 | 11. 导入历史 | 12. 同步任务 |
+|---|---|---|
+| ![report](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/report.png) | ![history](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/import-history.png) | ![sync](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sync-tasks.png) |
+
+| 13. 监控仪表盘 | 14. 列映射 | 15. 功能图谱 |
+|---|---|---|
+| ![dashboard](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/dashboard.png) | ![mapping](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/column-mapping.png) | ![features](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/feature-map.png) |
 
 ## 4. Requirements
 
@@ -96,14 +123,24 @@ bin/
 | 数据库 | 版本 |
 |---|---|
 | MySQL | 5.5 ~ 9.x |
-| PostgreSQL | 9.x ~ 16 |
+| PostgreSQL | 9.x ~ 17 |
 | Oracle | 11g ~ 23ai |
-| SQL Server | 2008 ~ 2022 |
+| SQL Server | 2008 ~ 2025 |
 | MariaDB | 10.3 ~ 11.x |
 | H2 / SQLite | 2.x / 3.x |
 | Microsoft Access（.accdb、.mdb） | 2000 ~ 2019 |
 | DuckDB（OLAP） | 1.x |
 | ClickHouse（OLAP） | 24.x ~ 26.x |
+
+| 向量数据库（仅作源） | 版本 |
+|---|---|
+| Milvus | 2.4 ~ 3.x |
+| Qdrant | 1.10 ~ 1.19 |
+| Weaviate | 1.24 ~ 1.39 |
+| Pinecone、Pinecone Local | API 2025-01 |
+| Elasticsearch | 8.0 ~ 8.19 |
+| OpenSearch | 2.4 ~ 2.19 |
+| Chroma | 1.0 ~ 1.5 |
 
 JDBC 驱动全部打进 fat jar，无需额外下载。
 
@@ -120,6 +157,7 @@ flowchart LR
     E --> SI[ScriptImporter] --> TD
     D --> P[Parquet / CSV 导出包<br/>DuckDB 中转 · data/*.parquet 或 *.csv]
     P --> PI[ParquetImporter · CsvImporter] --> TD
+    V[(向量数据库)] --> VC[VdbClient · REST API] --> VT[集合树] --> VD[Vdb 方言] --> TD
 ```
 
 - **读一次元数据**：`XxxMetaDataOperations` 按库补全注释、自增、生成列、分区、序列。
@@ -129,6 +167,7 @@ flowchart LR
 - **事务**：导入在一个事务里完成，成功自动提交或经你确认后提交。MySQL、MariaDB、Oracle、H2 执行 DDL 会隐式提交，外键和自增值等语句延后到提交之后执行。
 - **按主键更新或跳过**：使用各库的 `ON CONFLICT`、`ON DUPLICATE KEY UPDATE` 或 `MERGE`，已存在的表、索引、键自动跳过。
 - **跳过出错的行**：出错的一页在 savepoint 保护下逐行重写，每条坏行连同主键和错误写进日志，其余行照常保留。
+- **向量数据库**：独立于 JDBC 主线的一条流水线。REST 客户端读取集合，访问者遍历集合树生成建表语句，`VdbImportHandler` 分页写入目标库，写入前先探测目标库的向量特性。
 
 ## 6. Code Examples
 
@@ -205,8 +244,23 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 | PostgreSQL `jsonb` | same | `CLOB` | `nvarchar(max)` |
 | SQL Server `datetime2(7)` | `timestamp` | `TIMESTAMP(7)` | same |
 | PostgreSQL 枚举 / 域 | same（在目标 schema 创建） | `VARCHAR2` / 基础类型 | `varchar` / 基础类型 |
-| MySQL / Oracle `VECTOR` | `text` | same | `nvarchar(max)` |
+| MySQL / Oracle / SQL Server `VECTOR(1024)` | `vector(1024)` | `VECTOR(1024, FLOAT32)` | `VECTOR(1024)` |
+| PostgreSQL `halfvec(2560)` / `sparsevec(8)` | same | `VECTOR(2560, FLOAT32)` / `VECTOR(8, FLOAT32, SPARSE)` | `VECTOR(2560, float16)` / `nvarchar(max)` |
 | ClickHouse `Array(T)` / `Map(K, V)` | `text` | `CLOB` | `nvarchar(max)` |
+
+向量数据库的集合直接导入支持向量的目标库：
+
+```java
+try (VdbClient client = VdbType.QDRANT.createClient(new VdbSource(VdbType.QDRANT, "http://qdrant-host:6333"))) {
+    VdbExportConfiguration configuration = new VdbExportConfiguration();
+    configuration.setTargetSchema("public");
+    configuration.addCollection("docs", "docs");
+    configuration.setQuery(VdbQuery.all().where("lang = 'en'"));
+    new VdbExporter(client, pgDataSource, configuration).export();
+}
+```
+
+**输出**：`public.docs`，含 `id`、`embedding vector(1024)`、每个 payload 字段一列和 `payload jsonb`，以及集合原有余弦距离的 HNSW 索引。
 
 ## 7. Configuration
 
@@ -226,6 +280,9 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 | `sqljam.import.batch-size` | `1000` | 导入导出包时每批 INSERT 条数 |
 | `sqljam.ui.theme` | `Primer Dark` | 主题，可切换 7 种 |
 | `sqljam.pool.maximum-size` | `10` | 连接池大小 |
+| `sqljam.vdb.enabled` | `true` | 显示向量数据库，`false` 隐藏 |
+| `sqljam.vdb.connections.file` | `${sqljam.home}/vdb-connections.json` | 保存的向量数据库 |
+| `sqljam.ssh.known-hosts.file` | `${sqljam.home}/ssh_known_hosts` | SSH 隧道服务器的主机密钥 |
 
 ## 8. Performance
 
@@ -233,14 +290,21 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 
 | 场景（20 万行 × 6 列） | 耗时 | 行/秒 |
 |---|---|---|
-| H2 → Oracle 23ai | 2.1 s | 95.3k |
-| H2 → 导出包（32 MB，切成 4 个文件） | 2.9 s | 69.4k |
-| H2 → PostgreSQL 16 | 3.2 s | 62.4k |
-| H2 → MySQL 9.6 | 3.3 s | 60.7k |
-| H2 → SQL Server 2022 | 5.0 s | 40.1k |
-| 导出包 → PostgreSQL | 4.5 s | 44.5k |
+| H2 → MySQL | 10.3 s | 19.5k |
+| H2 → MariaDB | 9.5 s | 21.1k |
+| H2 → PostgreSQL | 6.4 s | 31.3k |
+| H2 → Oracle | 4.2 s | 47.9k |
+| H2 → SQL Server | 12.0 s | 16.7k |
+| H2 → Db2 | 9.3 s | 21.6k |
+| H2 → ClickHouse | 4.2 s | 47.4k |
+| H2 → DuckDB | 5.7 s | 35.1k |
+| H2 → SQL 导出包 | 2.6 s | 76.1k |
+| H2 → Parquet 导出包 | 5.7 s | 35.4k |
+| H2 → CSV 导出包 | 5.8 s | 34.7k |
+| SQL 导出包 → PostgreSQL | 24.3 s | 8.2k |
+| Qdrant → PostgreSQL （2 万个点，256 维向量和 payload） | 18.4 s | 1.1k |
 
-环境：Apple M2 Max / 32 GB / JDK 17。MySQL、PostgreSQL 本机，Oracle、SQL Server 在 Docker。默认配置。
+环境：Apple M2 Max / 32 GB / JDK 17。数据库在局域网服务器的 Docker 中（约 100 Mbit/s），H2、DuckDB 和导出包在本机。默认配置。每个场景由 `TransferBenchmark` 测得。
 
 **质量**：覆盖每种数据库全部字段类型的跨库互导矩阵，SQL、Parquet、CSV 导出包回放，事务提交与回滚、按主键更新或插入在每种数据库上验证，同 schema 复制，旧版本语法在真实库上执行，界面功能与边界测试。
 
@@ -254,6 +318,7 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 - **Parquet 与 CSV 交给 DuckDB**：一个内置引擎负责读写，不引入 Hadoop 依赖。
 - **默认一个事务**：导入要么全成要么全不成，想先看结果就勾选提交前确认。
 - **分组结果用于浏览**：导出的始终是表的真实行，GROUP BY 的结果是这些行的视图。
+- **向量数据库只作源**：集合导入支持向量的关系型数据库，关系型数据库始终是终点。
 - **复制要有新表名**：同一 schema 内复制需要 `{table}_copy` 这样的表名，原表永远不会被覆盖。
 
 ## 10. Summary
@@ -268,4 +333,5 @@ target.setTableNamePattern("{table}_copy");       // 在 EMPLOYEES 旁边生成 
 8. 暗色主流界面，7 种主题，百分比进度与取消。
 9. Parquet、CSV 导出包与外部文件加载，DuckDB、ClickHouse 作为 OLAP 数据源，导入默认一个事务、出错整体回滚，支持按主键更新或插入。
 10. SQL Query 查询器的任意查询结果都能走同样的导出出口，来自表的列保留原类型。
-10. 表数据可查询，只导出查询结果，也能在同一 schema 内复制表。
+11. 表数据可查询，只导出查询结果，也能在同一 schema 内复制表。
+12. Milvus、Qdrant、Weaviate、Pinecone、Elasticsearch、OpenSearch、Chroma 的集合直接导入支持向量的数据库，导入前可按条件、原生过滤或最近邻搜索预览。

@@ -35,10 +35,12 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
+import org.testfx.util.WaitForAsyncUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.impexp.DbType;
 import javafx.application.Platform;
+import javafx.event.Event;
 import javafx.scene.Cursor;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
@@ -59,6 +61,8 @@ import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TreeCell;
 import javafx.scene.control.TreeItem;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.stage.Stage;
 import javafx.stage.Window;
 
@@ -112,6 +116,19 @@ class MainViewTest {
                 .startsWith(label)).findFirst().orElse(null));
     }
 
+    /**
+     * A data source of the tree, in the group of its category
+     */
+    private TreeItem<DbNode> connection(String label) {
+        return FxTestSupport.call(() -> tree().getConnectionItems().stream().filter(item -> item.getValue()
+                .getLabel().startsWith(label)).findFirst().orElse(null));
+    }
+
+    private List<String> connectionLabels() {
+        return FxTestSupport.call(() -> tree().getConnectionItems().stream().map(item -> item.getValue()
+                .getLabel()).collect(Collectors.toList()));
+    }
+
     private static List<String> labels(TreeItem<DbNode> item) {
         return FxTestSupport.call(() -> item.getChildren().stream().map(child -> child.getValue().getLabel())
                 .collect(Collectors.toList()));
@@ -124,7 +141,7 @@ class MainViewTest {
     }
 
     private TreeItem<DbNode> expandToSchema() {
-        TreeItem<DbNode> connection = child(tree().getRoot(), "Embedded H2");
+        TreeItem<DbNode> connection = connection("Embedded H2");
         expandAndWait(connection);
         TreeItem<DbNode> catalog = child(connection, UiDatabase.CATALOG);
         assertNotNull(catalog, labels(connection).toString());
@@ -135,9 +152,36 @@ class MainViewTest {
     }
 
     @Test
+    void filtersTreeByField() {
+        TextField field = (TextField) mainView.lookup("#treeFilterField");
+        Button clear = (Button) mainView.lookup("#treeFilterClearButton");
+        assertFalse(FxTestSupport.call(clear::isVisible));
+        FxTestSupport.run(() -> field.setText("embedded"));
+        assertEquals(List.of("Embedded H2"), connectionLabels().stream().map(label -> label.substring(0, 11))
+                .collect(Collectors.toList()));
+        assertEquals("embedded", tree().getFilter());
+        assertTrue(FxTestSupport.call(clear::isVisible));
+        FxTestSupport.fireLater(clear);
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals("", FxTestSupport.call(field::getText));
+        assertTrue(connectionLabels().size() > 1);
+        // Escape clears it too
+        FxTestSupport.run(() -> field.setText("nothing"));
+        assertEquals(List.of(), connectionLabels());
+        Platform.runLater(() -> Event.fireEvent(field, new KeyEvent(KeyEvent.KEY_PRESSED, "", "", KeyCode.ESCAPE,
+                false, false, false, false)));
+        WaitForAsyncUtils.waitForFxEvents();
+        assertEquals("", tree().getFilter());
+        // The tree changes the field
+        FxTestSupport.run(() -> tree().setFilter("h2"));
+        assertEquals("h2", FxTestSupport.call(field::getText));
+        FxTestSupport.run(() -> tree().setFilter(""));
+    }
+
+    @Test
     void loadsTreeLazily() {
-        TreeItem<DbNode> connection = child(tree().getRoot(), "Embedded H2");
-        assertEquals(2, FxTestSupport.call(() -> tree().getRoot().getChildren().size()));
+        TreeItem<DbNode> connection = connection("Embedded H2");
+        assertEquals(2, FxTestSupport.call(() -> tree().getConnectionItems().size()));
         // Placeholder child until expanded
         assertEquals(DbNode.Kind.LOADING, FxTestSupport.call(() -> connection.getChildren().get(0).getValue()
                 .getKind()));
@@ -173,7 +217,7 @@ class MainViewTest {
 
     @Test
     void showsEmptyAndErrorNodes() {
-        TreeItem<DbNode> unreachable = child(tree().getRoot(), "Unreachable MySQL");
+        TreeItem<DbNode> unreachable = connection("Unreachable MySQL");
         FxTestSupport.run(() -> unreachable.setExpanded(true));
         FxTestSupport.waitForDialogPane();
         FxTestSupport.closeAllDialogs();
@@ -249,13 +293,13 @@ class MainViewTest {
 
     @Test
     void deletesDataSource() {
-        TreeItem<DbNode> unreachable = child(tree().getRoot(), "Unreachable MySQL");
+        TreeItem<DbNode> unreachable = connection("Unreachable MySQL");
         FxTestSupport.run(() -> tree().getSelectionModel().select(unreachable));
         Button deleteButton = FxTestSupport.call(() -> (Button) mainView.lookup("#action-deleteConnection"));
         assertFalse(FxTestSupport.call(deleteButton::isDisabled));
         FxTestSupport.fireLater(deleteButton);
         FxTestSupport.closeDialog(ButtonType.OK);
-        FxTestSupport.waitUntil(() -> tree().getRoot().getChildren().size() == 1);
+        FxTestSupport.waitUntil(() -> tree().getConnectionItems().size() == 1);
         assertEquals(1, context.getProfileRegistry().getProfiles().size());
     }
 
@@ -276,10 +320,7 @@ class MainViewTest {
     }
 
     private MenuItem fileMenuItem(String id) {
-        return FxTestSupport.call(() -> {
-            Menu fileMenu = ((MenuBar) mainView.lookup(".menu-bar")).getMenus().get(0);
-            return fileMenu.getItems().stream().filter(item -> id.equals(item.getId())).findFirst().orElse(null);
-        });
+        return FxTestSupport.menuItem(mainView, id);
     }
 
     @Test
@@ -293,7 +334,7 @@ class MainViewTest {
         assertTrue(FxTestSupport.call(() -> pane.lookupButton(ButtonType.OK).isDisabled()));
         FxTestSupport.closeDialog(ButtonType.CANCEL);
         // The context menu of a data source offers both imports
-        TreeItem<DbNode> connection = child(tree().getRoot(), "Embedded H2");
+        TreeItem<DbNode> connection = connection("Embedded H2");
         FxTestSupport.run(() -> tree().getSelectionModel().select(connection));
         List<String> items = FxTestSupport.call(() -> {
             tree().applyCss();
@@ -350,7 +391,7 @@ class MainViewTest {
 
     @Test
     void disconnectsOpenedConnection() {
-        TreeItem<DbNode> connection = child(tree().getRoot(), "Embedded H2");
+        TreeItem<DbNode> connection = connection("Embedded H2");
         assertEquals(List.of(true, false), connectState(contextMenu(connection)));
         expandAndWait(connection);
         assertTrue(FxTestSupport.call(() -> tree().isConnected(connection)));
@@ -372,7 +413,7 @@ class MainViewTest {
         assertTrue(FxTestSupport.call(() -> tree().isConnected(connection)));
         assertTrue(labels(connection).size() > 0);
         // Not connected, nothing happens
-        TreeItem<DbNode> unreachable = child(tree().getRoot(), "Unreachable MySQL");
+        TreeItem<DbNode> unreachable = connection("Unreachable MySQL");
         FxTestSupport.run(() -> tree().disconnect(unreachable));
         assertFalse(FxTestSupport.call(() -> tree().isConnected(unreachable)));
     }
@@ -403,8 +444,8 @@ class MainViewTest {
         assertEquals(3, FxTestSupport.call(() -> targetCombo.getItems().size()));
         FxTestSupport.closeDialog(ButtonType.CANCEL);
         // The tree lists it after the dialog, opened connections are kept
-        FxTestSupport.waitUntil(() -> labels(tree().getRoot()).contains("Target H2"));
-        assertEquals(3, labels(tree().getRoot()).size());
+        FxTestSupport.waitUntil(() -> connectionLabels().contains("Target H2"));
+        assertEquals(3, connectionLabels().size());
     }
 
     @Test
@@ -543,12 +584,94 @@ class MainViewTest {
             assertEquals(3, rs.getInt(1));
         }
         // Closed with its data source
-        TreeItem<DbNode> connection = child(tree().getRoot(), "Embedded H2");
+        TreeItem<DbNode> connection = connection("Embedded H2");
         FxTestSupport.run(() -> tree().disconnect(connection));
         assertTrue(FxTestSupport.call(() -> tabs().getTabs().isEmpty()));
         // Nothing selected: the first data source
         FxTestSupport.run(() -> mainView.openSqlTab(null));
         assertTrue(FxTestSupport.call(() -> tabs().getTabs().get(0).getText()).startsWith("SQL 2: "));
         FxTestSupport.run(() -> ((SqlTab) tabs().getTabs().get(0)).close());
+    }
+
+    private static boolean disabledOnShowing(MenuItem item) {
+        return FxTestSupport.call(() -> {
+            item.getParentMenu().getOnShowing().handle(new javafx.event.Event(Menu.ON_SHOWING));
+            return item.isDisable();
+        });
+    }
+
+    /**
+     * The menus of the main window: the actions of the toolbar and of the tree, switched off without a data source,
+     * the themes in the menu and in the toolbar, tabs closed together and the keys read from the menus
+     */
+    @Test
+    void offersActionsInMenus() {
+        assertEquals(List.of("File", "Database", "Transfer", "View", "Help"), FxTestSupport.call(() -> ((MenuBar)
+                mainView.lookup(".menu-bar")).getMenus().stream().map(Menu::getText).collect(Collectors.toList())));
+        MenuItem edit = FxTestSupport.menuItem(mainView, "action-editConnection-menu");
+        MenuItem connect = FxTestSupport.menuItem(mainView, "tree-connect-menu");
+        MenuItem disconnect = FxTestSupport.menuItem(mainView, "tree-disconnect-menu");
+        MenuItem disconnectAll = FxTestSupport.menuItem(mainView, "action-disconnectAll-menu");
+        MenuItem dashboard = FxTestSupport.menuItem(mainView, "action-dashboard-menu");
+        FxTestSupport.run(() -> tree().getSelectionModel().clearSelection());
+        assertTrue(disabledOnShowing(edit));
+        assertTrue(disabledOnShowing(connect));
+        assertTrue(disabledOnShowing(dashboard));
+
+        // A data source: connected by the menu, its table selected keeps it, disconnected again
+        TreeItem<DbNode> h2 = connection("Embedded H2");
+        FxTestSupport.run(() -> tree().getSelectionModel().select(h2));
+        assertFalse(disabledOnShowing(edit));
+        assertFalse(disabledOnShowing(connect));
+        assertTrue(disabledOnShowing(disconnect));
+        FxTestSupport.run(connect::fire);
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> tree().isConnected(h2)));
+        assertTrue(disabledOnShowing(connect));
+        assertFalse(disabledOnShowing(disconnectAll));
+        FxTestSupport.run(dashboard::fire);
+        InfoTab info = FxTestSupport.call(() -> (InfoTab) tabs().getSelectionModel().getSelectedItem());
+        assertTrue(FxTestSupport.call(() -> info.getDashboard() != null));
+        FxTestSupport.run(disconnectAll::fire);
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> !tree().isConnected(h2)));
+
+        // Disconnected: its info was closed with it
+        assertTrue(FxTestSupport.call(() -> tabs().getTabs().isEmpty()));
+        // Tabs: the others, then all of them, closed like by the user
+        FxTestSupport.run(() -> {
+            mainView.openHistory();
+            mainView.openSync();
+        });
+        assertEquals(2, FxTestSupport.call(() -> tabs().getTabs().size()).intValue());
+        FxTestSupport.run(FxTestSupport.menuItem(mainView, "action-closeOtherTabs-menu")::fire);
+        assertEquals(List.of("Sync Tasks"), FxTestSupport.call(() -> tabs().getTabs().stream().map(Tab::getText)
+                .collect(Collectors.toList())));
+        FxTestSupport.run(FxTestSupport.menuItem(mainView, "action-closeAllTabs-menu")::fire);
+        assertTrue(FxTestSupport.call(() -> tabs().getTabs().isEmpty()));
+        assertTrue(disabledOnShowing(FxTestSupport.menuItem(mainView, "action-closeTab-menu")));
+
+        // The theme of the toolbar is checked in the menu too, Next Theme goes on through the list
+        javafx.scene.control.MenuButton themes = FxTestSupport.call(() -> (javafx.scene.control.MenuButton) mainView
+                .lookup("#toolbarThemeButton"));
+        String second = ThemeManager.getThemeNames().get(1);
+        FxTestSupport.run(() -> themes.getItems().stream().filter(item -> second.equals(item.getText())).findFirst()
+                .orElseThrow().fire());
+        assertEquals(second, context.getSettings().getTheme());
+        assertTrue(FxTestSupport.call(() -> ((Menu) FxTestSupport.menuItem(mainView, "themeMenu")).getItems().stream()
+                .filter(item -> second.equals(item.getText())).map(item -> ((javafx.scene.control.RadioMenuItem) item)
+                        .isSelected()).findFirst().orElseThrow()));
+        FxTestSupport.run(FxTestSupport.menuItem(mainView, "action-nextTheme-menu")::fire);
+        assertEquals(ThemeManager.getThemeNames().get(2), context.getSettings().getTheme());
+        FxTestSupport.run(() -> mainView.applyTheme(ThemeManager.DEFAULT_THEME));
+
+        // The keys of the menus
+        List<String[]> shortcuts = FxTestSupport.call(mainView::getShortcuts);
+        assertTrue(shortcuts.stream().anyMatch(row -> row[0].equals("Transfer > Export...")), shortcuts.stream().map(
+                row -> row[0]).collect(Collectors.joining(", ")));
+        assertTrue(shortcuts.stream().anyMatch(row -> row[0].equals("Database > Refresh")));
+        FxTestSupport.run(FxTestSupport.menuItem(mainView, "help-shortcuts-menu")::fire);
+        javafx.scene.control.DialogPane pane = FxTestSupport.waitForDialogPane();
+        assertEquals(shortcuts.size(), FxTestSupport.call(() -> ((javafx.scene.control.TableView<?>) pane.lookup(
+                "#shortcutsTable")).getItems().size()).intValue());
+        FxTestSupport.closeDialog(javafx.scene.control.ButtonType.OK);
     }
 }

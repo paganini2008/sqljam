@@ -43,8 +43,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import com.github.sqljam.impexp.TransactionIsolationLevel;
 import com.github.sqljam.impexp.db.H2Dialect;
-import com.github.sqljam.jdbc.page.MapBasedPageReader;
 import com.github.sqljam.page.EachPage;
+import com.github.sqljam.page.MapBasedPageReader;
 import com.github.sqljam.page.PageRequest;
 import com.github.sqljam.page.PageResponse;
 

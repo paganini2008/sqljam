@@ -157,6 +157,20 @@ class ExportDialogTest {
         return FxTestSupport.call(() -> ((Label) node("errorLabel")).getText());
     }
 
+    /**
+     * Whether the node and all of its parents are visible
+     */
+    private boolean shown(String id) {
+        return FxTestSupport.call(() -> {
+            for (javafx.scene.Node node = node(id); node != null; node = node.getParent()) {
+                if (!node.isVisible()) {
+                    return false;
+                }
+            }
+            return true;
+        });
+    }
+
     private TransferRequest build() {
         return FxTestSupport.call(dialog::buildRequest);
     }
@@ -362,6 +376,38 @@ class ExportDialogTest {
         String hint = FxTestSupport.call(() -> ((Label) node("layoutHint")).getText());
         assertTrue(hint.contains("data.sql"), hint);
         assertTrue(hint.contains("manifest.json"), hint);
+    }
+
+    /**
+     * Columns are mapped for imports into a database only, the mappings go with the request
+     */
+    @Test
+    void mapsColumnsOfDatabaseTargets() {
+        open(schemaNode());
+        // Packages are written as they are
+        assertFalse(shown("mapColumnsButton"));
+        FxTestSupport.run(() -> ((RadioButton) node("databaseRadio")).setSelected(true));
+        assertEquals("All columns are imported as they are", FxTestSupport.call(() -> ((Label) node("mappingLabel"))
+                .getText()));
+        assertTrue(build().getColumnMappings().isEmpty());
+        assertTrue(shown("mapColumnsButton"));
+        FxTestSupport.fireLater((Button) node("mapColumnsButton"));
+        FxTestSupport.waitUntil(() -> FxTestSupport.getDialogPanes().stream().anyMatch(pane -> pane.lookup(
+                "#mappingColumnTable") != null));
+        javafx.scene.control.DialogPane mapping = FxTestSupport.getDialogPanes().stream().filter(pane -> pane
+                .lookup("#mappingColumnTable") != null).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        javafx.scene.control.TableView<ColumnMappingDialog.Row> columns = (javafx.scene.control.TableView<
+                ColumnMappingDialog.Row>) mapping.lookup("#mappingColumnTable");
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> !columns.getItems().isEmpty()));
+        FxTestSupport.run(() -> {
+            columns.getItems().get(0).targetName.set("MAPPED_FIRST");
+            ((Button) mapping.lookupButton(ButtonType.OK)).fire();
+        });
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> ((Label) node("mappingLabel")).getText()
+                .equals("1 columns are mapped")));
+        assertTrue(build().getColumnMappings().values().stream().anyMatch(columnsOfTable -> columnsOfTable.values()
+                .stream().anyMatch(columnMapping -> "MAPPED_FIRST".equals(columnMapping.getTargetName()))));
     }
 
     @Test

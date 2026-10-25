@@ -21,12 +21,15 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * @Description: CombinedIndexMetaData is an index of multiple columns
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
  */
+@Slf4j
 public class CombinedIndexMetaData implements TiedMetaData {
 
     private final String indexName;
@@ -108,9 +111,22 @@ public class CombinedIndexMetaData implements TiedMetaData {
         String tableName = getDialect().getTargetTableName(getTableName());
         boolean partition = tableMetaData.isPartitioned();
         boolean unique = IndexMetaData.isUnique(getDetail());
-        String indexName = getDialect().getIndexNameStatement(catalogName, schemaName, tableName, columnNames, unique,
-                null);
-        String statement = getDialect().getCreateIndexStatement(catalogName, schemaName, tableName, partition, columnNames,
+        IndexMetaData.VectorIndexing vectorIndexing = IndexMetaData.getVectorIndexing(tableMetaData, columnNames);
+        if (vectorIndexing != IndexMetaData.VectorIndexing.NONE && vectorIndexing != IndexMetaData.VectorIndexing.SAME) {
+            log.info("Index of vector columns is skipped, the target has no index for them: {}{}", tableName,
+                    Arrays.toString(columnNames));
+            return null;
+        }
+        String method = IndexMetaData.getIndexMethod(getDialect(), getDetail());
+        // Columns of the target, as the user mapped them
+        String[] targetColumnNames = getDialect().getTargetColumnNames(getTableName(), columnNames);
+        String indexName = getDialect().getIndexNameStatement(catalogName, schemaName, tableName, targetColumnNames,
+                unique, method);
+        String statement = method != null ? getDialect().getCreateIndexStatement(catalogName, schemaName, tableName,
+                partition, targetColumnNames, indexName, unique, method, indexMetaDatas.stream().map(md -> (String) md
+                        .getDetail().get(IndexMetaData.OPERATOR_CLASS)).toArray(String[]::new),
+                (String) getDetail().get(IndexMetaData.INDEX_OPTIONS))
+                : getDialect().getCreateIndexStatement(catalogName, schemaName, tableName, partition, targetColumnNames,
                 indexName, unique, null);
         return new String[]{statement};
     }

@@ -42,6 +42,7 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import com.github.sqljam.face.model.TableInfo;
@@ -87,6 +88,51 @@ class PartitionIT {
                     StandardCharsets.UTF_8));
         }
         LOADED.add(db);
+    }
+
+    /**
+     * Partitioned tables (not the fixture table sales) and their copies are dropped after the tests, other tests
+     * expect the fixture tables only
+     */
+    @AfterAll
+    static synchronized void dropPartitionedTables() throws SQLException {
+        for (ItDatabase db : LOADED) {
+            List<String> tables;
+            try (Connection connection = db.getSourceConnection()) {
+                tables = getPartitionedTables(db, connection).stream().filter(table -> !table.toLowerCase(
+                        Locale.ENGLISH).endsWith("sales")).collect(Collectors.toList());
+                dropWithDialect(db, connection, getSourceSchema(db), tables);
+            }
+            if (!db.isSingleSchema()) {
+                try (Connection connection = db.getTargetConnection()) {
+                    dropWithDialect(db, connection, getCopySchema(db), tables);
+                }
+            } else {
+                dropCopies(db, tables);
+            }
+        }
+        LOADED.clear();
+    }
+
+    private static void dropWithDialect(ItDatabase db, Connection connection, String schema, List<String> tables)
+            throws SQLException {
+        Dialect dialect = db.getDbType().createDialect();
+        boolean catalog = db.getDbType() == DbType.MYSQL || db.getDbType() == DbType.MARIADB;
+        // Children of references first (Oracle)
+        List<String> ordered = new ArrayList<>(tables);
+        ordered.sort((a, b) -> Boolean.compare(!a.toLowerCase(Locale.ENGLISH).contains("child"),
+                !b.toLowerCase(Locale.ENGLISH).contains("child")));
+        for (String table : ordered) {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute(dialect.getDropTableStatement(catalog ? schema : null, catalog ? null : schema,
+                        table));
+            } catch (SQLException e) {
+                // A table which is gone already
+            }
+        }
+        if (!connection.getAutoCommit()) {
+            connection.commit();
+        }
     }
 
     /**

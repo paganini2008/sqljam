@@ -16,9 +16,14 @@
 package com.github.sqljam.face.model;
 
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.utils.SshSettings;
+import com.github.sqljam.utils.SshUtils;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.ToString;
@@ -49,7 +54,20 @@ public class ConnectionProfile {
      * Custom jdbc url, overrides hostname, port and database
      */
     private String url;
+    /**
+     * SSH server through which the host and port are reached, none if it is null or disabled
+     */
+    private SshSettings ssh;
 
+    /**
+     * Host and port of a custom url, e.g. //host:5432/ or @host:1521
+     */
+    static final Pattern URL_ADDRESS = Pattern.compile("(?<=//|@)([\\w.-]+|\\[[^\\]]+\\]):(\\d+)");
+
+    /**
+     * Jdbc url of the database, not saved: it is made of the fields, and an SSH tunnel is opened for it
+     */
+    @JsonIgnore
     public String getJdbcUrl() {
         return getJdbcUrl(database);
     }
@@ -62,10 +80,57 @@ public class ConnectionProfile {
             // The catalog of a database file is the file itself
             catalog = null;
         }
-        if (StringUtils.isNotBlank(url) && (StringUtils.isBlank(catalog) || StringUtils.equals(catalog, database))) {
+        boolean custom = StringUtils.isNotBlank(url) && (StringUtils.isBlank(catalog) || StringUtils.equals(catalog,
+                database));
+        if (isSshEnabled()) {
+            return getTunnelUrl(custom, catalog);
+        }
+        if (custom) {
             return dbType != null ? dbType.normalizeUrl(url) : url;
         }
         return dbType.getUrl(hostname, port, StringUtils.defaultIfBlank(catalog, database));
+    }
+
+    /**
+     * Whether the data source is reached through its SSH server, a database file never is
+     */
+    @JsonIgnore
+    public boolean isSshEnabled() {
+        return ssh != null && ssh.isEnabled() && (dbType == null || !dbType.isFileBased());
+    }
+
+    /**
+     * Url of the local end of the SSH tunnel: the host and port, as the SSH server reaches them, are forwarded to
+     * a local port. The tunnel is opened when the url is first asked for.
+     */
+    private String getTunnelUrl(boolean custom, String catalog) {
+        String[] target = tunnelTarget(custom);
+        int localPort = SshUtils.open(id, ssh, target[0], Integer.parseInt(target[1]));
+        if (custom) {
+            Matcher matcher = URL_ADDRESS.matcher(url);
+            String local = matcher.find() ? matcher.replaceFirst(SshUtils.LOCALHOST_ADDRESS + ":" + localPort)
+                    : url;
+            return dbType != null ? dbType.normalizeUrl(local) : local;
+        }
+        return dbType.getUrl(SshUtils.LOCALHOST_ADDRESS, localPort, StringUtils.defaultIfBlank(catalog, database));
+    }
+
+    /**
+     * Host and port which the SSH server forwards to: those of the fields with the default port of the type, or
+     * those of a custom url, a host in brackets (IPv6) without them
+     */
+    public String[] tunnelTarget(boolean custom) {
+        String targetHost = hostname;
+        int targetPort = port > 0 ? port : dbType.getDefaultPort();
+        Matcher matcher = URL_ADDRESS.matcher(StringUtils.defaultString(url));
+        if (StringUtils.isNotBlank(url) && matcher.find() && (custom || StringUtils.isBlank(hostname))) {
+            targetHost = matcher.group(1);
+            targetPort = Integer.parseInt(matcher.group(2));
+        }
+        if (StringUtils.isBlank(targetHost)) {
+            throw new IllegalStateException("No host of " + name + " to reach through SSH");
+        }
+        return new String[]{targetHost.replaceAll("^\\[|\\]$", ""), String.valueOf(targetPort)};
     }
 
     public ConnectionProfile copy() {
@@ -79,6 +144,7 @@ public class ConnectionProfile {
         copy.setUsername(username);
         copy.setPassword(password);
         copy.setUrl(url);
+        copy.setSsh(ssh != null ? ssh.copy() : null);
         return copy;
     }
 }

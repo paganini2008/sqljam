@@ -78,6 +78,17 @@
             <artifactId>commons-io</artifactId>
             <version>2.22.0</version>
         </dependency>
+        <!-- SSH tunnels of data sources, Apache MINA SSHD in one bundle, eddsa reads ed25519 keys -->
+        <dependency>
+            <groupId>org.apache.sshd</groupId>
+            <artifactId>sshd-osgi</artifactId>
+            <version>2.15.0</version>
+        </dependency>
+        <dependency>
+            <groupId>net.i2p.crypto</groupId>
+            <artifactId>eddsa</artifactId>
+            <version>0.3.0</version>
+        </dependency>
         <dependency>
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
@@ -146,7 +157,7 @@
         <dependency>
             <groupId>com.microsoft.sqlserver</groupId>
             <artifactId>mssql-jdbc</artifactId>
-            <version>12.10.2.jre11</version>
+            <version>13.4.0.jre11</version>
         </dependency>
         <dependency>
             <groupId>com.h2database</groupId>
@@ -592,10 +603,12 @@
                                     </includes>
                                 </resource>
                                 <resource>
-                                    <!-- Tutorial video: export and import with the example database -->
+                                    <!-- Tutorial videos: SQL databases, vector databases, scheduled sync and reports -->
                                     <directory>${project.basedir}/docs/assets</directory>
                                     <includes>
-                                        <include>sqljam-tutorial.mp4</include>
+                                        <include>sqljam-sql.mp4</include>
+                                        <include>sqljam-vectors.mp4</include>
+                                        <include>sqljam-sync.mp4</include>
                                     </includes>
                                 </resource>
                             </resources>

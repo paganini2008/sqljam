@@ -34,6 +34,7 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
+import com.github.sqljam.impexp.VectorType;
 import com.github.sqljam.jdbc.JdbcUtils;
 
 /**
@@ -311,6 +312,10 @@ public class DuckDBMetaDataOperations extends MetaDataOperations {
                 setType(columnInfo, Types.TIMESTAMP_WITH_TIMEZONE, 32, 6);
                 break;
             default:
+                VectorType vectorType = getVectorType(typeName);
+                if (vectorType != null) {
+                    columnInfo.put(VectorType.DETAIL_KEY, vectorType.toString());
+                }
                 if (isTextType(typeName)) {
                     // Nested types, enums, intervals and json are read as text
                     columnInfo.put("DATA_TYPE", isJsonOrUuid(typeName) ? Types.OTHER : Types.VARCHAR);
@@ -321,6 +326,22 @@ public class DuckDBMetaDataOperations extends MetaDataOperations {
                 }
                 break;
         }
+    }
+
+    /**
+     * FLOAT[n] and DOUBLE[n], arrays of a fixed size of floats, are the vectors of DuckDB (array_cosine_distance),
+     * lists of floats (FLOAT[]) are not
+     */
+    private static final Pattern VECTOR_ARRAY = Pattern.compile("^(FLOAT|REAL|FLOAT4|DOUBLE|FLOAT8)\\[(\\d+)\\]$");
+
+    static VectorType getVectorType(String typeName) {
+        Matcher matcher = VECTOR_ARRAY.matcher(StringUtils.defaultString(typeName).trim().toUpperCase(Locale.ENGLISH));
+        if (!matcher.matches()) {
+            return null;
+        }
+        String element = matcher.group(1);
+        return VectorType.dense("DOUBLE".equals(element) || "FLOAT8".equals(element) ? VectorType.Element.FLOAT64
+                : VectorType.Element.FLOAT32, Integer.parseInt(matcher.group(2)));
     }
 
     private static boolean isVarchar(String typeName) {

@@ -15,6 +15,9 @@
  */
 package com.github.sqljam.face.model;
 
+import java.util.ArrayList;
+import java.util.List;
+
 import com.github.sqljam.impexp.Exporter;
 import lombok.Getter;
 import lombok.Setter;
@@ -56,4 +59,14 @@ public class AppSettings {
     private int confirmCommitReminderMinutes = 10;
     private double windowWidth = 1280;
     private double windowHeight = 800;
+    /**
+     * Position of the main window on the screens, NaN until it was closed once
+     */
+    private double windowX = Double.NaN;
+    private double windowY = Double.NaN;
+    private boolean windowMaximized;
+    /**
+     * Ids of the data sources which were connected when the window was closed, they are connected again
+     */
+    private List<String> connectedSources = new ArrayList<>();
 }

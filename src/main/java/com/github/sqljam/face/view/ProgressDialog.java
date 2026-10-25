@@ -31,6 +31,8 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.face.model.TransferReport;
+import com.github.sqljam.face.service.ReportRecorder;
 import com.github.sqljam.impexp.ExportCancelledException;
 import com.github.sqljam.impexp.ExportListener;
 import com.github.sqljam.jdbc.ManualTransaction;
@@ -104,6 +106,25 @@ public class ProgressDialog {
     private final Button commitButton = new Button(Messages.get("progress.commit"), Icons.of(Icons.START));
     private final Button rollbackButton = new Button(Messages.get("progress.rollback"), Icons.of(Icons.CANCEL));
     private final Label manifestLabel = new Label();
+    /**
+     * Opens the report of the transfer on its own page, shown when the report is saved
+     */
+    private final Button viewReportButton = new Button(Messages.get("report.view"), Icons.of(Icons.INFO));
+    /**
+     * Report of the transfer, its header is filled by the caller, its rows by the events
+     */
+    private final TransferReport report = new TransferReport();
+    private final ReportRecorder recorder = new ReportRecorder(report);
+    private ReportVerifier reportVerifier;
+    private Throwable failure;
+    /**
+     * Commit or roll back of the user, null without a decision
+     */
+    private Boolean decision;
+    /**
+     * Summary of the result of a job whose transaction is committed or rolled back afterwards, for its report
+     */
+    private String resultSummary;
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private final int totalTables;
     private int completedTables;
@@ -150,9 +171,18 @@ public class ProgressDialog {
         }
     }
 
+    /**
+     * Counts the rows of the target tables after the transfer, in the background
+     */
+    @FunctionalInterface
+    public interface ReportVerifier {
+        void verify(TransferReport report) throws Exception;
+    }
+
     public ProgressDialog(Window owner, AppContext context, String title, int totalTables) {
         this.context = context;
         this.totalTables = totalTables;
+        report.setTitle(title);
         stage.initOwner(owner);
         Branding.applyIcons(stage);
         stage.initModality(Modality.NONE);
@@ -251,8 +281,17 @@ public class ProgressDialog {
         rollbackButton.setOnAction(event -> decide(false));
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        HBox buttons = new HBox(8, errorsOnlyCheck, saveLogButton, spacer, viewPackageButton, openFolderButton,
-                rollbackButton, commitButton, cancelButton);
+        viewReportButton.setId("viewReportButton");
+        viewReportButton.setVisible(false);
+        viewReportButton.setManaged(false);
+        viewReportButton.setMinWidth(Region.USE_PREF_SIZE);
+        viewReportButton.setOnAction(event -> {
+            if (context.getReportViewer() != null) {
+                context.getReportViewer().accept(report);
+            }
+        });
+        HBox buttons = new HBox(8, errorsOnlyCheck, saveLogButton, spacer, viewReportButton, viewPackageButton,
+                openFolderButton, rollbackButton, commitButton, cancelButton);
         buttons.setAlignment(Pos.CENTER_RIGHT);
 
         Region headerSpacer = new Region();
@@ -312,6 +351,7 @@ public class ProgressDialog {
         return new ExportListener() {
             @Override
             public void onTableStart(String catalogName, String schemaName, String tableName, long totalRows) {
+                recorder.tableStarted(catalogName, schemaName, tableName, totalRows);
                 Platform.runLater(() -> {
                     tableLabel.setText(Messages.format("progress.table", qualify(catalogName, schemaName,
                             tableName), totalRows));
@@ -322,6 +362,7 @@ public class ProgressDialog {
             @Override
             public void onTableProgress(String catalogName, String schemaName, String tableName, long processedRows,
                                         long totalRows) {
+                recorder.tableProgress(catalogName, schemaName, tableName, processedRows);
                 Platform.runLater(() -> {
                     if (totalRows > 0) {
                         tableBar.setProgress(Math.min(1.0, (double) processedRows / totalRows));
@@ -331,6 +372,7 @@ public class ProgressDialog {
 
             @Override
             public void onTableEnd(String catalogName, String schemaName, String tableName, long processedRows) {
+                recorder.tableEnded(catalogName, schemaName, tableName, processedRows);
                 Platform.runLater(() -> {
                     completedTables++;
                     tableBar.setProgress(1);
@@ -352,10 +394,22 @@ public class ProgressDialog {
 
             @Override
             public void onError(String message, Throwable e) {
+                recorder.error(message);
                 Platform.runLater(() -> {
                     errorCount++;
                     addLog(message, true);
                 });
+            }
+
+            @Override
+            public void onRowSkipped(String catalogName, String schemaName, String tableName, String key,
+                                     Throwable e) {
+                recorder.rowSkipped(catalogName, schemaName, tableName, key, e);
+            }
+
+            @Override
+            public void onDdlExecuted(String statement, boolean successful) {
+                recorder.ddlExecuted(statement, successful);
             }
 
             @Override
@@ -478,6 +532,7 @@ public class ProgressDialog {
         timer.play();
         updateElapsed();
         stage.show();
+        recorder.start();
         addLog(Messages.get("progress.started"), false);
         TaskRunner.execute(() -> {
             try {
@@ -496,6 +551,7 @@ public class ProgressDialog {
                     }
                 });
             } catch (Throwable e) {
+                failure = e;
                 boolean cancel = isCancellation(e);
                 if (!cancel && log.isErrorEnabled()) {
                     log.error(e.getMessage(), e);
@@ -507,6 +563,9 @@ public class ProgressDialog {
                     Platform.runLater(() -> addLog(Messages.get("progress.rolledBack"), false));
                 }
                 Platform.runLater(() -> {
+                    if (pending != null) {
+                        report.setRolledBack(true);
+                    }
                     if (!cancel) {
                         errorCount++;
                         addLog(StringUtils.defaultIfBlank(rootMessage(e), e.getClass().getName()), true);
@@ -526,6 +585,7 @@ public class ProgressDialog {
         if (StringUtils.isNotBlank(summary)) {
             addLog(summary, false);
         }
+        resultSummary = summary;
         pendingTransaction = transaction;
         pendingCompleted = onCompleted;
         if (transaction.isRolledBack() || (errorCount > 0 && !skipErrors)) {
@@ -615,6 +675,7 @@ public class ProgressDialog {
         if (StringUtils.isNotBlank(summary)) {
             addLog(summary, false);
         }
+        resultSummary = summary;
         pendingTransaction = transaction;
         pendingCompleted = onCompleted;
         automatic = true;
@@ -659,6 +720,7 @@ public class ProgressDialog {
         if (transaction == null || transaction.isFinished()) {
             return;
         }
+        decision = commit;
         commitButton.setDisable(true);
         rollbackButton.setDisable(true);
         statusLabel.setText(Messages.get(commit ? "progress.committing" : "progress.rollingBack"));
@@ -693,6 +755,8 @@ public class ProgressDialog {
             completeDecision(status, !commit, close);
         }, e -> {
             errorCount++;
+            // The commit or the roll back failed, the report tells why
+            failure = e;
             addLog(StringUtils.defaultIfBlank(rootMessage(e), e.getClass().getName()), true);
             completeDecision(Messages.get("progress.failed"), true, close);
         });
@@ -782,9 +846,71 @@ public class ProgressDialog {
                 manifestLabel.setManaged(true);
             }
         }
+        finishReport(failed, cancelled, summary);
         if (onCompleted != null) {
             onCompleted.run();
         }
+    }
+
+    /**
+     * Status of the report by the end: cancelled, rolled back by the user, failed, committed or completed
+     */
+    TransferReport.Status reportStatus(boolean failed, boolean cancelled) {
+        if (cancelled) {
+            return Boolean.FALSE.equals(decision) ? TransferReport.Status.ROLLED_BACK : TransferReport.Status.CANCELLED;
+        }
+        if (failed) {
+            return Boolean.FALSE.equals(decision) ? TransferReport.Status.ROLLED_BACK : TransferReport.Status.FAILED;
+        }
+        if (Boolean.TRUE.equals(decision) && !automatic) {
+            return TransferReport.Status.COMMITTED;
+        }
+        return errorCount > 0 || report.getSkippedRowCount() > 0 ? TransferReport.Status.COMPLETED_WITH_ERRORS
+                : TransferReport.Status.COMPLETED;
+    }
+
+    /**
+     * The report is completed: its status, the rows of the target tables, and it is saved in the history.
+     * A report which can not be counted or saved is shown all the same.
+     */
+    private void finishReport(boolean failed, boolean cancelled, String summary) {
+        TransferReport.Status status = reportStatus(failed, cancelled);
+        if (status == TransferReport.Status.ROLLED_BACK) {
+            report.setRolledBack(true);
+        }
+        recorder.finish(status, failed && !cancelled ? failure : null, summary != null ? summary : resultSummary);
+        ReportVerifier verifier = reportVerifier;
+        TaskRunner.run(() -> {
+            if (verifier != null) {
+                try {
+                    verifier.verify(report);
+                } catch (Exception e) {
+                    log.warn("Rows of the target are not counted: {}", e.getMessage());
+                }
+            }
+            context.getReportStore().save(report);
+            return report;
+        }, saved -> showReportButton(), e -> {
+            addLog(Messages.format("report.notSaved", StringUtils.defaultIfBlank(e.getMessage(), e.getClass()
+                    .getSimpleName())), true);
+            showReportButton();
+        });
+    }
+
+    private void showReportButton() {
+        viewReportButton.setVisible(true);
+        viewReportButton.setManaged(true);
+    }
+
+    /**
+     * Report of the transfer, its header is filled by the caller before the transfer runs
+     */
+    public TransferReport getReport() {
+        return report;
+    }
+
+    public void setReportVerifier(ReportVerifier reportVerifier) {
+        this.reportVerifier = reportVerifier;
     }
 
     private void updateElapsed() {

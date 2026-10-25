@@ -16,6 +16,7 @@
 package com.github.sqljam.impexp.db;
 
 import java.math.BigDecimal;
+import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Types;
 import java.time.LocalTime;
@@ -25,19 +26,25 @@ import java.time.format.DateTimeFormatter;
 import java.util.Arrays;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.StringHelper;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 
 /**
  * @Description: Db2Dialect for IBM Db2 for Linux, UNIX and Windows 11.1 and later versions. Strings of other
  *               databases are sized by their characters, LOBs are created with their largest size, a table
  *               has one identity column, upserts are MERGE statements. Db2 has no time zones in TIMESTAMP, values
  *               with time zones are kept as text.
+ *               VECTOR (FLOAT32, INT8) and vector indexes of Db2 12.1.2 and later, detected on the connection: the
+ *               version does not tell the mod pack.
  * @Author: Fred Feng
  * @Date: 17/10/2026
  * @Version 1.0.0
@@ -367,6 +374,66 @@ public class Db2Dialect extends Dialect {
     /**
      * Indexes are objects of the schema of their table, LOB and XML columns can not be indexed by normal indexes
      */
+    // ------------------------------------------------------------------
+    // Vectors of Db2 12.1.2 and later
+    // ------------------------------------------------------------------
+
+    static final int MAX_VECTOR_DIMENSIONS = 8168;
+
+    /**
+     * VECTOR and vector indexes (VANN) of Db2 12.1.2 and later, the version does not tell the mod pack
+     */
+    @Override
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+        if (probe(connection, "SELECT VECTOR('[1]', 1, FLOAT32) FROM sysibm.sysdummy1")) {
+            features.add(DatabaseFeature.VECTOR);
+            features.add(DatabaseFeature.HNSW_INDEX);
+        }
+    }
+
+    /**
+     * VECTOR(n, FLOAT32) (also of 16-bit floats) and VECTOR(n, INT8), dense and of fixed dimensions. A script of
+     * Db2 12.1 has them: the mod pack is not known.
+     */
+    @Override
+    public String getVectorTypeName(VectorType vectorType) {
+        int dimensions = vectorType.getDimensions();
+        if (!hasDatabaseFeature(DatabaseFeature.VECTOR, isVersionAtLeast(12, 1)) || vectorType.isSparse()
+                || !vectorType.isFloat32Compatible() || dimensions < 1 || dimensions > MAX_VECTOR_DIMENSIONS) {
+            return null;
+        }
+        return String.format("VECTOR(%d, %s)", dimensions, vectorType.getElement() == VectorType.Element.INT8 ? "INT8"
+                : "FLOAT32");
+    }
+
+    /**
+     * Bytes of the key of a vector index: 8000 of a table space of 32K pages, the table space which Db2 takes for
+     * wide tables. Tables of 4K pages have no vector indexes of 1024 dimensions.
+     */
+    static final int MAX_VECTOR_INDEX_BYTES = 8000;
+
+    /**
+     * Vector index of the euclidean or cosine distance (other distances have none), of vectors of 8000 bytes at
+     * most: 2000 dimensions of 32-bit floats
+     */
+    @Override
+    public String getCreateVectorIndexStatement(String catalog, String schema, String tableName, String indexName,
+                                                String columnName, String columnTypeName, VectorType vectorType,
+                                                boolean nullable, VectorIndex vectorIndex) {
+        VectorIndex.Distance distance = vectorIndex.getDistance();
+        int bytes = vectorType == null ? 0 : vectorType.getDimensions() * (vectorType.getElement()
+                == VectorType.Element.INT8 ? 1 : Float.BYTES);
+        if (!hasDatabaseFeature(DatabaseFeature.HNSW_INDEX, isVersionAtLeast(12, 1)) || bytes > MAX_VECTOR_INDEX_BYTES
+                || (distance != VectorIndex.Distance.EUCLIDEAN && distance != VectorIndex.Distance.COSINE)) {
+            return null;
+        }
+        String qualifier = getQualifier(null, getTargetSchemaName(schema));
+        String index = StringUtils.isNotBlank(qualifier) ? qualifier + "." + quoteIdentifier(indexName)
+                : quoteIdentifier(indexName);
+        return String.format("CREATE VECTOR INDEX %s ON %s (%s) WITH DISTANCE %s", index,
+                getQualifiedTableName(catalog, schema, tableName), getIdentifier(columnName), distance);
+    }
+
     @Override
     public String getCreateIndexStatement(String catalog, String schema, String tableName, boolean partition,
                                           String[] columnNames, String indexName, boolean unique, String indexType) {

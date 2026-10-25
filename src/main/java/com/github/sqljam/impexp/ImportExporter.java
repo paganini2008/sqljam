@@ -113,6 +113,16 @@ public class ImportExporter {
         }
 
         @Override
+        public void onRowSkipped(String catalogName, String schemaName, String tableName, String key, Throwable e) {
+            delegate.onRowSkipped(catalogName, schemaName, tableName, key, e);
+        }
+
+        @Override
+        public void onDdlExecuted(String statement, boolean successful) {
+            delegate.onDdlExecuted(statement, successful);
+        }
+
+        @Override
         public void onEnd(boolean successful) {
             delegate.onEnd(successful);
         }
@@ -173,6 +183,7 @@ public class ImportExporter {
             dialect.setIdentifierCase(identifierCase);
         }
         dialect.setTableNamePattern(importConfiguration.getTableNamePattern());
+        dialect.setColumnMappings(importConfiguration.getColumnMappings());
         // Rows of free queries are new tables, they are not the tables which are read
         if (!dialect.isTableRenamed() && !exportConfiguration.isQueryExport()
                 && isSameTables(exportConfiguration, importConfiguration)) {

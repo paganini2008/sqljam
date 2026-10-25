@@ -28,6 +28,9 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
+import javafx.scene.control.ScrollPane;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.control.TextArea;
 import javafx.scene.image.ImageView;
 import javafx.scene.layout.GridPane;
@@ -50,7 +53,7 @@ public final class Dialogs {
      * Sets the owner of a dialog. JavaFX fails with a NullPointerException for an owner window without a scene,
      * the dialog is then shown without an owner.
      */
-    static void initOwner(Dialog<?> dialog, Window owner) {
+    public static void initOwner(Dialog<?> dialog, Window owner) {
         if (owner != null && owner.getScene() != null) {
             dialog.initOwner(owner);
         }
@@ -88,7 +91,15 @@ public final class Dialogs {
     }
 
     public static void showInfo(Window owner, String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        show(Alert.AlertType.INFORMATION, owner, title, message);
+    }
+
+    public static void showWarning(Window owner, String title, String message) {
+        show(Alert.AlertType.WARNING, owner, title, message);
+    }
+
+    private static void show(Alert.AlertType type, Window owner, String title, String message) {
+        Alert alert = new Alert(type);
         initOwner(alert, owner);
         Branding.applyIcons(alert);
         alert.setTitle(title);
@@ -127,7 +138,29 @@ public final class Dialogs {
         details.addRow(4, aboutLabel("about.email"), aboutLink("aboutEmail", Branding.EMAIL,
                 "mailto:" + Branding.EMAIL, browser));
         details.addRow(5, aboutLabel("about.license"), new Label(Messages.get("about.licenseName")));
-        alert.getDialogPane().setContent(new VBox(14, message, details));
+        // About and the map of the features
+        Tab aboutTab = new Tab(Messages.get("about.tab"), new VBox(14, message, details));
+        aboutTab.setId("aboutTab");
+        ScrollPane mapPane = new ScrollPane(new FeatureMap());
+        mapPane.setFitToWidth(true);
+        mapPane.setPrefViewportHeight(560);
+        Tab featuresTab = new Tab(Messages.get("about.features"), mapPane);
+        featuresTab.setId("featuresTab");
+        TabPane tabs = new TabPane(aboutTab, featuresTab);
+        tabs.setId("aboutTabs");
+        tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
+        // The map needs room, the dialog grows while it is shown
+        tabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, tab) -> {
+            double width = tab == featuresTab ? 1000 : 500;
+            alert.getDialogPane().setPrefWidth(width);
+            // A dialog which is shown takes another width by the dialog, it stays in the middle
+            if (alert.isShowing()) {
+                double centerX = alert.getX() + alert.getWidth() / 2;
+                alert.setWidth(width + alert.getWidth() - alert.getDialogPane().getWidth());
+                alert.setX(centerX - alert.getWidth() / 2);
+            }
+        });
+        alert.getDialogPane().setContent(tabs);
         return alert;
     }
 

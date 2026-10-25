@@ -26,6 +26,7 @@ import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import lombok.extern.slf4j.Slf4j;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.SqlResult;
 import com.github.sqljam.face.service.DatabaseSession;
@@ -34,9 +35,11 @@ import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.jdbc.JdbcUtils;
 import javafx.beans.property.ReadOnlyObjectWrapper;
+import javafx.collections.ObservableList;
 import javafx.geometry.Orientation;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
@@ -55,7 +58,6 @@ import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
-import lombok.extern.slf4j.Slf4j;
 
 /**
  * @Description: SqlTab runs SQL on a data source and exports the rows of a query, SqlJam is an import and export
@@ -82,6 +84,7 @@ public class SqlTab extends Tab {
     private final DatabaseSession session;
     private final SqlEditor editor = new SqlEditor();
     private final TableView<List<String>> resultTable = new TableView<>();
+    private final ObservableList<List<String>> resultRows = TableColumns.sortedRows(resultTable);
     private final ListView<LogEntry> messageList = new ListView<>();
     private final TabPane resultTabs = new TabPane();
     private final Tab resultTab = new Tab(Messages.get("sql.result"));
@@ -91,6 +94,13 @@ public class SqlTab extends Tab {
     private final Button stopButton = new Button(Messages.get("sql.stop"), Icons.of(Icons.CANCEL));
     private final Button exportButton = new Button(Messages.get("sql.export"), Icons.of(Icons.EXPORT));
     private final Label statusLabel = new Label();
+    /**
+     * Database and schema in which the statements run, for this editor only: the data source keeps its own
+     */
+    private final ComboBox<String> catalogCombo = new ComboBox<>();
+    private final ComboBox<String> schemaCombo = new ComboBox<>();
+    private final Label targetLabel = new Label();
+    private boolean switching;
     private final AtomicReference<Statement> running = new AtomicReference<>();
     private final AtomicBoolean cancelled = new AtomicBoolean();
     private Connection connection;
@@ -129,6 +139,7 @@ public class SqlTab extends Tab {
         exportButton.setId("sqlExportButton");
         statusLabel.setId("sqlStatusLabel");
         resultTable.setId("sqlResultTable");
+        TableColumns.fill(resultTable);
         messageList.setId("sqlMessageList");
         runButton.setTooltip(new Tooltip(Messages.get("sql.run.tooltip")));
         runAllButton.setTooltip(new Tooltip(Messages.get("sql.runAll.tooltip")));
@@ -157,12 +168,14 @@ public class SqlTab extends Tab {
             this.schema = StringUtils.defaultIfBlank(tableSchema, schema);
         }
 
-        Label targetLabel = new Label(describeTarget());
+        targetLabel.setText(profile.getName());
         targetLabel.setId("sqlTargetLabel");
         targetLabel.getStyleClass().add("muted");
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        ToolBar toolBar = new ToolBar(runButton, runAllButton, stopButton, exportButton, spacer, targetLabel);
+        ToolBar toolBar = new ToolBar(runButton, runAllButton, stopButton, exportButton, spacer, targetLabel,
+                catalogCombo, schemaCombo);
+        setUpSwitches();
 
         resultTable.setPlaceholder(new Label(Messages.get("sql.noResult")));
         resultTab.setContent(resultTable);
@@ -196,6 +209,101 @@ public class SqlTab extends Tab {
         root.getStyleClass().add("sql-tab");
         setContent(root);
         setOnClosed(event -> close());
+    }
+
+    /**
+     * Database and schema of the editor like the editors of DBeaver and DataGrip, each shown when the type of the
+     * database has it. They are read in the background, a choice applies to the next statement.
+     */
+    private void setUpSwitches() {
+        DbType dbType = profile.getDbType();
+        catalogCombo.setId("sqlCatalogCombo");
+        schemaCombo.setId("sqlSchemaCombo");
+        catalogCombo.setPromptText(Messages.get("sql.catalog"));
+        schemaCombo.setPromptText(Messages.get("sql.schema"));
+        catalogCombo.setTooltip(new Tooltip(Messages.get("sql.catalog.tooltip")));
+        schemaCombo.setTooltip(new Tooltip(Messages.get("sql.schema.tooltip")));
+        boolean catalogs = dbType.isCatalogSupported();
+        boolean schemas = dbType.isSchemaSupported();
+        catalogCombo.setVisible(catalogs);
+        catalogCombo.setManaged(catalogs);
+        schemaCombo.setVisible(schemas);
+        schemaCombo.setManaged(schemas);
+        if (catalogs) {
+            TaskRunner.run(session::getCatalogs, names -> {
+                switching = true;
+                catalogCombo.getItems().setAll(names);
+                catalogCombo.setValue(StringUtils.defaultIfBlank(catalog, profile.getDatabase()));
+                switching = false;
+                loadSchemas();
+            }, e -> catalogCombo.setDisable(true));
+        } else {
+            loadSchemas();
+        }
+        catalogCombo.valueProperty().addListener((obs, oldValue, value) -> {
+            if (!switching && value != null && !value.equals(catalog)) {
+                switchTo(value, null);
+                loadSchemas();
+            }
+        });
+        schemaCombo.valueProperty().addListener((obs, oldValue, value) -> {
+            if (!switching && value != null && !value.equals(schema)) {
+                switchTo(catalog, value);
+            }
+        });
+    }
+
+    private void loadSchemas() {
+        if (!profile.getDbType().isSchemaSupported()) {
+            return;
+        }
+        String of = catalog != null ? catalog : catalogCombo.getValue();
+        TaskRunner.run(() -> session.getSchemas(of), names -> {
+            switching = true;
+            schemaCombo.getItems().setAll(names);
+            schemaCombo.setValue(schema != null && names.contains(schema) ? schema : null);
+            switching = false;
+        }, e -> schemaCombo.setDisable(true));
+    }
+
+    /**
+     * Statements after the switch run in the database and schema. Another database of PostgreSQL is another
+     * connection, other databases switch the connection which is open.
+     */
+    void switchTo(String newCatalog, String newSchema) {
+        boolean otherDatabase = !StringUtils.equals(newCatalog, catalog);
+        catalog = newCatalog;
+        schema = newSchema;
+        setTooltip(new Tooltip(describeTarget()));
+        Connection open = connection;
+        if (open == null) {
+            return;
+        }
+        if (otherDatabase && profile.getDbType() == DbType.POSTGRESQL) {
+            connection = null;
+            TaskRunner.execute(() -> JdbcUtils.closeQuietly(open));
+            return;
+        }
+        String toCatalog = profile.getDbType() == DbType.POSTGRESQL ? null : newCatalog;
+        TaskRunner.run(() -> {
+            synchronized (this) {
+                JdbcUtils.setPath(open, toCatalog, newSchema);
+            }
+            return null;
+        }, result -> addMessage(Messages.format("sql.switched", describeTarget()), false), e -> {
+            addMessage(e.getMessage(), true);
+            // The next statement opens a connection in the chosen database and schema
+            connection = null;
+            JdbcUtils.closeQuietly(open);
+        });
+    }
+
+    String getCatalog() {
+        return catalog;
+    }
+
+    String getSchema() {
+        return schema;
     }
 
     /**
@@ -350,10 +458,10 @@ public class SqlTab extends Tab {
             column.setCellValueFactory(features -> new ReadOnlyObjectWrapper<>(features.getValue().get(index)));
             column.setCellFactory(tableColumn -> new DataPane.NullableCell());
             column.setPrefWidth(DataPane.getColumnWidth(columns.get(i), result.getRows(), index));
-            column.setSortable(false);
+            column.setComparator(ValueCell.COMPARATOR);
             resultTable.getColumns().add(column);
         }
-        resultTable.getItems().setAll(result.getRows());
+        resultRows.setAll(result.getRows());
         resultTable.setPlaceholder(new Label(Messages.get("data.empty")));
     }
 
@@ -368,6 +476,9 @@ public class SqlTab extends Tab {
 
     private void setBusy(boolean busy) {
         this.busy = busy;
+        // The database and schema are not switched while statements run
+        catalogCombo.setDisable(busy);
+        schemaCombo.setDisable(busy);
         runButton.setDisable(busy);
         runAllButton.setDisable(busy);
         stopButton.setDisable(!busy);

@@ -29,6 +29,7 @@ import com.github.sqljam.face.model.DataPage;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.TableQuery;
 import javafx.beans.property.ReadOnlyObjectWrapper;
+import javafx.collections.ObservableList;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
@@ -38,7 +39,6 @@ import javafx.scene.control.CustomMenuItem;
 import javafx.scene.control.Label;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.SeparatorMenuItem;
-import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
@@ -66,6 +66,10 @@ public class DataPane extends BorderPane {
     private final String schema;
     private final String table;
     private final TableView<List<String>> dataTable = new TableView<>();
+    /**
+     * Rows of the page, its headers sort them on the page, ORDER BY sorts all rows
+     */
+    private final ObservableList<List<String>> dataRows = TableColumns.sortedRows(dataTable);
     private final Button firstButton = new Button(null, Icons.of(Icons.FIRST));
     private final Button previousButton = new Button(null, Icons.of(Icons.PREVIOUS));
     private final Button nextButton = new Button(null, Icons.of(Icons.NEXT));
@@ -99,6 +103,8 @@ public class DataPane extends BorderPane {
         dataTable.setPlaceholder(new Label(Messages.get("tree.loading")));
         dataTable.getStyleClass().add("data-table");
         dataTable.setId("dataTable");
+        // The columns fill the width, no empty column is left at the right
+        TableColumns.fill(dataTable);
         firstButton.setId("firstButton");
         previousButton.setId("previousButton");
         nextButton.setId("nextButton");
@@ -296,7 +302,7 @@ public class DataPane extends BorderPane {
         TaskRunner.run(() -> session.getData(catalog, schema, table, currentQuery, targetPage, pageSize),
                 this::show, e -> {
                     updatePager(false);
-                    dataTable.getItems().clear();
+                    dataRows.clear();
                     dataTable.setPlaceholder(new Label(Messages.format("tree.error", e.getMessage())));
                     if (currentQuery.isEmpty()) {
                         Dialogs.showError(getScene() != null ? getScene().getWindow() : null,
@@ -320,10 +326,11 @@ public class DataPane extends BorderPane {
                 column.setCellValueFactory(features -> new ReadOnlyObjectWrapper<>(features.getValue().get(index)));
                 column.setCellFactory(tableColumn -> new NullableCell());
                 column.setPrefWidth(getColumnWidth(columns.get(i), page.getRows(), index));
+                column.setComparator(ValueCell.COMPARATOR);
                 dataTable.getColumns().add(column);
             }
         }
-        dataTable.getItems().setAll(page.getRows());
+        dataRows.setAll(page.getRows());
         dataTable.setPlaceholder(new Label(Messages.get("data.empty")));
         totalLabel.setText(Messages.format("data.total", page.getTotalRows()));
         updatePager(false);
@@ -332,7 +339,7 @@ public class DataPane extends BorderPane {
     /**
      * Column width estimated by the header and values of the first rows
      */
-    static double getColumnWidth(String header, List<List<String>> rows, int index) {
+    public static double getColumnWidth(String header, List<List<String>> rows, int index) {
         int length = header.length();
         for (int i = 0; i < Math.min(rows.size(), 50); i++) {
             String value = rows.get(i).get(index);
@@ -363,22 +370,13 @@ public class DataPane extends BorderPane {
     }
 
     /**
-     * Cell showing NULL values in a dimmed style
+     * Cell showing NULL values in a dimmed style, a value in one line which a double click shows whole
      */
-    static class NullableCell extends TableCell<List<String>, String> {
+    static class NullableCell extends ValueCell {
 
         @Override
-        protected void updateItem(String item, boolean empty) {
-            super.updateItem(item, empty);
-            getStyleClass().remove("null-cell");
-            if (empty) {
-                setText(null);
-            } else if (item == null) {
-                setText(NULL_TEXT);
-                getStyleClass().add("null-cell");
-            } else {
-                setText(format(item));
-            }
+        protected String display(String item) {
+            return format(item);
         }
     }
 }

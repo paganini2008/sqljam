@@ -1,32 +1,52 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
-  <rect width="1200" height="520" rx="16" fill="#0d1117"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" font-family="Inter, -apple-system, Segoe UI, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="1200" height="660" rx="16" fill="#0d1117"/>
   <text x="40" y="52" fill="#e6edf3" font-size="24" font-weight="700">Throughput · 200,000 rows, 6 columns</text>
-  <text x="40" y="78" fill="#8b949e" font-size="14">Apple M2 Max · 32 GB · databases local or in Docker · default settings · higher is better</text>
-  <g font-size="14" fill="#c9d1d9">
-    <line x1="300" y1="110" x2="300" y2="460" stroke="#30363d"/>
-    <line x1="300" y1="460" x2="1140" y2="460" stroke="#30363d"/>
-    <g fill="#8b949e" font-size="12" text-anchor="middle">
-      <text x="300" y="482">0</text><text x="468" y="482">20k</text><text x="636" y="482">40k</text>
-      <text x="804" y="482">60k</text><text x="972" y="482">80k</text><text x="1140" y="482">100k rows/s</text>
-    </g>
-    <g stroke="#21262d"><line x1="468" y1="110" x2="468" y2="460"/><line x1="636" y1="110" x2="636" y2="460"/><line x1="804" y1="110" x2="804" y2="460"/><line x1="972" y1="110" x2="972" y2="460"/></g>
-
-    <text x="284" y="146" text-anchor="end">H2 → Oracle</text>
-    <rect x="300" y="128" width="801" height="28" rx="4" fill="#3fb950"/><text x="1111" y="147">95.3k</text>
-    <text x="284" y="200" text-anchor="end">H2 → export package</text>
-    <rect x="300" y="182" width="583" height="28" rx="4" fill="#d29922"/><text x="893" y="201">69.4k</text>
-    <text x="284" y="254" text-anchor="end">H2 → PostgreSQL</text>
-    <rect x="300" y="236" width="524" height="28" rx="4" fill="#3fb950"/><text x="834" y="255">62.4k</text>
-    <text x="284" y="308" text-anchor="end">H2 → MySQL</text>
-    <rect x="300" y="290" width="510" height="28" rx="4" fill="#3fb950"/><text x="820" y="309">60.7k</text>
-    <text x="284" y="362" text-anchor="end">package → PostgreSQL</text>
-    <rect x="300" y="344" width="374" height="28" rx="4" fill="#58a6ff"/><text x="684" y="363">44.5k</text>
-    <text x="284" y="416" text-anchor="end">H2 → SQL Server</text>
-    <rect x="300" y="398" width="337" height="28" rx="4" fill="#3fb950"/><text x="647" y="417">40.1k</text>
-  </g>
-  <g font-size="12" fill="#8b949e">
-    <rect x="40" y="496" width="12" height="12" fill="#3fb950"/><text x="58" y="507">import directly</text>
-    <rect x="170" y="496" width="12" height="12" fill="#d29922"/><text x="188" y="507">export package (32 MB, split into 4 files of 10 MB)</text>
-    <rect x="520" y="496" width="12" height="12" fill="#58a6ff"/><text x="538" y="507">import package (batched)</text>
-  </g>
+  <text x="40" y="78" fill="#8b949e" font-size="14">Apple M2 Max · JDK 17 · databases in Docker on a LAN server · default settings · higher is better</text>
+  <line x1="340" y1="110" x2="340" y2="590" stroke="#30363d"/>
+  <text x="340" y="612" fill="#8b949e" font-size="12" text-anchor="middle">0</text>
+  <line x1="540" y1="110" x2="540" y2="590" stroke="#21262d"/>
+  <text x="540" y="612" fill="#8b949e" font-size="12" text-anchor="middle">20k</text>
+  <line x1="740" y1="110" x2="740" y2="590" stroke="#21262d"/>
+  <text x="740" y="612" fill="#8b949e" font-size="12" text-anchor="middle">40k</text>
+  <line x1="940" y1="110" x2="940" y2="590" stroke="#21262d"/>
+  <text x="940" y="612" fill="#8b949e" font-size="12" text-anchor="middle">60k</text>
+  <line x1="1140" y1="110" x2="1140" y2="590" stroke="#21262d"/>
+  <text x="1140" y="612" fill="#8b949e" font-size="12" text-anchor="middle">80k rows/s</text>
+  <line x1="340" y1="590" x2="1140" y2="590" stroke="#30363d"/>
+  <text x="324" y="135" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → MySQL</text>
+  <rect x="340" y="117" width="195" height="26" rx="4" fill="#3fb950"/>
+  <text x="545" y="135" fill="#c9d1d9" font-size="14">19.5k</text>
+  <text x="324" y="175" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → MariaDB</text>
+  <rect x="340" y="157" width="211" height="26" rx="4" fill="#3fb950"/>
+  <text x="561" y="175" fill="#c9d1d9" font-size="14">21.1k</text>
+  <text x="324" y="215" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → PostgreSQL</text>
+  <rect x="340" y="197" width="313" height="26" rx="4" fill="#3fb950"/>
+  <text x="663" y="215" fill="#c9d1d9" font-size="14">31.3k</text>
+  <text x="324" y="255" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → Oracle</text>
+  <rect x="340" y="237" width="479" height="26" rx="4" fill="#3fb950"/>
+  <text x="829" y="255" fill="#c9d1d9" font-size="14">47.9k</text>
+  <text x="324" y="295" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → SQL Server</text>
+  <rect x="340" y="277" width="167" height="26" rx="4" fill="#3fb950"/>
+  <text x="517" y="295" fill="#c9d1d9" font-size="14">16.7k</text>
+  <text x="324" y="335" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → Db2</text>
+  <rect x="340" y="317" width="216" height="26" rx="4" fill="#3fb950"/>
+  <text x="566" y="335" fill="#c9d1d9" font-size="14">21.6k</text>
+  <text x="324" y="375" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → ClickHouse</text>
+  <rect x="340" y="357" width="474" height="26" rx="4" fill="#3fb950"/>
+  <text x="824" y="375" fill="#c9d1d9" font-size="14">47.4k</text>
+  <text x="324" y="415" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → DuckDB</text>
+  <rect x="340" y="397" width="351" height="26" rx="4" fill="#3fb950"/>
+  <text x="701" y="415" fill="#c9d1d9" font-size="14">35.1k</text>
+  <text x="324" y="455" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → SQL package</text>
+  <rect x="340" y="437" width="761" height="26" rx="4" fill="#d29922"/>
+  <text x="1111" y="455" fill="#c9d1d9" font-size="14">76.1k</text>
+  <text x="324" y="495" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → Parquet package</text>
+  <rect x="340" y="477" width="354" height="26" rx="4" fill="#d29922"/>
+  <text x="704" y="495" fill="#c9d1d9" font-size="14">35.4k</text>
+  <text x="324" y="535" fill="#c9d1d9" font-size="14" text-anchor="end">H2 → CSV package</text>
+  <rect x="340" y="517" width="347" height="26" rx="4" fill="#d29922"/>
+  <text x="697" y="535" fill="#c9d1d9" font-size="14">34.7k</text>
+  <text x="324" y="575" fill="#c9d1d9" font-size="14" text-anchor="end">SQL package → PostgreSQL</text>
+  <rect x="340" y="557" width="82" height="26" rx="4" fill="#58a6ff"/>
+  <text x="432" y="575" fill="#c9d1d9" font-size="14">8.2k</text>
 </svg>

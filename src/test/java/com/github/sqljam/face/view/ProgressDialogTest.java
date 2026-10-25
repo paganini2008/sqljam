@@ -17,6 +17,7 @@ package com.github.sqljam.face.view;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
+import com.github.sqljam.face.model.TransferReport;
 import com.github.sqljam.impexp.ExportCancelledException;
 import com.github.sqljam.impexp.ExportListener;
 import com.github.sqljam.jdbc.ManualTransaction;
@@ -115,6 +117,14 @@ class ProgressDialogTest {
             ((AtomicReference<Boolean>) handle[1]).set(true);
             handle[0].notifyAll();
         }
+    }
+
+    /**
+     * The report of the dialog as it was saved in the history, once its button is shown
+     */
+    private TransferReport savedReport(ProgressDialog dialog) {
+        FxTestSupport.waitUntil(() -> root(dialog).lookup("#viewReportButton").isVisible());
+        return context.getReportStore().find(dialog.getReport().getId()).orElseThrow();
     }
 
     @Test
@@ -208,6 +218,10 @@ class ProgressDialogTest {
         assertEquals("Cancelled", text(dialog, "progressStatus"));
         assertEquals("Close", FxTestSupport.call(cancelButton::getText));
         assertEquals(0, dialog.getErrorLogCount());
+        TransferReport report = savedReport(dialog);
+        assertEquals(TransferReport.Status.CANCELLED, report.getStatus());
+        assertNull(report.getFailure());
+        assertFalse(report.isRolledBack());
         // Close button closes the window after finished
         FxTestSupport.run(cancelButton::fire);
         assertFalse(FxTestSupport.call(() -> dialog.getStage().isShowing()));
@@ -241,6 +255,10 @@ class ProgressDialogTest {
         assertEquals(0.0, progress(dialog, "overallBar"), 0.001);
         assertFalse(FxTestSupport.call(() -> root(dialog).lookup("#openFolderButton").isVisible()));
         assertFalse(FxTestSupport.call(() -> root(dialog).lookup("#viewPackageButton").isVisible()));
+        TransferReport report = savedReport(dialog);
+        assertEquals(TransferReport.Status.FAILED, report.getStatus());
+        assertEquals("database is down", report.getFailure());
+        assertTrue(report.getFailureTrace().contains("IllegalStateException"));
     }
 
     @Test
@@ -371,6 +389,10 @@ class ProgressDialogTest {
         assertTrue(completed.get());
         // A roll back by the user is not an error
         assertEquals(0, dialog.getErrorLogCount());
+        TransferReport report = savedReport(dialog);
+        assertEquals(TransferReport.Status.ROLLED_BACK, report.getStatus());
+        assertTrue(report.isRolledBack());
+        assertNull(report.getFailure());
     }
 
     @Test
@@ -389,6 +411,7 @@ class ProgressDialogTest {
         FxTestSupport.waitUntil(dialog::isFinished);
         assertEquals("Committed", text(dialog, "progressStatus"));
         assertEquals(1, count(url));
+        assertEquals(TransferReport.Status.COMMITTED, savedReport(dialog).getStatus());
     }
 
     @Test
@@ -411,6 +434,7 @@ class ProgressDialogTest {
         FxTestSupport.waitUntil(() -> !dialog.getStage().isShowing());
         assertEquals("Rolled back", text(dialog, "progressStatus"));
         assertEquals(0, count(url));
+        assertEquals(TransferReport.Status.ROLLED_BACK, savedReport(dialog).getStatus());
     }
 
     @Test
@@ -426,6 +450,9 @@ class ProgressDialogTest {
         assertEquals(0, count(url));
         assertTrue(transaction.isFinished());
         assertTrue(completed.get());
+        TransferReport report = savedReport(dialog);
+        assertEquals(TransferReport.Status.ROLLED_BACK, report.getStatus());
+        assertTrue(report.isRolledBack());
     }
 
     @Test
@@ -444,6 +471,11 @@ class ProgressDialogTest {
         FxTestSupport.waitUntil(() -> logs(dialog).contains("Rolled back"));
         assertEquals(0, count(url));
         assertTrue(transaction.isFinished());
+        // Failed, and nothing of it is kept
+        TransferReport report = savedReport(dialog);
+        assertEquals(TransferReport.Status.FAILED, report.getStatus());
+        assertTrue(report.isRolledBack());
+        assertEquals("connection lost", report.getFailure());
     }
 
     @SuppressWarnings("unchecked")
@@ -522,6 +554,10 @@ class ProgressDialogTest {
         assertEquals(1, count(url));
         assertTrue(transaction.isFinished());
         assertTrue(completed.get());
+        TransferReport report = savedReport(dialog);
+        assertEquals(TransferReport.Status.COMPLETED, report.getStatus());
+        assertEquals("Imported 1 rows", report.getSummary());
+        assertFalse(report.isRolledBack());
     }
 
     @Test
@@ -560,6 +596,7 @@ class ProgressDialogTest {
         FxTestSupport.waitUntil(dialog::isFinished);
         assertEquals("Completed with 1 errors", text(dialog, "progressStatus"));
         assertEquals(1, count(url));
+        assertEquals(TransferReport.Status.COMPLETED_WITH_ERRORS, savedReport(dialog).getStatus());
         assertTrue(logs(dialog).contains("Skipped row of table 'T' (ID=2): value too long"));
     }
 
@@ -587,6 +624,93 @@ class ProgressDialogTest {
             assertTrue(completed.get());
             FxTestSupport.run(() -> dialog.getStage().close());
         }
+    }
+
+    /**
+     * A cancelled import in one transaction: cancelled, and nothing of it is kept
+     */
+    @Test
+    void reportsCancelledTransaction() throws Exception {
+        String url = newDatabase();
+        ProgressDialog dialog = create(1);
+        ManualTransaction transaction = new ManualTransaction(DriverManager.getConnection(url), false);
+        ExportListener listener = dialog.getListener();
+        FxTestSupport.run(() -> dialog.run(() -> {
+            try (Statement statement = transaction.getConnection().createStatement()) {
+                statement.executeUpdate("INSERT INTO t VALUES (1)");
+            }
+            listener.onTableStart(null, "PUBLIC", "T", 10);
+            listener.onTableProgress(null, "PUBLIC", "T", 1, 10);
+            while (!listener.isCancelled()) {
+                Thread.sleep(20);
+            }
+            throw new ExportCancelledException();
+        }, null, () -> transaction, false, null));
+        FxTestSupport.waitUntil(() -> dialog.getReport().table(null, "PUBLIC", "T").getWritten() == 1);
+        FxTestSupport.run(((Button) root(dialog).lookup("#cancelButton"))::fire);
+        TransferReport report = savedReport(dialog);
+        assertEquals(TransferReport.Status.CANCELLED, report.getStatus());
+        assertTrue(report.isRolledBack());
+        assertEquals("PUBLIC.T after 1 rows", report.getStoppedAt());
+        assertEquals(TransferReport.TableStatus.INTERRUPTED, report.getTables().get(0).getStatus());
+        assertEquals(0, count(url));
+    }
+
+    /**
+     * The report holds the tables, the skipped rows and the objects, the rows of the target are counted after the
+     * end, and the button shows the report
+     */
+    @Test
+    void reportsTablesAndTargetRows() {
+        ProgressDialog dialog = create(1);
+        dialog.getReport().setTitle("Import into test");
+        dialog.setReportVerifier(report -> report.getTables().forEach(table -> {
+            table.setTargetRows(table.getWritten());
+            table.setComparable(true);
+        }));
+        AtomicReference<TransferReport> shown = new AtomicReference<>();
+        context.setReportViewer(shown::set);
+        FxTestSupport.run(() -> dialog.setSkipErrors(true));
+        ExportListener listener = dialog.getListener();
+        FxTestSupport.run(() -> dialog.run(() -> {
+            listener.onDdlExecuted("CREATE TABLE users (id INT)", true);
+            listener.onDdlExecuted("CREATE INDEX i ON users (id)", false);
+            listener.onTableStart(null, "app", "users", 3);
+            listener.onRowSkipped(null, null, "users", "id=2", new IllegalArgumentException("bad date"));
+            listener.onTableEnd(null, "app", "users", 2);
+            return 2;
+        }, rows -> rows + " rows", null));
+        TransferReport report = savedReport(dialog);
+        assertEquals("Import into test", report.getTitle());
+        assertEquals(TransferReport.Status.COMPLETED_WITH_ERRORS, report.getStatus());
+        TransferReport.TableReport users = report.getTables().get(0);
+        assertEquals(2, users.getWritten());
+        assertEquals(1, users.getSkipped());
+        assertEquals(2L, users.getTargetRows());
+        assertTrue(users.getVerified());
+        assertEquals(1, report.getObjects().get("Tables"));
+        assertEquals(1, report.getFailedStatements());
+        assertEquals("bad date", report.getSkippedRows().get(0).getError());
+        FxTestSupport.run(((Button) root(dialog).lookup("#viewReportButton"))::fire);
+        assertEquals(dialog.getReport(), shown.get());
+    }
+
+    /**
+     * Rows which can not be counted leave the report without them, a report which can not be saved is still shown
+     */
+    @Test
+    void reportsWhenRowsCanNotBeCountedOrSaved() throws Exception {
+        File file = new File(dir, "not-a-directory");
+        Files.writeString(file.toPath(), "x");
+        context.setReportStore(new com.github.sqljam.face.service.ReportStore(file, 10));
+        ProgressDialog dialog = create(1);
+        dialog.setReportVerifier(report -> {
+            throw new java.sql.SQLException("target is down");
+        });
+        FxTestSupport.run(() -> dialog.run(() -> "done", null, null));
+        FxTestSupport.waitUntil(() -> root(dialog).lookup("#viewReportButton").isVisible());
+        assertTrue(logs(dialog).stream().anyMatch(log -> log.startsWith("The report is not saved: ")));
+        assertEquals(TransferReport.Status.COMPLETED, dialog.getReport().getStatus());
     }
 
     /**

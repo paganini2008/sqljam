@@ -117,6 +117,9 @@ public abstract class AbstractFileImporter {
      * Imports an export directory. Files are imported in the order of manifest.json if it exists.
      */
     public void importDirectory(File dir) throws IOException, SQLException {
+        if (dbType != null) {
+            dbType.createDialect().prepareSession(connection);
+        }
         ExportManifest manifest = ExportManifest.read(dir);
         if (manifest == null) {
             importDirectoryWithoutManifest(dir);
@@ -264,6 +267,16 @@ public abstract class AbstractFileImporter {
         @Override
         public void onError(String message, Throwable e) {
             delegate.onError(message, e);
+        }
+
+        @Override
+        public void onRowSkipped(String catalogName, String schemaName, String tableName, String key, Throwable e) {
+            delegate.onRowSkipped(catalogName, schemaName, tableName, key, e);
+        }
+
+        @Override
+        public void onDdlExecuted(String statement, boolean successful) {
+            delegate.onDdlExecuted(statement, successful);
         }
 
         @Override

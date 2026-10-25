@@ -17,11 +17,20 @@ package com.github.sqljam.face.view;
 
 import java.io.IOException;
 import java.sql.SQLException;
+import java.util.function.Consumer;
 
+import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.AppSettings;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.model.SyncTask;
+import com.github.sqljam.face.model.TransferReport;
 import com.github.sqljam.face.service.ExampleDatabase;
+import com.github.sqljam.face.service.ReportStore;
 import com.github.sqljam.face.service.SettingsStore;
+import com.github.sqljam.face.service.SyncRunner;
+import com.github.sqljam.face.service.SyncScheduler;
+import com.github.sqljam.face.service.SyncTaskStore;
+import com.github.sqljam.face.service.SystemScheduler;
 import com.github.sqljam.face.service.TransferService;
 import javafx.application.HostServices;
 import lombok.Getter;
@@ -45,6 +54,14 @@ public class AppContext {
     private final HostServices hostServices;
     @Setter
     private ExampleDatabase exampleDatabase = new ExampleDatabase();
+    private ReportStore reportStore;
+    private SyncScheduler syncScheduler;
+    private SystemScheduler systemScheduler;
+    /**
+     * Shows a report on its own page, set by the main window
+     */
+    @Setter
+    private Consumer<TransferReport> reportViewer;
 
     public AppContext(SettingsStore settingsStore, ProfileRegistry profileRegistry, HostServices hostServices) {
         this.settingsStore = settingsStore;
@@ -69,6 +86,68 @@ public class AppContext {
     public void openDocument(String url) {
         if (hostServices != null) {
             hostServices.showDocument(url);
+        }
+    }
+
+    /**
+     * Reports of the transfers, the history of the imports
+     */
+    public synchronized ReportStore getReportStore() {
+        if (reportStore == null) {
+            reportStore = new ReportStore(settingsStore.getConfig());
+        }
+        return reportStore;
+    }
+
+    public void setReportStore(ReportStore reportStore) {
+        this.reportStore = reportStore;
+    }
+
+    /**
+     * Scheduler of the sync tasks: tasks of tables run here, tasks of the other kinds of sources run by their
+     * extensions. It is started by the application, tests run its tasks by Run Now.
+     */
+    public synchronized SyncScheduler getSyncScheduler() {
+        if (syncScheduler == null) {
+            Config config = settingsStore.getConfig();
+            syncScheduler = new SyncScheduler(new SyncTaskStore(config), getReportStore());
+            syncScheduler.setRetryDelayMillis(config.getInt("sqljam.sync.retry-delay-seconds", 30) * 1000L);
+            syncScheduler.register(SyncTask.Kind.DATABASE, new SyncRunner(transferService,
+                    profileRegistry::findProfile));
+            for (DataSourceExtension extension : DataSourceExtension.load(config)) {
+                DataSourceExtension.SyncSupport support = extension.getSyncSupport();
+                if (support != null) {
+                    syncScheduler.register(support.getKind(), support.createEngine(profileRegistry::findProfile));
+                }
+            }
+        }
+        return syncScheduler;
+    }
+
+    /**
+     * The scheduler of the system which runs sync tasks by the command line
+     */
+    public synchronized SystemScheduler getSystemScheduler() {
+        if (systemScheduler == null) {
+            systemScheduler = SystemScheduler.create(settingsStore.getConfig());
+        }
+        return systemScheduler;
+    }
+
+    public synchronized void setSystemScheduler(SystemScheduler systemScheduler) {
+        this.systemScheduler = systemScheduler;
+    }
+
+    public synchronized void setSyncScheduler(SyncScheduler syncScheduler) {
+        this.syncScheduler = syncScheduler;
+    }
+
+    /**
+     * Stops the scheduler if it was created: running tasks are cancelled and their reports saved
+     */
+    public synchronized void closeSyncScheduler() {
+        if (syncScheduler != null) {
+            syncScheduler.close();
         }
     }
 

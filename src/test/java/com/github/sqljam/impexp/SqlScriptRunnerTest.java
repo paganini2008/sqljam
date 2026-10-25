@@ -135,6 +135,46 @@ class SqlScriptRunnerTest {
         }
     }
 
+    /**
+     * Statements of the structure are told with their outcome, failed rows as skipped rows of their tables, and
+     * statements of the session are neither
+     */
+    @Test
+    void tellsStatementsAndSkippedRows() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:told;DB_CLOSE_DELAY=-1")) {
+            List<String> statements = new ArrayList<>();
+            List<String> skipped = new ArrayList<>();
+            SqlScriptRunner runner = new SqlScriptRunner(connection);
+            runner.setStopOnError(false);
+            runner.setExportListener(new ExportListener() {
+                @Override
+                public void onDdlExecuted(String statement, boolean successful) {
+                    statements.add(successful + " " + statement);
+                }
+
+                @Override
+                public void onRowSkipped(String catalogName, String schemaName, String tableName, String key,
+                                         Throwable e) {
+                    skipped.add(tableName + " " + key);
+                }
+            });
+            runner.runScript("SET SCHEMA PUBLIC;\nCREATE TABLE t (id INT PRIMARY KEY);\n"
+                    + "CREATE INDEX i ON missing (id);\nINSERT INTO t VALUES (1);\nINSERT INTO PUBLIC.\"t\" VALUES (1);\n"
+                    + "INSERT INTO t VALUES (1);");
+            assertEquals(List.of("true CREATE TABLE t (id INT PRIMARY KEY)", "false CREATE INDEX i ON missing (id)"),
+                    statements);
+            // A table which is missing, a key which exists
+            assertEquals(List.of("t INSERT INTO PUBLIC.\"t\" VALUES (1)", "t INSERT INTO t VALUES (1)"), skipped);
+        }
+        assertEquals("users", SqlScriptRunner.tableOf("INSERT INTO \"app\".\"users\" (id) VALUES (1)"));
+        assertEquals("users", SqlScriptRunner.tableOf("insert ignore into `db`.`users` values (1)"));
+        assertEquals("users", SqlScriptRunner.tableOf("MERGE INTO [dbo].[users] USING x ON (1 = 1)"));
+        assertEquals("users", SqlScriptRunner.tableOf("INSERT INTO users(id) VALUES (1)"));
+        assertEquals(null, SqlScriptRunner.tableOf("UPDATE users SET a = 1"));
+        assertTrue(SqlScriptRunner.isRowStatement("  update users SET a = 1"));
+        assertFalse(SqlScriptRunner.isRowStatement("CREATE TABLE inserts (id INT)"));
+    }
+
     @Test
     void runBatches() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:batch;DB_CLOSE_DELAY=-1")) {

@@ -4,6 +4,7 @@
 # (Linux x64, macOS x64 or Apple Silicon) next to this script and runs it with Java 17 or later.
 #
 #   sh sqljam.sh
+#   sh sqljam.sh sync --task NAME    runs a sync task without the window, e.g. from cron
 #
 # JVM options are read from sqljam.vmoptions next to this script (one option per line),
 # JAVA_OPTS adds more and wins, e.g. JAVA_OPTS=-Xmx4g. JAVA_HOME selects the Java runtime.

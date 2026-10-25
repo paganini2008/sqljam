@@ -216,7 +216,7 @@ public enum ItDatabase {
      * The test user has only one schema (database), imports of the same database type are copies in that schema
      */
     public boolean isSingleSchema() {
-        return this == ORACLE || this == MARIADB;
+        return this == ORACLE;
     }
 
     public String getPrefix() {

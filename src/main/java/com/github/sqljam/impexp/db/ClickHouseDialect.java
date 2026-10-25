@@ -15,6 +15,7 @@
  */
 package com.github.sqljam.impexp.db;
 
+import java.sql.Connection;
 import java.sql.Date;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -38,10 +39,13 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.StringHelper;
+import com.github.sqljam.impexp.VectorIndex;
+import com.github.sqljam.impexp.VectorType;
 
 /**
  * @Description: ClickHouseDialect generates ddl/dml of ClickHouse: tables of the MergeTree engine sorted by the
@@ -49,6 +53,8 @@ import com.github.sqljam.impexp.StringHelper;
  *               transactions, identity columns, sequences, foreign keys and unique indexes, they are not created.
  *               Temporal values are bound as text, so that their wall clock time is kept whatever the time zones of
  *               the client and the server are.
+ *               ClickHouse 24.x and later are supported. Vectors are Array(Float32), vector similarity indexes
+ *               (HNSW) of ClickHouse 25.x are created if the settings of the server allow them.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -147,6 +153,75 @@ public class ClickHouseDialect extends Dialect {
     @Override
     public boolean isArrayParameterSupported() {
         return false;
+    }
+
+    // ------------------------------------------------------------------
+    // Vectors: arrays of floats
+    // ------------------------------------------------------------------
+
+    /**
+     * Granularity of a vector similarity index: one index of the whole part of a table
+     */
+    static final long VECTOR_INDEX_GRANULARITY = 100_000_000L;
+
+    /**
+     * Arrays of floats, and vector similarity indexes if the settings of the server allow them (they are beta of
+     * ClickHouse 25.x)
+     */
+    @Override
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+        if (probe(connection, "SELECT CAST([1.0] AS Array(Float32))")) {
+            features.add(DatabaseFeature.VECTOR);
+        }
+        if (probe(connection, "SELECT 1 FROM system.settings WHERE name IN"
+                + " ('allow_experimental_vector_similarity_index', 'enable_vector_similarity_index') AND value = '1'")) {
+            features.add(DatabaseFeature.HNSW_INDEX);
+        }
+    }
+
+    /**
+     * Array(Float32) of 32-bit floats (also of 16-bit floats and bytes), Array(Float64) of doubles
+     */
+    @Override
+    public String getVectorTypeName(VectorType vectorType) {
+        if (!hasDatabaseFeature(DatabaseFeature.VECTOR, true) || vectorType.isSparse()
+                || vectorType.getElement() == VectorType.Element.BINARY) {
+            return null;
+        }
+        return vectorType.getElement() == VectorType.Element.FLOAT64 ? "Array(Float64)" : "Array(Float32)";
+    }
+
+    /**
+     * Arrays take no NULL: nullable vectors are kept as text, an empty array is not NULL
+     */
+    @Override
+    public String getVectorTypeName(VectorType vectorType, boolean nullable) {
+        return nullable ? null : getVectorTypeName(vectorType);
+    }
+
+    /**
+     * Vector similarity index (HNSW) of the cosine or euclidean distance, of the dimensions of the vectors
+     */
+    @Override
+    public String getCreateVectorIndexStatement(String catalog, String schema, String tableName, String indexName,
+                                                String columnName, String columnTypeName, VectorType vectorType,
+                                                boolean nullable, VectorIndex vectorIndex) {
+        VectorIndex.Distance distance = vectorIndex.getDistance();
+        // The settings are not known for a script, an index which they forbid would fail the table
+        if (!hasDatabaseFeature(DatabaseFeature.HNSW_INDEX, false) || vectorType == null
+                || vectorType.getDimensions() < 1 || (distance != VectorIndex.Distance.COSINE
+                && distance != VectorIndex.Distance.EUCLIDEAN)) {
+            return null;
+        }
+        String neighbors = vectorIndex.getOption("m");
+        String candidates = vectorIndex.getOption("ef_construction");
+        String options = StringUtils.isNumeric(neighbors) && StringUtils.isNumeric(candidates)
+                ? String.format(", 'bf16', %s, %s", neighbors, candidates) : "";
+        return String.format("ALTER TABLE %s ADD INDEX %s %s TYPE vector_similarity('hnsw', '%s', %d%s)"
+                        + " GRANULARITY %d", getQualifiedTableName(catalog, schema, tableName),
+                quoteIdentifier(indexName), getIdentifier(columnName), distance == VectorIndex.Distance.COSINE
+                        ? "cosineDistance" : "L2Distance", vectorType.getDimensions(), options,
+                VECTOR_INDEX_GRANULARITY);
     }
 
     /**

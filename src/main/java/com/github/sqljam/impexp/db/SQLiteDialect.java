@@ -27,7 +27,8 @@ import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.StringHelper;
 
 /**
- * @Description: SQLiteDialect for SQLite 3
+ * @Description: SQLiteDialect for SQLite 3.
+ *               SQLite 3 is supported, it has no vectors.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0

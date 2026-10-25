@@ -17,6 +17,7 @@ package com.github.sqljam.face.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TransferRequest;
+import com.github.sqljam.face.model.TransferReport;
 import com.github.sqljam.face.view.UiDatabase;
 import com.github.sqljam.impexp.CsvImporter;
 import com.github.sqljam.impexp.DataFileImporter;
@@ -134,6 +136,77 @@ class TransferServiceTest {
         assertEquals(5, count(target, "T_ONE"));
     }
 
+    /**
+     * The report of a direct import: its header, the tables with their rows, the objects, and the rows of the
+     * target which are compared with the written rows of tables which the import created
+     */
+    @Test
+    void reportsDirectImport() throws Exception {
+        ConnectionProfile source = UiDatabase.create(dir, "source");
+        ConnectionProfile target = target("reported");
+        TransferRequest request = new TransferRequest();
+        request.setSource(source);
+        request.setSourceCatalog(UiDatabase.CATALOG);
+        request.setSourceSchema(UiDatabase.SCHEMA);
+        request.setTarget(TransferRequest.Target.DATABASE);
+        request.setTargetProfile(target);
+        request.setTableRecreated(true);
+        request.setTables(List.of("T_PAGED", "T_ONE"));
+        TransferReport report = new TransferReport();
+        TransferService.describeReport(request, report);
+        assertEquals(TransferReport.Kind.DATABASE, report.getKind());
+        assertEquals("source / " + UiDatabase.CATALOG + " / " + UiDatabase.SCHEMA, report.getSource());
+        assertEquals("reported", report.getTarget());
+        assertEquals("T_PAGED, T_ONE", report.getOptions().get("Tables"));
+        assertEquals("true", report.getOptions().get("Tables recreated"));
+
+        ReportRecorder recorder = new ReportRecorder(report);
+        recorder.start();
+        service.transfer(request, new ExportListener() {
+            @Override
+            public void onTableStart(String catalogName, String schemaName, String tableName, long totalRows) {
+                recorder.tableStarted(catalogName, schemaName, tableName, totalRows);
+            }
+
+            @Override
+            public void onTableEnd(String catalogName, String schemaName, String tableName, long processedRows) {
+                recorder.tableEnded(catalogName, schemaName, tableName, processedRows);
+            }
+
+            @Override
+            public void onDdlExecuted(String statement, boolean successful) {
+                recorder.ddlExecuted(statement, successful);
+            }
+        });
+        recorder.finish(TransferReport.Status.COMPLETED, null, null);
+        // A table which was not reached is not counted
+        report.table(null, null, "NEVER");
+        service.verifyReport(request, report);
+
+        assertEquals(2, report.getObjects().get("Tables"));
+        TransferReport.TableReport paged = report.getTables().stream().filter(table -> "T_PAGED".equalsIgnoreCase(
+                table.getName())).findFirst().orElseThrow();
+        assertEquals(UiDatabase.PAGED_ROWS, paged.getWritten());
+        assertEquals(UiDatabase.PAGED_ROWS, paged.getTargetRows());
+        assertTrue(paged.getVerified());
+        assertNull(report.table(null, null, "NEVER").getTargetRows());
+
+        // Rows of tables which were there before are counted, not compared
+        request.setTableRecreated(false);
+        service.verifyReport(request, report);
+        assertNull(paged.getVerified());
+        // Nothing is counted in a package
+        TransferReport packageReport = new TransferReport();
+        packageReport.table(null, null, "T_PAGED").setStatus(TransferReport.TableStatus.COMPLETED);
+        request.setTarget(TransferRequest.Target.SCRIPT);
+        request.setOutputDirectory(new File(dir, "package"));
+        service.verifyReport(request, packageReport);
+        assertNull(packageReport.getTables().get(0).getTargetRows());
+        TransferService.describeReport(request, packageReport);
+        assertEquals(TransferReport.Kind.PACKAGE, packageReport.getKind());
+        assertEquals(TransferReport.Transaction.NONE, packageReport.getTransaction());
+    }
+
     @Test
     void importsPackageAndFilesInTransaction() throws Exception {
         File packageDir = exportCsv(UiDatabase.create(dir, "source"));
@@ -172,5 +245,43 @@ class TransferServiceTest {
         assertEquals(UiDatabase.PAGED_ROWS, service.importParquet(target, null, null, files, "PAGED_AUTO",
                 DataFileImporter.Mode.CREATE, ExportListener.NONE).getImportedRows());
         assertEquals(UiDatabase.PAGED_ROWS, count(target, "PAGED_AUTO"));
+    }
+
+    /**
+     * Statements of the structure and skipped rows of package and file imports reach the listener of the user
+     * interface through the listeners of the importers, so that their reports hold them
+     */
+    @Test
+    void reportsStatementsOfImports() throws Exception {
+        File packageDir = exportCsv(UiDatabase.create(dir, "source"));
+        TransferReport report = new TransferReport();
+        ReportRecorder recorder = new ReportRecorder(report);
+        ExportListener listener = new ExportListener() {
+            @Override
+            public void onRowSkipped(String catalogName, String schemaName, String tableName, String key,
+                                     Throwable e) {
+                recorder.rowSkipped(catalogName, schemaName, tableName, key, e);
+            }
+
+            @Override
+            public void onDdlExecuted(String statement, boolean successful) {
+                recorder.ddlExecuted(statement, successful);
+            }
+        };
+        service.importScripts(target("statements"), null, null, packageDir, false, 0, null, listener);
+        assertTrue(report.getObjects().getOrDefault("Tables", 0) >= 2, report.getObjects().toString());
+
+        // A file whose rows do not fit the table: the rows are skipped one by one
+        ConnectionProfile target = target("skipped");
+        try (Connection connection = DriverManager.getConnection(target.getJdbcUrl(), "sa", "");
+             Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE NARROW (ID INT PRIMARY KEY, NAME VARCHAR(1))");
+        }
+        File csv = new File(dir, "narrow.csv");
+        java.nio.file.Files.writeString(csv.toPath(), "ID,NAME\n1,a\n2,too long\n3,c\n");
+        service.importFiles(target, null, null, List.of(csv), "NARROW", DataFileImporter.Mode.APPEND, List.of(),
+                null, true, 0, null, listener);
+        assertEquals(1, report.getSkippedRowCount(), report.getSkippedRows().toString());
+        assertEquals(2, count(target, "NARROW"));
     }
 }

@@ -52,8 +52,8 @@ public class CommentMetaData implements TiedMetaData {
         if (columnName == null) {
             statement = getDialect().getCreateTableCommentStatement(catalogName, schemaName, tableName, comment);
         } else {
-            statement = getDialect().getCreateCommentStatement(catalogName, schemaName, tableName, columnName,
-                    comment);
+            statement = getDialect().getCreateCommentStatement(catalogName, schemaName, tableName, getDialect()
+                    .getTargetColumnName(getTableName(), columnName), comment);
         }
         return new String[]{statement};
     }

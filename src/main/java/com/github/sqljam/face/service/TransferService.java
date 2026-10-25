@@ -17,16 +17,23 @@ package com.github.sqljam.face.service;
 
 import java.io.File;
 import java.sql.Connection;
+import java.sql.DatabaseMetaData;
 import java.sql.DriverManager;
+import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.function.Function;
 
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.model.TransferReport;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.impexp.AbstractFileImporter;
 import com.github.sqljam.impexp.CsvExporter;
@@ -35,6 +42,7 @@ import com.github.sqljam.impexp.CsvOptions;
 import com.github.sqljam.impexp.DataFileImporter;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.DuckDBWorkspace;
 import com.github.sqljam.impexp.ExportListener;
 import com.github.sqljam.impexp.Exporter;
@@ -44,6 +52,8 @@ import com.github.sqljam.impexp.ParquetExporter;
 import com.github.sqljam.impexp.ParquetImporter;
 import com.github.sqljam.impexp.ScriptExporter;
 import com.github.sqljam.impexp.SqlScriptRunner;
+import com.github.sqljam.impexp.WriteMode;
+import com.github.sqljam.jdbc.JdbcUtils;
 import com.github.sqljam.jdbc.ManualTransaction;
 import com.github.sqljam.jdbc.SharedConnectionFactory;
 
@@ -93,15 +103,138 @@ public class TransferService {
     }
 
     /**
+     * Header of the report of a transfer: what goes from where to where with which options
+     */
+    public static void describeReport(TransferRequest request, TransferReport report) {
+        boolean database = request.getTarget() == TransferRequest.Target.DATABASE;
+        report.setKind(database ? TransferReport.Kind.DATABASE : TransferReport.Kind.PACKAGE);
+        report.setSource(describe(request.getSource() != null ? request.getSource().getName() : null, request
+                .getSourceCatalog(), request.getSourceSchema()));
+        if (database) {
+            report.setTarget(describe(request.getTargetProfile().getName(), request.getTargetCatalog(), request
+                    .getTargetSchema()));
+            report.setTransaction(request.isOneTransaction() ? TransferReport.Transaction.ONE
+                    : TransferReport.Transaction.EVERY_ROWS);
+        } else {
+            report.setTarget(request.getOutputDirectory() + " (" + request.getDataFormat() + ")");
+            report.setTransaction(TransferReport.Transaction.NONE);
+        }
+        Map<String, String> options = report.getOptions();
+        options.put("Content", ReportExporter.words(request.getExportMode()));
+        options.put("Tables", request.getQueries().isEmpty() ? (request.getTables().isEmpty() ? "All tables"
+                : String.join(", ", request.getTables())) : String.join(", ", request.getQueries().keySet()));
+        if (database) {
+            options.put("Write mode", ReportExporter.words(request.getWriteMode()));
+            options.put("Tables recreated", String.valueOf(request.isTableRecreated()));
+            options.put("Skip rows with errors", String.valueOf(!request.isFailFast()));
+            options.put("Confirm before commit", String.valueOf(request.isConfirmCommit()));
+            if (StringUtils.isNotBlank(request.getTableNamePattern())) {
+                options.put("Table names", request.getTableNamePattern());
+            }
+            long mapped = request.getColumnMappings().values().stream().mapToLong(Map::size).sum();
+            if (mapped > 0) {
+                options.put("Mapped columns", String.valueOf(mapped));
+            }
+        } else {
+            options.put("Format", String.valueOf(request.getDataFormat()));
+            if (request.getScriptDbType() != null) {
+                options.put("Statements for", request.getScriptDbType().getDisplayName());
+            }
+        }
+        options.put("Identity values", String.valueOf(request.isIdReused()));
+        options.put("Indexes, foreign keys, comments, sequences", request.isIndexIncluded() + ", " + request
+                .isForeignKeyIncluded() + ", " + request.isCommentIncluded() + ", " + request.isSequenceIncluded());
+        options.put("Page size", String.valueOf(request.getPageSize()));
+    }
+
+    static String describe(String name, String catalog, String schema) {
+        StringBuilder text = new StringBuilder(StringUtils.defaultString(name));
+        for (String part : new String[]{catalog, schema}) {
+            if (StringUtils.isNotBlank(part)) {
+                text.append(" / ").append(part);
+            }
+        }
+        return text.toString();
+    }
+
+    /**
+     * Rows of the target tables after a transfer into a database, compared with the written rows when the tables
+     * were created by it
+     */
+    public void verifyReport(TransferRequest request, TransferReport report) throws SQLException {
+        if (request.getTarget() != TransferRequest.Target.DATABASE) {
+            return;
+        }
+        boolean comparable = request.isTableRecreated() && request.getWriteMode() == WriteMode.INSERT;
+        try (Connection connection = connect(request.getTargetProfile(), request.getTargetCatalog(), request
+                .getTargetSchema())) {
+            countTargetRows(connection, request.getTargetCatalog(), request.getTargetSchema(), report, name ->
+                    StringUtils.isBlank(request.getTableNamePattern()) ? name : request.getTableNamePattern()
+                            .replace(Dialect.TABLE_PLACEHOLDER, name), comparable);
+        }
+    }
+
+    /**
+     * Counts the rows of the tables of the report which were reached, by their names in the target found without
+     * case like an import finds them
+     *
+     * @param targetName name of the target table of a source table
+     */
+    public static void countTargetRows(Connection connection, String catalog, String schema, TransferReport report,
+                                       Function<String, String> targetName, boolean comparable) throws SQLException {
+        DatabaseMetaData metaData = connection.getMetaData();
+        String quote = StringUtils.defaultIfBlank(StringUtils.trim(metaData.getIdentifierQuoteString()), "\"");
+        String catalogName = StringUtils.defaultIfBlank(catalog, connection.getCatalog());
+        String schemaName = StringUtils.defaultIfBlank(schema, safeSchema(connection));
+        Map<String, String[]> tables = new HashMap<>();
+        try (ResultSet rs = metaData.getTables(catalogName, schemaName, null, new String[]{"TABLE",
+                "PARTITIONED TABLE", "BASE TABLE"})) {
+            while (rs.next()) {
+                tables.putIfAbsent(rs.getString("TABLE_NAME").toLowerCase(Locale.ENGLISH), new String[]{rs
+                        .getString("TABLE_CAT"), rs.getString("TABLE_SCHEM"), rs.getString("TABLE_NAME")});
+            }
+        }
+        for (TransferReport.TableReport table : report.getTables()) {
+            if (table.getStatus() == TransferReport.TableStatus.NOT_STARTED) {
+                continue;
+            }
+            String[] found = tables.get(targetName.apply(table.getName()).toLowerCase(Locale.ENGLISH));
+            if (found == null) {
+                continue;
+            }
+            StringBuilder name = new StringBuilder();
+            if (StringUtils.isNotBlank(found[1])) {
+                name.append(quote).append(found[1].replace(quote, quote + quote)).append(quote).append('.');
+            }
+            name.append(quote).append(found[2].replace(quote, quote + quote)).append(quote);
+            try (Statement statement = connection.createStatement(); ResultSet rs = statement.executeQuery(
+                    "SELECT COUNT(*) FROM " + name)) {
+                if (rs.next()) {
+                    table.setTargetRows(rs.getLong(1));
+                    table.setComparable(comparable);
+                }
+            }
+        }
+    }
+
+    private static String safeSchema(Connection connection) {
+        try {
+            return connection.getSchema();
+        } catch (SQLException | AbstractMethodError e) {
+            return null;
+        }
+    }
+
+    /**
      * Connection of the target database in the catalog and schema
      */
-    private static Connection connect(ConnectionProfile target, String catalog, String schema) throws SQLException {
+    static Connection connect(ConnectionProfile target, String catalog, String schema) throws SQLException {
         String url = target.getJdbcUrl(StringUtils.defaultIfBlank(catalog, null));
         Connection connection = StringUtils.isBlank(target.getUsername()) ? DriverManager.getConnection(url)
                 : DriverManager.getConnection(url, target.getUsername(), target.getPassword());
         try {
             if (StringUtils.isNotBlank(schema) && target.getDbType().isCanSetSchema()) {
-                connection.setSchema(schema);
+                JdbcUtils.setSchema(connection, schema);
             }
             if (StringUtils.isNotBlank(catalog) && (target.getDbType() == DbType.MYSQL
                     || target.getDbType() == DbType.MARIADB)) {
@@ -341,6 +474,7 @@ public class TransferService {
         importConfiguration.setTargetSchemaName(request.getTargetSchema());
         importConfiguration.setTargetSchemaCreated(request.isTargetSchemaCreated());
         importConfiguration.setTableNamePattern(request.getTableNamePattern());
+        importConfiguration.setColumnMappings(new HashMap<>(request.getColumnMappings()));
         importConfiguration.setConnectionPoolEnabled(transaction == null);
         if (transaction != null) {
             // All pages and tables in the one transaction

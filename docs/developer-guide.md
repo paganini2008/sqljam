@@ -23,8 +23,10 @@ The desktop application is a thin layer over the `com.github.sqljam.impexp` API.
 | [9. Update or skip existing rows](#9-update-or-skip-existing-rows) | `WriteMode` |
 | [10. Progress, log and cancel](#10-progress-log-and-cancel) | `ExportListener` |
 | [11. Older servers, names and copies](#11-older-servers-names-and-copies) | target version, `IdentifierCase`, `tableNamePattern` |
+| [12. Import from vector databases](#12-import-from-vector-databases) | `VdbClient`, `VdbExporter`, `VdbQuery` |
 | [Option reference](#option-reference) | `ExportConfiguration`, `ImportConfiguration` |
 | [Adding a database](#adding-a-database) | `Dialect`, `MetaDataOperations`, `DbType` |
+| [Adding a vector database](#adding-a-vector-database) | `VdbClient`, `VdbType`, `VdbDialect` |
 
 ---
 
@@ -75,6 +77,9 @@ flowchart LR
 | `ManualTransaction` | One transaction for a whole import, committed or rolled back by you |
 | `ExportListener` | Progress, messages, errors and cancel |
 | `Dialect` / `MetaDataOperations` | Everything special to one database, one subclass per database and version |
+| `DatabaseFeature` | Features of a target detected on its connection before they are used, e.g. pgvector, HNSW indexes |
+| `SyncScheduler` / `SyncEngine` | Sync tasks of the application: watermarks, upserts by key, attempts and reports, run by SqlJam or by `sqljam sync` |
+| `VectorType` / `VectorIndex` | A vector column (elements, dimensions, dense or sparse) and a vector index (HNSW or IVF, distance, options) of any database |
 
 ---
 
@@ -186,6 +191,30 @@ copier.exportDdlAndData();
 ```
 
 Rows are read and written in pages of 5000 rows (`setPageSize`), tables with LOB columns in pages of 100 (`setLobPageSize`). Foreign keys are created after the rows, identity values and sequences continue after the copied rows.
+
+Columns are renamed, typed or left out by `columnMappings` of the target. Keys, indexes, foreign keys and identity values follow the new names, the other columns are imported as they are:
+
+```java
+Map<String, ColumnMapping> orders = new HashMap<>();
+orders.put("NOTE", new ColumnMapping("REMARK", "TEXT", false));   // another name and type
+orders.put("SECRET", ColumnMapping.skip());                        // not imported
+target.getColumnMappings().put("ORDERS", orders);
+```
+
+A database behind a bastion host is reached through an SSH tunnel: `SshUtils.open` forwards a local port to the host and port which the SSH server reaches, and the url uses the local end. The tunnel of an id is shared and opened again on the same port when it breaks.
+
+```java
+SshSettings ssh = new SshSettings();
+ssh.setEnabled(true);
+ssh.setHost("bastion.example.com");
+ssh.setUsername("deploy");
+ssh.setAuthentication(SshSettings.Authentication.KEY);
+ssh.setPrivateKeyFile("~/.ssh/id_ed25519");
+int port = SshUtils.open("pg-prod", ssh, "10.0.0.12", 5432);
+source.setUrl("jdbc:postgresql://127.0.0.1:" + port + "/demo");
+// ... copy, then
+SshUtils.close("pg-prod");
+```
 
 ---
 
@@ -368,10 +397,12 @@ copier.setExportListener(new ExportListener() {
 | Callback | When |
 |---|---|
 | `onStart` / `onEnd(successful)` | Before the first and after the last step |
-| `onTableStart` / `onTableProgress` / `onTableEnd` | Per table, rows written so far |
+| `onTableStart` / `onTableProgress` / `onTableEnd` | Per table, rows read so far, and the rows written at the end without the skipped rows |
 | `onProgress(processed, total)` | Rows of all tables, bytes of a package import |
 | `onMessage` | Steps such as `Reading metadata ...` |
 | `onError` | Errors and skipped rows or statements |
+| `onRowSkipped(catalog, schema, table, key, e)` | A row which was skipped, with its key and error |
+| `onDdlExecuted(statement, successful)` | A statement of the structure, executed or failed, the migration report counts the objects by them |
 | `isCancelled` | Asked before each page |
 
 ---
@@ -385,6 +416,56 @@ copier.setExportListener(new ExportListener() {
 | A copy in the same schema | `target.setTableNamePattern("{table}_copy")`, keys and indexes get their own names |
 | Only some objects | `setIndexIncluded`, `setForeignKeyIncluded`, `setCommentIncluded`, `setSequenceIncluded` |
 | Identity values | `setIdReused(true)` copies them and continues sequences after them |
+
+---
+
+## 12. Import from vector databases
+
+The vector databases are a line of their own in `com.github.sqljam.vdb`, next to the JDBC line of `impexp`. It reads by REST APIs (the HTTP client of the JDK and Jackson), copies what it needs instead of calling `impexp`, and writes only into targets with vectors. `impexp` never refers to it, and `sqljam.vdb.enabled=false` hides it in the UI.
+
+```mermaid
+flowchart LR
+    V[(Milvus · Qdrant · Weaviate · Pinecone<br/>Elasticsearch · OpenSearch · Chroma)] --> C[VdbClient<br/>describe · count · read]
+    C --> S[VdbServerMetaData] --> CO[VdbCollectionMetaData<br/>field · primary key · vector index · comment]
+    CO --> VI[DefaultVdbMetaDataVisitor] --> DS[VdbDdlScripter]
+    DS --> H[VdbImportHandler<br/>pages · transactions · upserts · skipped rows] --> T[(Target with vectors)]
+    D[VdbDialect<br/>features probed on the target] --> CO
+    D --> H
+```
+
+```java
+VdbSource source = new VdbSource(VdbType.MILVUS, "http://milvus-host:19530");
+source.setUsername("root");
+source.setPassword("secret");
+try (VdbClient client = source.getType().createClient(source)) {
+    VdbExportConfiguration configuration = new VdbExportConfiguration();
+    configuration.setTargetSchema("public");
+    configuration.addCollection("docs", "docs");
+    configuration.setQuery(VdbQuery.all().where("lang = 'en' and n >= 6"));
+    configuration.setWriteMode(VdbExportConfiguration.WriteMode.UPSERT);
+    configuration.setErrorSkipped(true);
+    VdbExportResult result = new VdbExporter(client, dataSource, configuration, new VdbExportListener() {
+        @Override
+        public void onRowSkipped(VdbExportResult.TableResult table, String key, Exception e) {
+            System.out.println("Skipped " + key + ": " + e.getMessage());
+        }
+    }).export();
+}
+```
+
+| Part | Mapping |
+|---|---|
+| Collection | A table, named as the collection with other characters than letters, digits and `_` as `_` |
+| Id | Primary key, with the tenant of Weaviate or the namespace of Pinecone when there are several |
+| Vectors | Vector columns of the target: dense, 16-bit, int8 and sparse as the target has them, others as text |
+| Fields | A column of each top-level field, typed by the schema or by a scan of the payloads, and `payload` with the whole payload as JSON |
+| Vector index | The kind (HNSW, IVF), distance and options of the collection when the target has them |
+| `VdbQuery` | `where("n >= 6 and lang IN ('en', 'zh')")`, `setNativeFilter` in the language of the database, `setNearestField` with `setNearestVector` or `setNearestId`, `setLimit` |
+| `VdbExportConfiguration` | `tableRecreated`, `writeMode` (`INSERT`, `UPSERT`), `vectorIndexCreated`, `commentCreated`, `pageSize`, `transactional`, `errorSkipped` |
+| Fields of a collection | `getMappings().get(i).getFields().put("title", new VdbFieldMapping("headline", null, false))`, `VdbFieldMapping.skip()` leaves a field out, the id is always imported |
+| `VdbExporter.getScripts()` | The statements of the tables, which are not executed |
+| Levels and parts | `VdbClient.getDatabases()` of Milvus and Chroma (`VdbSource.withDatabase`), `listPartitions(collection)` for partitions of Milvus, tenants of Weaviate and namespaces of Pinecone, read apart by `VdbQuery.getPartitions()` |
+| Information | `VdbClient.getOverview()` and `getHealth()`, sections of names and values as the Info page shows them |
 
 ---
 
@@ -415,6 +496,7 @@ copier.setExportListener(new ExportListener() {
 | `targetCatalogName` / `targetSchemaName` | source names | Where the tables go |
 | `targetSchemaCreated` | `true` | Create a missing schema (database of MySQL) |
 | `tableNamePattern` | | Target table names, `{table}` is the source name |
+| `columnMappings` | none | Target name, type written as it is, or no column, by source table and source column. Other columns are imported as they are |
 | `connectionPoolEnabled` | `true` | HikariCP pool for the target |
 
 ---
@@ -428,7 +510,23 @@ copier.setExportListener(new ExportListener() {
 | Older versions | `XxxNNDialect extends XxxDialect`, chosen by `Dialect.forVersion` |
 | Versions other than the server version, e.g. the file format of Access | `Dialect.readDatabaseVersion` |
 | Tables which are emptied before they are dropped, drops of missing tables | `Dialect.getEmptyTableStatement`, `Dialect.isMissingDropError` |
+| Features which the version does not tell, detected by probes which do not fail | `Dialect.detectDatabaseFeatures`, `Dialect.hasDatabaseFeature(feature, byVersion)` |
+| Vector columns and indexes of the source | `VectorType.DETAIL_KEY` of a column, `VectorIndex.DETAIL_KEY` of an index, set by `MetaDataOperations` |
+| Vector types, values and indexes of the target | `Dialect.getVectorTypeName`, `Dialect.getVectorValue`, `Dialect.getCreateVectorIndexStatement` |
+| Sessions of the target, e.g. the search path of extensions | `Dialect.prepareSession` |
 | Registration | A constant of `DbType` with driver, URL template and category |
 | Fixture and tests | `src/test/resources/<db>/fixture.sql`, a value of `ItDatabase`, the cross-database matrix runs it |
+
+## Adding a vector database
+
+| Step | Where |
+|---|---|
+| REST client: version, collections, describe, count, read pages | `vdb.client.XxxClient extends AbstractVdbClient` |
+| Payloads without a schema | `PayloadSchema.observe` of a scan, then `getFields` |
+| Vectors of other elements | `VdbValues` (dense, bytes, sparse, 16-bit floats) |
+| Registration | A constant of `VdbType` with its default port, client, authentication (API key, user) and levels (databases, tenants, the name of its partitions) |
+| Levels, information | `getDatabases`, `listPartitions`, `getOverview` and `getHealth` of the client when the database has them |
+| Target databases | `vdb.dialect.XxxVdbDialect extends VdbDialect`, returned by `VdbDialect.of` |
+| Fixture and tests | A value of `VdbServer` and its settings in `it-vdb-test.properties`, `VdbImportIT` imports it into every target |
 
 Read the change logs in [change_logs](../change_logs) for the decisions behind each part.

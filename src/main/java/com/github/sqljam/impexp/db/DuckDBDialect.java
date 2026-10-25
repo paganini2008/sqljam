@@ -32,21 +32,31 @@ import java.util.Set;
 import java.util.UUID;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.DatabaseFeature;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.StringHelper;
+import com.github.sqljam.impexp.VectorType;
 
 /**
  * @Description: DuckDBDialect for DuckDB, an embedded analytical database. Identity columns are implemented by
  *               sequences and nextval defaults. Sequences can not be altered, so they are recreated to reset the
  *               next value. Foreign keys and unique constraints can not be added by ALTER TABLE, foreign keys are
  *               defined in CREATE TABLE and unique constraints by unique indexes.
+ *               DuckDB 1.x is supported. Vectors are arrays of a fixed size (FLOAT[n], DuckDB 0.10 and later), HNSW
+ *               indexes of the vss extension are experimental for database files, they are not created.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
  */
 public class DuckDBDialect extends Dialect {
+
+    /**
+     * Rows of a statement which inserts rows
+     */
+    static final int ROWS_PER_INSERT = 256;
+
 
     /**
      * Max precision of DECIMAL
@@ -162,6 +172,29 @@ public class DuckDBDialect extends Dialect {
     /**
      * Lists are accepted as text
      */
+    /**
+     * Vectors are arrays of a fixed size: FLOAT[n] of 32-bit floats (also of 16-bit floats and bytes), DOUBLE[n]
+     */
+    @Override
+    public String getVectorTypeName(VectorType vectorType) {
+        if (!hasDatabaseFeature(DatabaseFeature.VECTOR, true) || vectorType.isSparse()
+                || vectorType.getDimensions() < 1 || vectorType.getElement() == VectorType.Element.BINARY) {
+            return null;
+        }
+        return (vectorType.getElement() == VectorType.Element.FLOAT64 ? "DOUBLE[" : "FLOAT[")
+                + vectorType.getDimensions() + "]";
+    }
+
+    /**
+     * Arrays of a fixed size (DuckDB 0.10 and later)
+     */
+    @Override
+    protected void detectDatabaseFeatures(Connection connection, Set<DatabaseFeature> features) throws SQLException {
+        if (probe(connection, "SELECT [1.0]::FLOAT[1]")) {
+            features.add(DatabaseFeature.VECTOR);
+        }
+    }
+
     @Override
     public boolean isArrayParameterSupported() {
         return false;
@@ -595,5 +628,13 @@ public class DuckDBDialect extends Dialect {
             }
         }
         return columns;
+    }
+
+    /**
+     * DuckDB runs the statements of a batch one by one, statements of several rows insert many times faster
+     */
+    @Override
+    public int getRowsPerInsert() {
+        return ROWS_PER_INSERT;
     }
 }

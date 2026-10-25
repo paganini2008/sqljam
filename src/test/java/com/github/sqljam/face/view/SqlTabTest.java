@@ -284,4 +284,64 @@ class SqlTabTest {
         assertEquals(List.of("sql-keyword"), FxTestSupport.call(() -> List.copyOf(tab.getEditor().getCodeArea()
                 .getStyleOfChar(1))));
     }
+
+    /**
+     * The schema of the editor is switched for the next statements, the data source keeps its own
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void switchesSchema() throws Exception {
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection(profile.getJdbcUrl(), "sa", "");
+             java.sql.Statement statement = connection.createStatement()) {
+            statement.execute("CREATE SCHEMA IF NOT EXISTS SJ_OTHER");
+            statement.execute("CREATE TABLE IF NOT EXISTS SJ_OTHER.T_OTHER (ID INT PRIMARY KEY)");
+            statement.execute("MERGE INTO SJ_OTHER.T_OTHER KEY (ID) VALUES (7)");
+        }
+        open(schemaNode());
+        javafx.scene.control.ComboBox<String> schemas = (javafx.scene.control.ComboBox<String>) node(
+                "sqlSchemaCombo");
+        javafx.scene.control.ComboBox<String> catalogs = (javafx.scene.control.ComboBox<String>) node(
+                "sqlCatalogCombo");
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> schemas.getItems().contains("SJ_OTHER")
+                && UiDatabase.SCHEMA.equals(schemas.getValue())));
+        assertEquals(FxTestSupport.call(catalogs::isVisible), true);
+        // The table of the other schema is not found in the schema of the tab
+        type("SELECT ID FROM T_OTHER", 0);
+        runAndWait(false);
+        assertTrue(messages().stream().anyMatch(message -> message.contains("T_OTHER")), messages().toString());
+
+        FxTestSupport.run(() -> schemas.setValue("SJ_OTHER"));
+        FxTestSupport.waitUntil(() -> messages().stream().anyMatch(message -> message.startsWith(
+                "Statements run in")));
+        assertEquals("SJ_OTHER", tab.getSchema());
+        assertTrue(FxTestSupport.call(() -> tab.getTooltip().getText()).endsWith("SJ_OTHER"));
+        runAndWait(false);
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> results().getItems().size() == 1));
+        assertEquals("7", FxTestSupport.call(() -> results().getItems().get(0).get(0)));
+        // The data source keeps its own database and schema
+        assertEquals(profile.getDatabase(), context.getProfileRegistry().findProfile(profile.getId()).orElseThrow()
+                .getDatabase());
+        // Not switched while statements run
+        FxTestSupport.run(() -> tab.run(false));
+        FxTestSupport.waitUntil(() -> !tab.isBusy());
+        assertEquals(false, FxTestSupport.call(schemas::isDisabled));
+    }
+
+    /**
+     * A switch before the first statement opens the connection in the chosen schema
+     */
+    @Test
+    void switchesBeforeFirstStatement() throws Exception {
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection(profile.getJdbcUrl(), "sa", "");
+             java.sql.Statement statement = connection.createStatement()) {
+            statement.execute("CREATE SCHEMA IF NOT EXISTS SJ_FIRST");
+            statement.execute("CREATE TABLE IF NOT EXISTS SJ_FIRST.T_FIRST (ID INT PRIMARY KEY)");
+        }
+        open(schemaNode());
+        FxTestSupport.run(() -> tab.switchTo(tab.getCatalog(), "SJ_FIRST"));
+        type("SELECT COUNT(*) FROM T_FIRST", 0);
+        runAndWait(false);
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> results().getItems().size() == 1));
+        assertEquals("0", FxTestSupport.call(() -> results().getItems().get(0).get(0)));
+    }
 }

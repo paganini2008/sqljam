@@ -19,10 +19,13 @@ import java.sql.DatabaseMetaData;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
@@ -71,9 +74,9 @@ public class TableMetaData implements TiedMetaData {
         }
         Exporter.ExportConfiguration configuration = visitor.getConfiguration();
         TableQuery query = configuration != null ? configuration.getTableQuery(tableName) : null;
-        // Selected columns of a query, all columns if none
-        Predicate<String> selected = columnName -> query == null || query.getColumns().isEmpty()
-                || query.getColumns().contains(columnName);
+        // Selected columns of a query, all columns if none, without the columns which the user skipped
+        Predicate<String> selected = columnName -> (query == null || query.getColumns().isEmpty()
+                || query.getColumns().contains(columnName)) && !getDialect().isColumnSkipped(tableName, columnName);
         final boolean partitioned = isPartitioned();
         DatabaseMetaData databaseMetaData = getMetaData();
         List<Map<String, Object>> infoList = null;
@@ -105,6 +108,7 @@ public class TableMetaData implements TiedMetaData {
                 columnMetaDatas.add(new ColumnMetaData(columnName, columnInfo, this));
             }
         }
+        checkColumnMappings(infoList);
         for (ColumnMetaData columnMetaData : columnMetaDatas) {
             columnMetaData.accept(visitor);
         }
@@ -242,6 +246,34 @@ public class TableMetaData implements TiedMetaData {
         String tableName = getDialect().getTargetTableName(getTableName());
         String statement = getDialect().getCreateTableStatement(catalogName, schemaName, tableName);
         return new String[]{statement};
+    }
+
+    /**
+     * Mappings of the user which can not be imported are refused before anything is created: a column which the
+     * table does not have, and two columns with the same target name
+     */
+    private void checkColumnMappings(List<Map<String, Object>> columnInfos) {
+        Map<String, ColumnMapping> mappings = getDialect().getColumnMappings().get(tableName);
+        if (mappings == null || mappings.isEmpty()) {
+            return;
+        }
+        Set<String> sourceNames = columnInfos.stream().map(info -> (String) info.get("COLUMN_NAME")).collect(
+                Collectors.toSet());
+        for (String column : mappings.keySet()) {
+            if (!sourceNames.contains(column)) {
+                throw new ImpExpException(String.format("Column %s of the mapping is not a column of table %s",
+                        column, tableName));
+            }
+        }
+        Map<String, String> targetNames = new HashMap<>();
+        for (ColumnMetaData column : columnMetaDatas) {
+            String target = getDialect().getTargetColumnName(tableName, column.getColumnName());
+            String other = targetNames.putIfAbsent(target.toLowerCase(Locale.ENGLISH), column.getColumnName());
+            if (other != null) {
+                throw new ImpExpException(String.format("Columns %s and %s of table %s are both mapped to %s",
+                        other, column.getColumnName(), tableName, target));
+            }
+        }
     }
 
     public List<ColumnMetaData> getColumnMetaDatas() {

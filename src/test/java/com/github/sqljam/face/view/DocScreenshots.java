@@ -15,35 +15,49 @@
  */
 package com.github.sqljam.face.view;
 
-import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.List;
 
-import javax.imageio.ImageIO;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.testfx.framework.junit5.ApplicationExtension;
 import org.testfx.framework.junit5.Start;
+import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
+import com.github.sqljam.face.vdb.VdbImportDialog;
+import com.github.sqljam.face.vdb.VdbProfile;
+import com.github.sqljam.face.vdb.VdbProfileStore;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.ExportListener;
 import com.github.sqljam.impexp.TableQuery;
+import com.github.sqljam.it.ItDatabase;
+import com.github.sqljam.utils.SshSettings;
+import com.github.sqljam.vdb.VdbType;
+import com.github.sqljam.vdb.it.VdbServer;
+import javafx.application.Platform;
+import javafx.scene.Node;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
+import javafx.scene.control.DialogPane;
+import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.RadioButton;
 import javafx.scene.control.TabPane;
+import javafx.scene.control.TableView;
+import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TreeItem;
-import javafx.scene.image.PixelReader;
 import javafx.scene.image.WritableImage;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
@@ -60,6 +74,10 @@ import javafx.stage.Stage;
 class DocScreenshots {
 
     private static final String STYLESHEET = "/com/github/sqljam/face/app.css";
+    /**
+     * Database of the fixture tables of MySQL
+     */
+    private static final String CATALOG = ItDatabase.MYSQL.getSourceCatalog();
 
     @TempDir
     File dir;
@@ -75,8 +93,10 @@ class DocScreenshots {
         context = FxTestSupport.createContext(dir);
         ConnectionProfile h2 = UiDatabase.create(dir, "H2 demo");
         context.getProfileRegistry().saveProfile(h2, true);
-        mysql = saveProfile("MySQL test", DbType.MYSQL, "localhost", 3306, "test", "fengy");
-        mysql.setPassword("12345678");
+        // The MySQL of the integration tests with its fixture tables (sjm_...), 192.168.0.63 by default
+        ItDatabase.MYSQL.loadFixture();
+        mysql = ItDatabase.MYSQL.getSourceProfile();
+        mysql.setName("MySQL test");
         context.getProfileRegistry().saveProfile(mysql, true);
         saveProfile("MariaDB demo", DbType.MARIADB, "localhost", 3307, "demo", "fengy");
         saveProfile("PostgreSQL demo", DbType.POSTGRESQL, "localhost", 5432, "demo", "fengy");
@@ -144,16 +164,7 @@ class DocScreenshots {
     }
 
     static void write(WritableImage image, File file) throws IOException {
-        int width = (int) image.getWidth();
-        int height = (int) image.getHeight();
-        BufferedImage buffered = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
-        PixelReader reader = image.getPixelReader();
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                buffered.setRGB(x, y, reader.getArgb(x, y));
-            }
-        }
-        ImageIO.write(buffered, "png", file);
+        DocImages.write(image, file);
     }
 
     private static void sleep(long millis) {
@@ -173,16 +184,22 @@ class DocScreenshots {
         render(splash, SplashView.WIDTH, SplashView.HEIGHT, "splash.png");
     }
 
+    /**
+     * The data source dialog: its category and type, the fields of the type and its SSH tunnel
+     */
     @Test
-    void login() throws IOException {
-        LoginView loginView = FxTestSupport.call(() -> new LoginView(context, profile -> {
-        }));
-        render(loginView, 860, 620, "login.png", () -> {
-            @SuppressWarnings("unchecked")
-            ListView<ConnectionProfile> list = (ListView<ConnectionProfile>) loginView.lookup("#profileList");
-            list.getItems().stream().filter(profile -> "MySQL test".equals(profile.getName())).findFirst()
-                    .ifPresent(list.getSelectionModel()::select);
-        });
+    void dataSource() throws IOException {
+        ConnectionProfile profile = context.getProfileRegistry().getProfiles().stream().filter(candidate ->
+                "PostgreSQL demo".equals(candidate.getName())).findFirst().orElseThrow();
+        SshSettings ssh = new SshSettings();
+        ssh.setEnabled(true);
+        ssh.setHost("bastion.example.com");
+        ssh.setUsername("deploy");
+        ssh.setAuthentication(SshSettings.Authentication.KEY);
+        ssh.setPrivateKeyFile("~/.ssh/id_ed25519");
+        profile.setSsh(ssh);
+        ConnectionDialog dialog = FxTestSupport.call(() -> new ConnectionDialog(stage, context, profile));
+        snapshotDialog(dialog, 640, 760, "data-source.png");
     }
 
 
@@ -190,7 +207,7 @@ class DocScreenshots {
      * Node of a fixture table of the MySQL test database
      */
     private DbNode tableNode(String table) {
-        return DbNode.table(mysql, new TableInfo("test", null, table, null, false, false));
+        return DbNode.table(mysql, new TableInfo(CATALOG, null, table, null, false, false));
     }
 
     /**
@@ -209,11 +226,11 @@ class DocScreenshots {
             mainView.layout();
         });
         ConnectionTree tree = FxTestSupport.call(() -> (ConnectionTree) mainView.lookup("#connectionTree"));
-        TreeItem<DbNode> connection = FxTestSupport.call(() -> tree.getRoot().getChildren().stream()
+        TreeItem<DbNode> connection = FxTestSupport.call(() -> tree.getConnectionItems().stream()
                 .filter(item -> "MySQL test".equals(item.getValue().getLabel())).findFirst().orElseThrow());
         expand(connection);
         TreeItem<DbNode> catalog = FxTestSupport.call(() -> connection.getChildren().stream()
-                .filter(item -> "test".equals(item.getValue().getLabel())).findFirst().orElseThrow());
+                .filter(item -> CATALOG.equals(item.getValue().getLabel())).findFirst().orElseThrow());
         expand(catalog);
         FxTestSupport.run(() -> {
             // The fixture tables with the partitioned ones (sjm_pt_..., sjm_sales) are in view, the table selected
@@ -285,7 +302,7 @@ class DocScreenshots {
         FxTestSupport.run(() -> {
             TabPane tables = (TabPane) mainView.lookup("#tableTabs");
             tables.getTabs().clear();
-            mainView.openSqlTab(DbNode.catalog(mysql, "test"));
+            mainView.openSqlTab(DbNode.catalog(mysql, CATALOG));
         });
         SqlTab tab = FxTestSupport.call(() -> (SqlTab) ((TabPane) mainView.lookup("#tableTabs")).getTabs().get(0));
         FxTestSupport.run(() -> tab.getEditor().setText("-- Employees with their departments\n"
@@ -349,7 +366,7 @@ class DocScreenshots {
         File packageDir = new File(dir, "mysql-parquet");
         TransferRequest request = new TransferRequest();
         request.setSource(mysql);
-        request.setSourceCatalog("test");
+        request.setSourceCatalog(CATALOG);
         request.setTables(List.of("sjm_dept", "sjm_emp", "sjm_emp_tag", "sjm_sales"));
         request.setTarget(TransferRequest.Target.SCRIPT);
         request.setOutputDirectory(packageDir);
@@ -382,5 +399,252 @@ class DocScreenshots {
         ImportParquetDialog parquetDialog = FxTestSupport.call(() -> new ImportParquetDialog(stage, context, null));
         FxTestSupport.run(() -> parquetDialog.addFiles(List.of(new File(packageDir, "data/sjm_emp.parquet"))));
         snapshotDialog(parquetDialog, 760, 753, "import-parquet.png");
+    }
+
+    /**
+     * A Qdrant collection of the tree in its tab, its Info page and the wizard which imports it
+     */
+    @Test
+    void vectorDatabase() throws Exception {
+        VdbServer server = VdbServer.QDRANT;
+        Assumptions.assumeTrue(server.isAvailable());
+        server.createFixture();
+        try {
+            VdbProfile profile = new VdbProfile();
+            profile.setName("Qdrant docs");
+            profile.setType(VdbType.QDRANT);
+            profile.setUrl(server.getSource().getUrl());
+            profile.setApiKey(server.getSource().getApiKey());
+            VdbProfileStore.getInstance().saveProfile(profile, true);
+            MainView mainView = FxTestSupport.call(() -> new MainView(context));
+            FxTestSupport.run(() -> {
+                Scene scene = new Scene(mainView, 1280, 753);
+                scene.getStylesheets().add(DocScreenshots.class.getResource(STYLESHEET).toExternalForm());
+                stage.setScene(scene);
+                stage.setWidth(1280);
+                stage.setHeight(753);
+                mainView.applyCss();
+                mainView.layout();
+            });
+            ConnectionTree tree = FxTestSupport.call(() -> (ConnectionTree) mainView.lookup("#connectionTree"));
+            TreeItem<DbNode> qdrant = FxTestSupport.call(() -> tree.getRoot().getChildren().stream().flatMap(group
+                    -> group.getChildren().stream()).filter(item -> "Qdrant docs".equals(item.getValue().getLabel()))
+                    .findFirst().orElseThrow());
+            expand(qdrant);
+            TreeItem<DbNode> collection = FxTestSupport.call(() -> qdrant.getChildren().stream().filter(item -> server
+                    .getCollection().equals(item.getValue().getLabel())).findFirst().orElseThrow());
+            FxTestSupport.run(() -> {
+                tree.getSelectionModel().select(collection);
+                mainView.openSourceItem(collection.getValue());
+            });
+            TabPane contents = FxTestSupport.call(() -> (TabPane) ((TabPane) mainView.lookup("#tableTabs"))
+                    .getSelectionModel().getSelectedItem().getContent());
+            FxTestSupport.run(() -> contents.getSelectionModel().select(1));
+            FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> {
+                TableView<?> data = (TableView<?>) contents.lookup("#vdbDataTable");
+                return data != null && data.getItems().size() == VdbServer.RECORDS;
+            }));
+            snapshot("vdb-collection.png");
+
+            FxTestSupport.run(() -> {
+                tree.getSelectionModel().select(qdrant);
+                mainView.openInfo(qdrant.getValue());
+            });
+            FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> {
+                Label refreshed = (Label) mainView.lookup("#infoRefreshedLabel");
+                return refreshed != null && !refreshed.getText().isEmpty();
+            }));
+            // The address of the server of the tests is not shown in the documents
+            FxTestSupport.run(() -> {
+                @SuppressWarnings("unchecked")
+                TableView<List<String>> overview = (TableView<List<String>>) mainView.lookup("#infoOverviewTable");
+                overview.getItems().replaceAll(row -> "URL".equals(row.get(0).trim()) ? Arrays.asList(row.get(0),
+                        "http://qdrant-host:6333", row.get(2)) : row);
+            });
+            snapshot("database-info.png");
+
+            VdbImportDialog dialog = FxTestSupport.call(() -> new VdbImportDialog(stage, context,
+                    VdbProfileStore.getInstance(), profile, null, List.of(server.getCollection()), null));
+            // The targets are probed in the background, a target with vectors is chosen when they are known
+            FxTestSupport.run(() -> {
+                dialog.getDialogPane().setPrefSize(900, 860);
+                dialog.show();
+            });
+            @SuppressWarnings("unchecked")
+            ComboBox<ConnectionProfile> targets = FxTestSupport.call(() -> (ComboBox<ConnectionProfile>) dialog
+                    .getDialogPane().lookup("#vdbTargetCombo"));
+            FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> targets.getItems().stream().anyMatch(target
+                    -> target.getDbType() == DbType.DUCKDB)));
+            FxTestSupport.run(() -> targets.getItems().stream().filter(target -> target.getDbType() == DbType.DUCKDB)
+                    .findFirst().ifPresent(targets::setValue));
+            FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> dialog.getDialogPane().lookup("#vdbStatus")
+                    .getStyleClass().contains("status-success")));
+            sleep(1500);
+            write(FxTestSupport.call(() -> dialog.getDialogPane().getScene().snapshot(null)), new File(outputDir(),
+                    "import-vdb.png"));
+            FxTestSupport.run(dialog::close);
+        } finally {
+            server.dropFixture();
+        }
+    }
+
+    private MainView mainWindow(double width, double height) {
+        MainView mainView = FxTestSupport.call(() -> new MainView(context));
+        FxTestSupport.run(() -> {
+            Scene scene = new Scene(mainView, width, height);
+            scene.getStylesheets().add(DocScreenshots.class.getResource(STYLESHEET).toExternalForm());
+            stage.setScene(scene);
+            stage.setWidth(width);
+            stage.setHeight(height);
+            mainView.applyCss();
+            mainView.layout();
+        });
+        return mainView;
+    }
+
+    private ConnectionProfile profile(String name) {
+        return context.getProfileRegistry().getProfiles().stream().filter(profile -> name.equals(profile.getName()))
+                .findFirst().orElseThrow();
+    }
+
+    /**
+     * The migration report of a copy of the MySQL fixture into H2, opened by View Report
+     */
+    @Test
+    void migrationReport() throws Exception {
+        MainView mainView = mainWindow(1280, 753);
+        com.github.sqljam.face.model.TransferRequest request = new com.github.sqljam.face.model.TransferRequest();
+        request.setSource(mysql);
+        request.setSourceCatalog(CATALOG);
+        request.setTables(List.of("sjm_dept", "sjm_emp", "sjm_emp_tag"));
+        request.setTarget(com.github.sqljam.face.model.TransferRequest.Target.DATABASE);
+        request.setTargetProfile(profile("H2 demo"));
+        request.setTargetSchema("PUBLIC");
+        request.setFailFast(false);
+        ProgressDialog progress = FxTestSupport.call(() -> mainView.startTransfer(request, 3));
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> progress.getStage().getScene().getRoot().lookup(
+                "#viewReportButton").isVisible()));
+        FxTestSupport.run(() -> {
+            ((Button) progress.getStage().getScene().getRoot().lookup("#viewReportButton")).fire();
+            progress.getStage().close();
+        });
+        snapshot("report.png");
+        // The history of the imports lists the report with the earlier ones
+        FxTestSupport.run(mainView::openHistory);
+        snapshot("import-history.png");
+    }
+
+    /**
+     * Columns of the employees mapped for the target: a new name, a type of the target and a column left out
+     */
+    @Test
+    void columnMapping() throws Exception {
+        DatabaseSession session = context.getSessionManager().getSession(mysql);
+        ColumnMappingDialog.ColumnLoader loader = table -> session.getColumns(CATALOG, null, table).stream().map(
+                column -> new ColumnMappingDialog.Column(column.getName(), column.getTypeName() + (column.getSize()
+                        > 0 && column.getTypeName().toUpperCase(java.util.Locale.ENGLISH).matches(
+                        "VARCHAR|CHAR|DECIMAL") ? "(" + column.getSize() + (column.getScale() > 0 ? "," + column
+                        .getScale() : "") + ")" : ""), column.isPrimaryKey())).collect(java.util.stream.Collectors
+                .toList());
+        java.util.Map<String, java.util.Map<String, ColumnMappingDialog.Mapping>> chosen = java.util.Map.of(
+                "sjm_emp", java.util.Map.of("name", new ColumnMappingDialog.Mapping("full_name", null, false),
+                        "salary", new ColumnMappingDialog.Mapping(null, "DECIMAL(14,2)", false),
+                        "hired", new ColumnMappingDialog.Mapping(null, null, true)));
+        ColumnMappingDialog dialog = FxTestSupport.call(() -> new ColumnMappingDialog(stage, List.of("sjm_emp",
+                "sjm_dept"), loader, chosen));
+        // Wide enough for the target types
+        snapshotDialog(dialog, 980, 600, "column-mapping.png", () -> {
+            javafx.stage.Window window = dialog.getDialogPane().getScene().getWindow();
+            window.setWidth(980);
+            window.setHeight(620);
+        });
+    }
+
+    /**
+     * The feature map of the About dialog
+     */
+    @Test
+    void featureMap() throws Exception {
+        javafx.scene.control.Alert about = FxTestSupport.call(() -> Dialogs.createAbout(stage, null));
+        FxTestSupport.run(() -> {
+            about.show();
+            ((TabPane) about.getDialogPane().lookup("#aboutTabs")).getSelectionModel().select(1);
+        });
+        sleep(2500);
+        // The whole map, also the part which the dialog scrolls
+        write(FxTestSupport.call(() -> {
+            Node map = about.getDialogPane().lookup("#featureMap");
+            javafx.scene.SnapshotParameters parameters = new javafx.scene.SnapshotParameters();
+            parameters.setFill(javafx.scene.paint.Color.web("#0d1117"));
+            return map.snapshot(parameters, null);
+        }), new File(outputDir(), "feature-map.png"));
+        FxTestSupport.run(about::close);
+    }
+
+    /**
+     * Sync tasks of the MySQL fixture into H2, one run now, one run by the system scheduler every night
+     */
+    @Test
+    void syncTasks() throws Exception {
+        MainView mainView = mainWindow(1280, 753);
+        ConnectionProfile h2 = profile("H2 demo");
+        com.github.sqljam.face.model.SyncTask hourly = new com.github.sqljam.face.model.SyncTask();
+        hourly.setName("Employees to H2");
+        hourly.setSourceId(mysql.getId());
+        hourly.setSourceCatalog(CATALOG);
+        hourly.setTargetId(h2.getId());
+        hourly.setTargetSchema("PUBLIC");
+        hourly.getTables().add(new com.github.sqljam.face.model.SyncTask.Table("sjm_dept", "id",
+                com.github.sqljam.face.model.SyncTask.WatermarkType.INCREASING_KEY));
+        hourly.getTables().add(new com.github.sqljam.face.model.SyncTask.Table("sjm_emp", "id",
+                com.github.sqljam.face.model.SyncTask.WatermarkType.INCREASING_KEY));
+        hourly.setIntervalMinutes(15);
+        context.getSyncScheduler().getStore().saveTask(hourly);
+        com.github.sqljam.face.model.SyncTask nightly = new com.github.sqljam.face.model.SyncTask();
+        nightly.setName("Sales every night");
+        nightly.setSourceId(mysql.getId());
+        nightly.setSourceCatalog(CATALOG);
+        nightly.setTargetId(h2.getId());
+        nightly.setTargetSchema("PUBLIC");
+        nightly.getTables().add(new com.github.sqljam.face.model.SyncTask.Table("sjm_sales", "id",
+                com.github.sqljam.face.model.SyncTask.WatermarkType.INCREASING_KEY));
+        nightly.setScheduleType(com.github.sqljam.face.model.SyncTask.ScheduleType.DAILY);
+        nightly.setDailyTime("02:00");
+        nightly.setRunner(com.github.sqljam.face.model.SyncTask.Runner.SYSTEM);
+        context.getSyncScheduler().getStore().saveTask(nightly);
+        context.getSyncScheduler().runNow(hourly.getId()).get(120, java.util.concurrent.TimeUnit.SECONDS);
+        FxTestSupport.run(mainView::openSync);
+        snapshot("sync-tasks.png");
+    }
+
+    /**
+     * The live dashboard of the MySQL of the tests, sampled every second for a while
+     */
+    @Test
+    void dashboard() throws Exception {
+        MainView mainView = mainWindow(1280, 753);
+        ConnectionTree tree = FxTestSupport.call(() -> (ConnectionTree) mainView.lookup("#connectionTree"));
+        TreeItem<DbNode> connection = FxTestSupport.call(() -> tree.getConnectionItems().stream()
+                .filter(item -> "MySQL test".equals(item.getValue().getLabel())).findFirst().orElseThrow());
+        FxTestSupport.run(() -> {
+            tree.getSelectionModel().select(connection);
+            mainView.openInfo(connection.getValue());
+        });
+        InfoTab info = FxTestSupport.call(() -> (InfoTab) ((TabPane) mainView.lookup("#tableTabs"))
+                .getSelectionModel().getSelectedItem());
+        FxTestSupport.run(() -> {
+            ((ComboBox<Integer>) info.getDashboard().lookup("#dashboardIntervalCombo")).setValue(1);
+            info.showDashboard();
+        });
+        // Curves of half a minute, with some work of the server meanwhile
+        for (int i = 0; i < 30; i++) {
+            try (java.sql.Connection jdbc = ItDatabase.MYSQL.getSourceConnection();
+                 java.sql.Statement statement = jdbc.createStatement()) {
+                statement.executeQuery("SELECT COUNT(*) FROM " + CATALOG + ".sjm_emp WHERE salary > " + i).close();
+            }
+            sleep(1000);
+        }
+        snapshot("dashboard.png");
+        FxTestSupport.run(() -> info.getTabPane().getTabs().remove(info));
     }
 }

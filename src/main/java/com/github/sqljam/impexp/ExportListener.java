@@ -51,6 +51,21 @@ public interface ExportListener {
     default void onError(String message, Throwable e) {
     }
 
+    /**
+     * A row with an error which was skipped, after its error was told by {@link #onError}, e.g. for a report
+     *
+     * @param key values which name the row, e.g. its primary key
+     */
+    default void onRowSkipped(String catalogName, String schemaName, String tableName, String key, Throwable e) {
+    }
+
+    /**
+     * A statement of the structure which was run on the target: a table, a key, an index, a constraint, a sequence
+     * or a comment, e.g. for a report of the objects which were created
+     */
+    default void onDdlExecuted(String statement, boolean successful) {
+    }
+
     default void onEnd(boolean successful) {
     }
 

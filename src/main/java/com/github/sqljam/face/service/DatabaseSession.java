@@ -40,6 +40,7 @@ import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.apache.commons.lang3.StringUtils;
+import lombok.extern.slf4j.Slf4j;
 import com.github.sqljam.face.model.ColumnInfo;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.DataPage;
@@ -56,7 +57,7 @@ import com.github.sqljam.impexp.TableMetaData;
 import com.github.sqljam.impexp.TableQuery;
 import com.github.sqljam.jdbc.ConnectionFactory;
 import com.github.sqljam.jdbc.JdbcUtils;
-import lombok.extern.slf4j.Slf4j;
+import com.github.sqljam.utils.SshUtils;
 
 /**
  * @Description: DatabaseSession browses a database: catalogs, schemas, tables, metadata and rows of tables
@@ -100,9 +101,15 @@ public class DatabaseSession implements Closeable {
      */
     public static String testConnection(ConnectionProfile profile) throws SQLException {
         DriverManager.setLoginTimeout(10);
+        // A tunnel opened only for the test is closed after it
+        boolean tunnelOpened = profile.isSshEnabled() && !SshUtils.isOpen(profile.getId());
         try (Connection connection = connect(profile, profile.getJdbcUrl())) {
             DatabaseMetaData metaData = connection.getMetaData();
             return metaData.getDatabaseProductName() + " " + metaData.getDatabaseProductVersion();
+        } finally {
+            if (tunnelOpened) {
+                SshUtils.close(profile.getId());
+            }
         }
     }
 
@@ -123,6 +130,12 @@ public class DatabaseSession implements Closeable {
     }
 
     private Connection getConnection(String catalog) throws SQLException {
+        if (profile.isSshEnabled() && !SshUtils.isOpen(profile.getId())) {
+            // A tunnel which was closed, e.g. by the network, is opened again on its local port, the connections
+            // of the pools went through the closed one
+            closePools();
+            profile.getJdbcUrl();
+        }
         return getConnectionFactory(catalog).getConnection();
     }
 
@@ -491,6 +504,11 @@ public class DatabaseSession implements Closeable {
 
     @Override
     public void close() {
+        closePools();
+        SshUtils.close(profile.getId());
+    }
+
+    private void closePools() {
         for (ConnectionFactory connectionFactory : connectionFactories.values()) {
             try {
                 connectionFactory.destroy();

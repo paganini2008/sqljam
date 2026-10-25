@@ -28,7 +28,8 @@ import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.StringHelper;
 
 /**
- * @Description: H2Dialect for H2 2.x
+ * @Description: H2Dialect for H2 2.x.
+ *               H2 2.x is supported, it has no vectors.
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
