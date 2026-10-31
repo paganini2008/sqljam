@@ -93,20 +93,17 @@ public class QdrantClient extends AbstractVdbClient {
         Map<String, Double> metrics = super.getMetrics();
         try {
             Map<String, Double> values = VdbInfo.prometheus(rest.get("/metrics").asText());
-            // Newer servers count the requests in their histograms of durations
+            // Newer servers count the requests in their histograms of durations. A new server has no lines of them
+            // before its first request, it served none
             double requests = 0;
-            boolean counted = false;
             for (String name : new String[]{"rest_responses_total", "grpc_responses_total",
                     "rest_responses_duration_seconds_count", "grpc_responses_duration_seconds_count"}) {
                 if (values.containsKey(name) && !(name.endsWith("_count") && values.containsKey(name.replace(
                         "_duration_seconds_count", "_total")))) {
                     requests += values.get(name);
-                    counted = true;
                 }
             }
-            if (counted) {
-                metrics.put("requests", requests);
-            }
+            metrics.put("requests", requests);
             putIfPresent(metrics, "cpu.cores", values.get("cpu_cores_used"));
             putIfPresent(metrics, "memory.resident", values.get("memory_resident_bytes"));
             putIfPresent(metrics, "memory.allocated", values.get("memory_allocated_bytes"));
