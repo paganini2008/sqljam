@@ -64,6 +64,13 @@ public interface DataSourceExtension {
         void open(Window owner, AppContext context);
 
         /**
+         * Metrics of the dashboard of the info of the source, null for sources without
+         */
+        default java.util.function.Supplier<com.github.sqljam.face.service.MetricSource> getDashboard() {
+            return null;
+        }
+
+        /**
          * Children of an item of the source in the connection tree, the top items for null: databases,
          * collections and their partitions as the source has them, read in the background
          */

@@ -37,7 +37,7 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 | Spreadsheets and text tools want CSV | **CSV packages** with your delimiter, quote, NULL text, header, encoding (UTF-8 with BOM for Excel, GBK and more) and date format, read back with the exact column types kept in `manifest.json`, and **CSV files of other tools** with detected delimiter and types |
 | An import went wrong, now what? | **One transaction** by default: an error rolls back the whole import, or **commit every N rows** like other import tools. **Skip rows with errors** goes on and lists every skipped row in the log, which you can filter and save. **Confirm before commit** lets you review a successful import in one transaction, then **Commit** or **Roll Back** |
 | Did every row arrive, and what happened when it stopped? | A **migration report** for every import and export, successful, failed, cancelled or rolled back: source, target and options, each table with its source rows, written and skipped rows, the rows counted in the target afterwards and a ✓ or ✗ against the written rows, the objects which were created, every skipped row with its error, where the transfer stopped and the error which ended it. It opens on its own page with **View Report**, and **Transfer → Import History** lists every report. Export one as Markdown, HTML or JSON |
-| A copy has to stay up to date | **Sync Tasks** copy the rows which changed since the last run into another database, found by a column of the update time or an increasing key, every N minutes or every day at a time. The first run copies all rows, the watermark moves on only after the commit, errors of the connection are run again and errors of the data are not. SqlJam runs the tasks while it is open, or registers them with the **system scheduler** (crontab, Task Scheduler of Windows) so that they run when it is closed. Collections of vector databases sync the same way, and every run leaves a migration report |
+| A copy has to stay up to date | **Sync Tasks** copy the rows which changed since the last run into another database, found by a column of the update time or an increasing key, every N minutes or every day at a time. The first run copies all rows, the watermark moves on only after the commit, errors of the connection are run again and errors of the data are not. SqlJam runs the tasks while it is open. To run them when it is closed, **Copy Command** gives the command line of a task for the scheduler of your system, SqlJam itself never changes it. Collections of vector databases sync the same way, and every run leaves a migration report |
 | Some rows exist already | **Update or insert by key** updates the rows of the same primary key, or of the columns you choose, and inserts the others. **Skip existing by key** keeps them and inserts the new rows only. Insert is the default |
 | Warehouses live apart from OLTP databases | **DuckDB and ClickHouse data sources**, grouped as OLAP databases next to the relational ones |
 | The rows come from a join or a report, not from one table | **SQL Query** editor with syntax highlighting: run the SQL, check the first rows, then export all rows of the query as a table into SQL, Parquet, CSV or another database |
@@ -49,7 +49,7 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 | Embeddings move with their search | Vectors of pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse keep their dimensions, and vector indexes (HNSW, IVF) keep their distances and options |
 | Embeddings live in a vector database | **Vector databases** sit in the connection tree like the other data sources: Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma, read by their REST APIs. Expand one to its databases, collections, partitions, tenants or namespaces, open a collection to browse its fields and records page by page, then **Import…** writes it straight into a database with vectors: ids and vectors become columns, every top-level field becomes a column of its type and the whole payload is kept as JSON. Conditions, native filters and nearest neighbor searches choose the rows |
 | The database sits behind a bastion host | **SSH tunnel** per data source, with a password or a private key (ed25519, RSA, ECDSA, with a passphrase). Host keys are trusted on first use and remembered, a changed host key is refused. A broken tunnel opens again by itself |
-| Which server is this, and is it well? | **Info** opens the overview (product, version, driver, session, features SqlJam detected) and the health of a data source or a vector database (uptime, connections, size, cluster state, load), refreshed when you ask. Its **Dashboard** draws live charts of the last 5 minutes, sampled every 1 to 30 seconds: sessions, transactions, statements, rows, cache hits, locks, network, CPU, memory and size, read from the statistics of each database. Embedded databases show the CPU and the memory of SqlJam, in which they run. Metrics which a server does not tell are listed with the reason |
+| Which server is this, and is it well? | **Info** opens the overview (product, version, driver, session, features SqlJam detected) and the health of a data source or a vector database (uptime, connections, size, cluster state, load), refreshed when you ask. Its **Dashboard** draws live charts of the last 5 minutes, sampled every 1 to 30 seconds: sessions, transactions, statements, rows, cache hits, locks, network, CPU, memory and size, read from the statistics of each database. Embedded databases show the CPU and the memory of SqlJam, in which they run. Vector databases show their collections and records, Elasticsearch and OpenSearch also CPU, heap, indexing and searches, Qdrant requests and memory. Metrics which a server does not tell are listed with the reason |
 | Long values and rows for a chat or a ticket | Cells show one line, a **double click** or **Shift+Enter** opens the whole value with JSON indented and vectors described. Select rows and **Copy Rows As** CSV, TSV, JSON or Markdown, or press **Ctrl+C** to paste them into a spreadsheet |
 | Many data sources, one is needed | Data sources are grouped as **relational, OLAP and vector databases** with their logos, and the **filter** above the tree finds them by name or type |
 
@@ -179,7 +179,7 @@ Three tutorial videos of about 2 minutes each walk through SqlJam:
 |---|---|
 | [SQL databases](docs/assets/sqljam-sql.mp4) | Query rows of the example database, export them into files, import the package into PostgreSQL, query with the SQL editor and copy the tables straight into SQL Server |
 | [Vector databases](docs/assets/sqljam-vectors.mp4) | Browse a Qdrant collection page by page, narrow it by conditions and nearest neighbors, import it into PostgreSQL and open a tenant of Weaviate |
-| [Scheduled sync and reports](docs/assets/sqljam-sync.mp4) | Create a sync task of the shop into PostgreSQL, copy all rows, then only the changed ones, read the reports and let the system scheduler run it |
+| [Scheduled sync and reports](docs/assets/sqljam-sync.mp4) | Create a sync task of the shop into PostgreSQL, copy all rows, then only the changed ones, read the reports and copy the command line of the task |
 
 | Data source | Export wizard | Progress |
 |---|---|---|
@@ -448,7 +448,7 @@ JVM options live in `sqljam.vmoptions` next to the runnable jar, one option per 
 -Dfile.encoding=UTF-8
 ```
 
-Sync tasks run from the command line too, which is what the system scheduler calls (`sqljam.bat` on Windows):
+Sync tasks run from the command line too (`sqljam.bat` on Windows). SqlJam never changes the scheduler of your system, to run tasks when SqlJam is closed you put the command into it yourself:
 
 | Command | Does |
 |---|---|
@@ -458,6 +458,28 @@ Sync tasks run from the command line too, which is what the system scheduler cal
 | `sqljam.sh sync --due` | Runs every task which is due, one line of cron for all of them |
 
 The exit code is `0` when the runs completed, `1` when one failed or was cancelled, `2` for a wrong command. A task never runs twice at once, in SqlJam and on the command line.
+
+To run a sync task on a schedule of your own:
+
+| Step | What to do |
+|---|---|
+| 1 | In **Transfer > Sync Tasks** select the task and press **Copy Command**, it copies the whole command line with the path of SqlJam and the id of the task |
+| 2 | Remember the passwords of its data sources, a run on a schedule has nobody to ask |
+| 3 | Set the task to **Run Now only** in SqlJam, so that SqlJam and your scheduler do not both run it. Or keep its schedule in SqlJam and let your scheduler call `sync --due` |
+| 4 | Put the command into the scheduler of your system, see below |
+| 5 | Each run leaves its report in **Transfer > Import History**, started by the command line |
+
+```text
+# crontab of macOS and Linux (crontab -e): one task every 15 minutes
+*/15 * * * * /opt/sqljam/sqljam.sh sync --task "Shop to PostgreSQL" >> ~/.sqljam/sync.log 2>&1
+# or every 5 minutes, each task runs when its schedule in SqlJam is due
+*/5 * * * * /opt/sqljam/sqljam.sh sync --due >> ~/.sqljam/sync.log 2>&1
+```
+
+```text
+:: Windows, in a console (or the same command in the Task Scheduler)
+schtasks /Create /TN "SqlJam sync" /SC MINUTE /MO 15 /TR "C:\SqlJam\sqljam.bat sync --task \"Shop to PostgreSQL\""
+```
 
 Export options (UI / `ExportConfiguration`):
 
@@ -485,19 +507,19 @@ Export options (UI / `ExportConfiguration`):
 
 | Scenario (200,000 rows × 6 columns) | Time | Rows/s |
 |---|---|---|
-| H2 → MySQL | 10.3 s | 19.5k |
-| H2 → MariaDB | 9.5 s | 21.1k |
-| H2 → PostgreSQL | 6.4 s | 31.3k |
-| H2 → Oracle | 4.2 s | 47.9k |
-| H2 → SQL Server | 12.0 s | 16.7k |
-| H2 → Db2 | 9.3 s | 21.6k |
-| H2 → ClickHouse | 4.2 s | 47.4k |
-| H2 → DuckDB | 5.7 s | 35.1k |
-| H2 → SQL package | 2.6 s | 76.1k |
-| H2 → Parquet package | 5.7 s | 35.4k |
-| H2 → CSV package | 5.8 s | 34.7k |
-| SQL package → PostgreSQL | 24.3 s | 8.2k |
-| Qdrant → PostgreSQL (20,000 points, 256-d vectors and payload) | 18.4 s | 1.1k |
+| H2 → MySQL | 9.9 s | 20.2k |
+| H2 → MariaDB | 7.7 s | 26.0k |
+| H2 → PostgreSQL | 6.9 s | 28.8k |
+| H2 → Oracle | 4.8 s | 41.6k |
+| H2 → SQL Server | 13.3 s | 15.1k |
+| H2 → Db2 | 10.7 s | 18.7k |
+| H2 → ClickHouse | 5.4 s | 36.8k |
+| H2 → DuckDB | 5.4 s | 37.2k |
+| H2 → SQL package | 2.5 s | 81.0k |
+| H2 → Parquet package | 5.8 s | 34.6k |
+| H2 → CSV package | 5.5 s | 36.7k |
+| SQL package → PostgreSQL | 10.1 s | 19.8k |
+| Qdrant → PostgreSQL (20,000 points, 256-d vectors and payload) | 18.3 s | 1.1k |
 
 Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a server of the local network (about 100 Mbit/s), H2, DuckDB and the packages are local. Default settings. Each scenario is measured by `TransferBenchmark`.
 
@@ -507,6 +529,7 @@ Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a serve
 | Tables copied one by one | Predictable load on production servers |
 | Packages contain plain SQL, Parquet or CSV | Readable, editable and portable, or columnar for analytics |
 | Writes sized for each database | Batched inserts, rewritten into multi-row statements for PostgreSQL and MySQL, several rows a statement for DuckDB, with the same value conversions everywhere |
+| Inserts of a SQL package merged on import | The package stays one readable row a line, the database receives up to 100 rows a statement |
 
 ---
 

@@ -82,6 +82,45 @@ public interface VdbClient extends AutoCloseable {
     void read(VdbCollection collection, VdbQuery query, int pageSize, PageConsumer consumer);
 
     /**
+     * Collections whose records the metrics count at most, the first ones of the server
+     */
+    int METRIC_COLLECTIONS = 50;
+
+    /**
+     * Records of a collection, -1 if they can not be counted without reading them
+     */
+    default long countRecords(String collection) {
+        return count(describe(collection), VdbQuery.all());
+    }
+
+    /**
+     * Metrics of the dashboard of the server, raw values by key: collections, records, and what the server tells
+     * beyond (e.g. cpu.percent, heap.used, requests). Counters only grow, a key which can not be read is left out.
+     */
+    default Map<String, Double> getMetrics() {
+        Map<String, Double> metrics = new LinkedHashMap<>();
+        List<String> collections = getCollections();
+        metrics.put("collections", (double) collections.size());
+        long records = 0;
+        boolean counted = false;
+        for (String collection : collections.subList(0, Math.min(METRIC_COLLECTIONS, collections.size()))) {
+            try {
+                long count = countRecords(collection);
+                if (count >= 0) {
+                    records += count;
+                    counted = true;
+                }
+            } catch (RuntimeException e) {
+                // A collection which can not be counted, e.g. without permission, the others are
+            }
+        }
+        if (counted) {
+            metrics.put("records", (double) records);
+        }
+        return metrics;
+    }
+
+    /**
      * Information of the server by sections, e.g. Server: version, url; a value which is not readable tells why
      */
     default Map<String, Map<String, String>> getOverview() {

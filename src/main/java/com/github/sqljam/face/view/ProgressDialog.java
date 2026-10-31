@@ -185,6 +185,7 @@ public class ProgressDialog {
         report.setTitle(title);
         stage.initOwner(owner);
         Branding.applyIcons(stage);
+        Dialogs.fitToScreen(stage);
         stage.initModality(Modality.NONE);
         stage.setTitle(title);
         statusLabel.setId("progressStatus");

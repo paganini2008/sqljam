@@ -292,14 +292,12 @@ class SyncDemo {
         FxTestSupport.run(() -> schemas.setValue(SCHEMA));
         pause(600);
 
-        say("Every 15 minutes, run by SqlJam while it is open. The system scheduler would run it when SqlJam is "
-                + "closed too.");
+        say("Every 15 minutes, while SqlJam is open. Copy Command gives its command line for a cron of your own.");
         ComboBox<SyncTask.ScheduleType> schedules = (ComboBox<SyncTask.ScheduleType>) top("syncScheduleCombo");
         choose(schedules, SyncTask.ScheduleType.INTERVAL);
         highlight(top("syncIntervalSpinner"));
         FxTestSupport.run(() -> ((javafx.scene.control.Spinner<Integer>) top("syncIntervalSpinner"))
                 .getValueFactory().setValue(15));
-        highlight(top("syncRunnerCombo"));
         DialogPane pane = onFx(() -> (DialogPane) top("syncNameField").getScene().getRoot());
         press(onFx(() -> pane.lookupButton(ButtonType.OK)));
         FxTestSupport.waitUntil(() -> !tab.getTasks().isEmpty());
@@ -307,7 +305,7 @@ class SyncDemo {
         say("Run Now: the first run copies all rows. The watermark is read before the rows.");
         runNow(tab);
         say("Completed, 5 rows. PostgreSQL has: " + targetRows() + ".");
-        say("Last Report opens the report of the run: rows of each table, checked in the target, and the "
+        say("Report opens the report of the run: rows of each table, checked in the target, and the "
                 + "watermark.");
         press(tab.getContent().lookup("#syncReportButton"));
         pause(3500);

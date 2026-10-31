@@ -97,9 +97,9 @@ jobs:
           esac
           sleep 20
           case "$RUNNER_OS" in
-            Linux) xwd -root -silent | convert xwd:- screenshots/login.png ;;
-            macOS) screencapture -x screenshots/login.png || true ;;
-            Windows) powershell -File .github/workflows/screenshot.ps1 screenshots/login.png || true ;;
+            Linux) xwd -root -silent | convert xwd:- screenshots/main.png ;;
+            macOS) screencapture -x screenshots/main.png || true ;;
+            Windows) powershell -File .github/workflows/screenshot.ps1 screenshots/main.png || true ;;
           esac
           cat run.log
           kill $PID 2>/dev/null || taskkill //F //PID $PID 2>/dev/null || true

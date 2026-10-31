@@ -27,6 +27,7 @@ import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.SyncTask;
 import com.github.sqljam.face.model.TransferReport;
 import com.github.sqljam.face.service.ReportExporter;
+import com.github.sqljam.face.service.SyncCommandLine;
 import com.github.sqljam.face.service.SyncScheduler;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
@@ -65,6 +66,7 @@ public class SyncTab extends Tab {
     private final Button cancel = new Button(Messages.get("sync.cancel"), Icons.of(Icons.CANCEL));
     private final Button toggle = new Button(Messages.get("sync.disable"));
     private final Button report = new Button(Messages.get("sync.report"), Icons.of(Icons.HISTORY));
+    private final Button command = new Button(Messages.get("sync.copyCommand"), Icons.of(Icons.COPY));
     private final Consumer<SyncTask> listener = task -> Platform.runLater(this::refresh);
 
     public SyncTab(AppContext context, Consumer<TransferReport> opener) {
@@ -97,8 +99,8 @@ public class SyncTab extends Tab {
         table.getColumns().add(column(Messages.get("sync.column.rows"), task -> task.getLastRunAt() > 0 ? String
                 .format("%,d", task.getLastRowCount()) : "", 90));
         table.getColumns().add(column(Messages.get("sync.column.schedule"), SyncTab::schedule, 140));
-        table.getColumns().add(column(Messages.get("sync.column.runner"), task -> Messages.get("sync.runner.short."
-                + task.getRunner().name().toLowerCase(java.util.Locale.ENGLISH)), 130));
+        table.getColumns().add(column(Messages.get("sync.column.runBy"), task -> StringUtils.defaultString(task
+                .getLastRunBy()), 130));
         table.getColumns().add(column(Messages.get("sync.column.next"), this::nextRun, 150));
         table.getColumns().add(column(Messages.get("sync.column.last"), task -> task.getLastRunAt() > 0
                 ? ReportExporter.time(task.getLastRunAt()) : Messages.get("sync.never"), 150));
@@ -136,12 +138,17 @@ public class SyncTab extends Tab {
         toggle.setOnAction(event -> toggle(selected()));
         report.setId("syncReportButton");
         report.setOnAction(event -> openReport(selected()));
-        Button refresh = new Button(Messages.get("sync.refresh"), Icons.of(Icons.REFRESH));
+        // An icon only, the toolbar fits a window of 1280 with the tree
+        Button refresh = new Button(null, Icons.of(Icons.REFRESH));
+        refresh.setTooltip(new javafx.scene.control.Tooltip(Messages.get("sync.refresh")));
         refresh.setId("syncRefreshButton");
         refresh.setOnAction(event -> refresh());
         table.getSelectionModel().selectedItemProperty().addListener((observable, old, task) -> updateButtons());
         BorderPane root = new BorderPane(table);
-        root.setTop(new ToolBar(add, edit, delete, run, cancel, toggle, report, refresh));
+        command.setId("syncCommandButton");
+        command.setTooltip(new javafx.scene.control.Tooltip(Messages.get("sync.copyCommand.tooltip")));
+        command.setOnAction(event -> copyCommand(selected()));
+        root.setTop(new ToolBar(add, edit, delete, run, cancel, toggle, report, command, refresh));
         setContent(root);
         scheduler.addListener(listener);
         // Runs of the command line are read from the file of the tasks
@@ -237,6 +244,7 @@ public class SyncTab extends Tab {
         toggle.setDisable(task == null);
         toggle.setText(Messages.get(task != null && !task.isEnabled() ? "sync.enable" : "sync.disable"));
         report.setDisable(task == null || task.getLastReportId() == null);
+        command.setDisable(task == null);
     }
 
     /**
@@ -258,8 +266,6 @@ public class SyncTab extends Tab {
     }
 
     void save(SyncTask task) {
-        boolean wasSystem = scheduler.getStore().findTask(task.getId()).map(saved -> saved.getRunner()
-                == SyncTask.Runner.SYSTEM).orElse(false);
         try {
             scheduler.getStore().saveTask(task);
         } catch (IOException e) {
@@ -267,22 +273,21 @@ public class SyncTab extends Tab {
             return;
         }
         refresh();
-        if (wasSystem || task.getRunner() == SyncTask.Runner.SYSTEM) {
-            applySystem(task);
-        }
         warnPasswords(task);
     }
 
     /**
-     * Registers a task of the system scheduler with the system, or removes it from there
+     * Copies the command which runs the task without the window, e.g. for a cron of the user
      */
-    private void applySystem(SyncTask task) {
-        try {
-            context.getSystemScheduler().apply(task);
-        } catch (IOException e) {
-            Dialogs.showWarning(window(), Messages.get("sync.title"), Messages.format("sync.system.error", e
-                    .getMessage()));
+    String copyCommand(SyncTask task) {
+        if (task == null) {
+            return null;
         }
+        String line = SyncCommandLine.of(task, System.getProperty("os.name"));
+        javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+        content.putString(line);
+        javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
+        return line;
     }
 
     /**
@@ -309,9 +314,6 @@ public class SyncTab extends Tab {
         }
         try {
             scheduler.getStore().removeTask(task.getId());
-            if (task.getRunner() == SyncTask.Runner.SYSTEM) {
-                context.getSystemScheduler().unregister(task.getId());
-            }
         } catch (IOException e) {
             Dialogs.showError(window(), Messages.get("sync.delete"), e);
         }
@@ -331,16 +333,13 @@ public class SyncTab extends Tab {
         if (task == null) {
             return;
         }
-        Optional<SyncTask> changed;
         try {
-            changed = scheduler.getStore().updateTask(task.getId(), saved -> saved.setEnabled(!saved.isEnabled()));
+            scheduler.getStore().updateTask(task.getId(), saved -> saved.setEnabled(!saved.isEnabled()));
         } catch (IOException e) {
             Dialogs.showError(window(), Messages.get("sync.title"), e);
             return;
         }
         refresh();
-        // A task of the system which is switched off is removed from there, it is registered again when it is on
-        changed.filter(saved -> saved.getRunner() == SyncTask.Runner.SYSTEM).ifPresent(this::applySystem);
     }
 
     void openReport(SyncTask task) {

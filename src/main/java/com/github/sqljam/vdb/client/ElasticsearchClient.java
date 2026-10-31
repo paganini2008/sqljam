@@ -94,6 +94,50 @@ public class ElasticsearchClient extends AbstractVdbClient {
      * Health of the cluster: green, yellow or red, its nodes and shards
      */
     @Override
+    public long countRecords(String collection) {
+        return rest.get("/" + encode(collection) + "/_count").path("count").asLong(-1);
+    }
+
+    /**
+     * The common metrics, and of the statistics of the nodes: CPU, heap of the JVM, indexing, searches and the
+     * size of the store, of all nodes
+     */
+    @Override
+    public Map<String, Double> getMetrics() {
+        Map<String, Double> metrics = super.getMetrics();
+        try {
+            JsonNode nodes = rest.get("/_nodes/stats/os,jvm,indices").path("nodes");
+            double cpu = 0;
+            int count = 0;
+            double heapUsed = 0;
+            double heapMax = 0;
+            double indexing = 0;
+            double searches = 0;
+            double store = 0;
+            for (JsonNode node : (Iterable<JsonNode>) nodes::elements) {
+                count++;
+                cpu += node.path("os").path("cpu").path("percent").asDouble();
+                heapUsed += node.path("jvm").path("mem").path("heap_used_in_bytes").asDouble();
+                heapMax += node.path("jvm").path("mem").path("heap_max_in_bytes").asDouble();
+                indexing += node.path("indices").path("indexing").path("index_total").asDouble();
+                searches += node.path("indices").path("search").path("query_total").asDouble();
+                store += node.path("indices").path("store").path("size_in_bytes").asDouble();
+            }
+            if (count > 0) {
+                metrics.put("cpu.percent", cpu / count);
+                metrics.put("heap.used", heapUsed);
+                metrics.put("heap.max", heapMax);
+                metrics.put("indexing.total", indexing);
+                metrics.put("search.total", searches);
+                metrics.put("store.bytes", store);
+            }
+        } catch (RuntimeException e) {
+            // The statistics of the nodes are not allowed, the common metrics stay
+        }
+        return metrics;
+    }
+
+    @Override
     public Map<String, Map<String, String>> getHealth() {
         Map<String, Map<String, String>> sections = super.getHealth();
         Map<String, String> cluster = section(sections, "Cluster");

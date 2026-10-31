@@ -1383,6 +1383,15 @@ public abstract class Dialect {
         return 1;
     }
 
+    /**
+     * Rows of a statement into which an import of a SQL package merges the INSERT statements of one row of a table,
+     * 1 for databases without INSERT statements of several rows (Oracle, Access). The package keeps one row a
+     * statement, so that every database and every tool reads it.
+     */
+    public int getRowsPerScriptInsert() {
+        return 100;
+    }
+
     public String getInsertTableStatement(String catalog, String schema, String tableName, String[] columnNames,
                                           Object[] columnValues) {
         String values = StringUtils.join(columnValues, ",");

@@ -33,8 +33,8 @@ import com.github.sqljam.face.view.AppContext;
 import com.github.sqljam.face.view.ProfileRegistry;
 
 /**
- * @Description: SyncCommand runs sync tasks from the command line, without the window, so that the scheduler of the
- *               system runs them when SqlJam is closed:
+ * @Description: SyncCommand runs sync tasks from the command line, without the window, e.g. from a cron of the
+ *               user when SqlJam is closed (SqlJam does not register them with the system itself):
  *
  *               <pre>
  *               sqljam sync --list                    the tasks with their schedules and last runs
@@ -171,11 +171,12 @@ public final class SyncCommand {
             out.println("No sync tasks, create them in SqlJam: Transfer > Sync Tasks");
             return;
         }
-        out.println(String.join("\t", "ID", "Name", "Runner", "Schedule", "Next run", "Last run", "Last status"));
+        out.println(String.join("\t", "ID", "Name", "Schedule", "Next run", "Last run", "Last run by",
+                "Last status"));
         for (SyncTask task : tasks) {
             long next = scheduler.nextRunAt(task);
-            out.println(List.of(task.getId(), task.getName(), task.getRunner().name(), schedule(task), next >= 0
-                    ? ReportExporter.time(next) : "", ReportExporter.time(task.getLastRunAt()), task.getLastStatus()
+            out.println(List.of(task.getId(), task.getName(), schedule(task), next >= 0
+                    ? ReportExporter.time(next) : "", ReportExporter.time(task.getLastRunAt()), StringUtils.defaultString(task.getLastRunBy()), task.getLastStatus()
                     != null ? ReportExporter.words(task.getLastStatus()) : "").stream().collect(Collectors.joining(
                     "\t")));
         }

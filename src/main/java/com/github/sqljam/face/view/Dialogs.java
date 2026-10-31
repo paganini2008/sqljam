@@ -57,6 +57,85 @@ public final class Dialogs {
         if (owner != null && owner.getScene() != null) {
             dialog.initOwner(owner);
         }
+        fitToScreen(dialog);
+    }
+
+    /**
+     * The area of the screen of a window which windows may use (without the menu bar and the task bar), replaced
+     * by tests of small screens
+     */
+    static java.util.function.Function<Window, javafx.geometry.Rectangle2D> screenArea = window -> {
+        java.util.List<javafx.stage.Screen> screens = javafx.stage.Screen.getScreensForRectangle(window.getX(),
+                window.getY(), Math.max(1, window.getWidth()), Math.max(1, window.getHeight()));
+        return (screens.isEmpty() ? javafx.stage.Screen.getPrimary() : screens.get(0)).getVisualBounds();
+    };
+
+    /**
+     * A dialog which is taller or wider than its screen when it is shown, e.g. on a small laptop, is made as large
+     * as the screen: its content scrolls, its buttons stay in view
+     */
+    static void fitToScreen(Dialog<?> dialog) {
+        // A listener, so that onShown of the dialogs stays theirs
+        dialog.showingProperty().addListener((observable, was, showing) -> {
+            if (showing) {
+                fitShown(dialog);
+            }
+        });
+    }
+
+    private static void fitShown(Dialog<?> dialog) {
+        javafx.scene.Scene scene = dialog.getDialogPane().getScene();
+        if (scene == null || scene.getWindow() == null) {
+            return;
+        }
+        Window window = scene.getWindow();
+        javafx.geometry.Rectangle2D area = screenArea.apply(window);
+        boolean fits = window.getHeight() <= area.getHeight() && window.getWidth() <= area.getWidth();
+        if (fits && area.contains(window.getX(), window.getY(), window.getWidth(), window.getHeight())) {
+            return;
+        }
+        javafx.scene.control.DialogPane pane = dialog.getDialogPane();
+        javafx.scene.Node content = pane.getContent();
+        if (!fits && content != null && !(content instanceof javafx.scene.control.ScrollPane)) {
+            javafx.scene.control.ScrollPane scroll = new javafx.scene.control.ScrollPane(content);
+            scroll.setFitToWidth(true);
+            scroll.getStyleClass().add("fit-scroll");
+            scroll.setStyle("-fx-background-color: transparent;");
+            pane.setContent(scroll);
+            // The fields are found in the scroll pane at once, not only after the next pulse
+            pane.applyCss();
+            pane.layout();
+        }
+        // Moved into the screen, made as large as it when it is larger
+        fit(window, area);
+    }
+
+    /**
+     * A window which is larger than its screen is made as large as the screen and moved into it, e.g. the
+     * progress of a transfer on a small laptop
+     */
+    public static void fitToScreen(javafx.stage.Stage stage) {
+        stage.addEventHandler(javafx.stage.WindowEvent.WINDOW_SHOWN, event -> fit(stage, screenArea.apply(stage)));
+    }
+
+    private static void fit(Window window, javafx.geometry.Rectangle2D area) {
+        if (window.getHeight() > area.getHeight()) {
+            window.setHeight(area.getHeight());
+        }
+        if (window.getWidth() > area.getWidth()) {
+            window.setWidth(area.getWidth());
+        }
+        window.setX(Math.max(area.getMinX(), Math.min(window.getX(), area.getMaxX() - window.getWidth())));
+        window.setY(Math.max(area.getMinY(), Math.min(window.getY(), area.getMaxY() - window.getHeight())));
+    }
+
+    /**
+     * The content of a dialog, also when it was put into a scroll pane to fit the screen
+     */
+    public static javafx.scene.Node contentOf(Dialog<?> dialog) {
+        javafx.scene.Node content = dialog.getDialogPane().getContent();
+        return content instanceof javafx.scene.control.ScrollPane && content.getStyleClass().contains("fit-scroll")
+                ? ((javafx.scene.control.ScrollPane) content).getContent() : content;
     }
 
     public static void showError(Window owner, String title, Throwable e) {

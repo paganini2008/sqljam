@@ -95,6 +95,9 @@ class MainViewTest {
         context.getProfileRegistry().saveProfile(unreachable, true);
         mainView = new MainView(context);
         stage.setScene(new Scene(mainView, 1200, 800));
+        // The window of the tests keeps the size of the tests before, the toolbar needs its own width
+        stage.setWidth(1200);
+        stage.setHeight(800);
         stage.show();
     }
 

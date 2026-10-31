@@ -29,7 +29,6 @@ import com.github.sqljam.config.Config;
 import com.github.sqljam.face.service.ConnectionStore;
 import com.github.sqljam.face.service.ExampleDatabase;
 import com.github.sqljam.face.service.SettingsStore;
-import com.github.sqljam.face.service.SystemScheduler;
 import javafx.application.Platform;
 import javafx.collections.ListChangeListener;
 import javafx.scene.Scene;
@@ -108,9 +107,6 @@ public final class FxTestSupport {
                 new File(dir, "connections.json"))), null);
         // The example database of tests is not created in the home directory of the user
         context.setExampleDatabase(new ExampleDatabase(true, new File(dir, "example")));
-        // Nor is the crontab or the Task Scheduler of this machine changed
-        context.setSystemScheduler(new SystemScheduler("Linux", List.of("sqljam"), new File(dir, "sync.log"),
-                (command, input) -> new SystemScheduler.Result(command.contains("-l") ? 1 : 0, "")));
         return context;
     }
 

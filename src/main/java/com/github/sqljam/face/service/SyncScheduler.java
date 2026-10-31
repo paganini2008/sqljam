@@ -49,8 +49,8 @@ import com.github.sqljam.impexp.ExportListener;
 import lombok.extern.slf4j.Slf4j;
 
 /**
- * @Description: SyncScheduler runs the sync tasks in SqlJam while it is open, like the schedulers of DBeaver and
- *               DataGrip: every N minutes or every day at a time, and Run Now. A task never runs twice at once, a run
+ * @Description: SyncScheduler runs the sync tasks in SqlJam while it is open, like the tasks of DBeaver: every N
+ *               minutes or every day at a time, and Run Now. A task never runs twice at once, a run
  *               which was missed while SqlJam was closed runs once when it starts. Errors of the connection are run
  *               again after a delay which doubles, errors of the data are not. Every run leaves a report in the
  *               history, the watermarks move on after a successful run only.
@@ -232,10 +232,6 @@ public class SyncScheduler implements AutoCloseable {
     public void tick() {
         long now = clock.getAsLong();
         for (SyncTask task : store.getTasks()) {
-            // Tasks of the system scheduler run by the command line, not twice
-            if (task.getRunner() == SyncTask.Runner.SYSTEM) {
-                continue;
-            }
             long next = nextRunAt(task, now);
             if (next >= 0 && next <= now && !isRunning(task.getId())) {
                 runNow(task.getId());

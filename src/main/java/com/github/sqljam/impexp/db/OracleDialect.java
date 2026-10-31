@@ -641,4 +641,12 @@ public class OracleDialect extends Dialect {
         }
         return super.getColumnValue(rs, columnIndex, columnType, columnTypeName);
     }
+
+    /**
+     * No INSERT statement of several rows by VALUES, the statements of a package run one by one
+     */
+    @Override
+    public int getRowsPerScriptInsert() {
+        return 1;
+    }
 }

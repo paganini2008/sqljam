@@ -31,7 +31,7 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 | Spreadsheets need CSV | CSV packages with your delimiter, quote, NULL text, header, encoding (UTF-8 with BOM, GBK and more) and date format, exact types kept in `manifest.json`, CSV files of other tools loaded too |
 | An import went wrong | **One transaction** by default, rolled back on any error, or **commit every N rows**. **Skip rows with errors** goes on and logs each skipped row. **Confirm before commit** reviews a successful import first |
 | Did every row arrive? | A **migration report** for every import and export, also when it fails or is cancelled: rows per table, skipped rows with their errors, target rows counted afterwards, created objects and where it stopped. **Import History** lists every report, Markdown, HTML or JSON on export |
-| A copy has to stay up to date | **Sync Tasks** copy the changed rows by an update time or an increasing key, every N minutes or every day, run by SqlJam or by the system scheduler when it is closed, vector collections included, a report for every run |
+| A copy has to stay up to date | **Sync Tasks** copy the changed rows by an update time or an increasing key, every N minutes or every day, run by SqlJam while it is open or by your own scheduler through its command line, vector collections included, a report for every run |
 | Rows exist already | **Update or insert by key** or **skip existing by key**: the primary key or the columns of a unique index match the rows, insert is the default |
 | Warehouses apart from OLTP | DuckDB and ClickHouse data sources, grouped as OLAP databases |
 | Only part of a table | Data viewer query (columns, WHERE, GROUP BY, ORDER BY) and export of the rows of the query |
@@ -42,7 +42,7 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 | Embeddings move with their search | Vectors of pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse keep their dimensions, vector indexes keep their distances and options |
 | Embeddings live in a vector database | Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma sit in the tree as **vector databases**: browse their databases, collections, partitions, tenants and namespaces, page through the records, then import collections straight into a database with vectors: ids, vectors, a column of each field and the whole payload as JSON |
 | Database behind a bastion host | **SSH tunnel** per data source with a password or a private key, host keys trusted on first use, a broken tunnel opens again by itself |
-| Which server, how healthy? | **Info** shows the overview and the health of a data source or a vector database, and a **Dashboard** of live charts: sessions, transactions, rows, cache, locks, network, CPU and memory |
+| Which server, how healthy? | **Info** shows the overview and the health of a data source or a vector database, and a **Dashboard** of live charts: sessions, transactions, rows, cache, locks, network, CPU and memory, collections and records of vector databases |
 | Long values, rows for a ticket | One line per cell, a double click shows the whole value, **Copy Rows As** CSV, TSV, JSON or Markdown |
 | Many data sources | Grouped as relational, OLAP and vector databases with their logos, a **filter** above the tree |
 
@@ -87,7 +87,7 @@ A vector database is a data source of the **Vector databases** category, with an
 
 Every data table shows one line per cell. A double click or **Shift+Enter** opens the whole value with JSON indented and vectors described, a header sorts the rows of the page, and **Copy Rows As** copies the selected rows as CSV, TSV, JSON or Markdown. **Info** on the toolbar shows the server, the driver, the session and the health of the selected data source.
 
-Three tutorial videos of about 2 minutes each walk through SqlJam: [SQL databases](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sql.mp4) (query, export into files, import into PostgreSQL, the SQL editor, a copy into SQL Server), [vector databases](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-vectors.mp4) (a Qdrant collection, its import into PostgreSQL, tenants of Weaviate) and [scheduled sync and reports](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sync.mp4) (a sync task of the shop into PostgreSQL, its reports and the system scheduler).
+Three tutorial videos of about 2 minutes each walk through SqlJam: [SQL databases](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sql.mp4) (query, export into files, import into PostgreSQL, the SQL editor, a copy into SQL Server), [vector databases](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-vectors.mp4) (a Qdrant collection, its import into PostgreSQL, tenants of Weaviate) and [scheduled sync and reports](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sync.mp4) (a sync task of the shop into PostgreSQL, its reports and its command line).
 
 | 1. Data source | 2. Export wizard | 3. Progress |
 |---|---|---|
@@ -284,25 +284,40 @@ All settings live in `bin/sqljam.properties` next to the runnable jar. Settings 
 | `sqljam.vdb.connections.file` | `${sqljam.home}/vdb-connections.json` | Saved vector databases |
 | `sqljam.ssh.known-hosts.file` | `${sqljam.home}/ssh_known_hosts` | Host keys of the SSH servers of tunnels |
 
+
+Sync tasks run without the window too: **Copy Command** in Transfer > Sync Tasks copies the command line of a task, which you put into the scheduler of your system yourself, SqlJam never changes it. Remember the passwords of its data sources and set the task to Run Now only in SqlJam, so that it does not run twice.
+
+```text
+# crontab of macOS and Linux (crontab -e): one task every 15 minutes
+*/15 * * * * /opt/sqljam/sqljam.sh sync --task "Shop to PostgreSQL" >> ~/.sqljam/sync.log 2>&1
+# or every 5 minutes, each task runs when its schedule in SqlJam is due
+*/5 * * * * /opt/sqljam/sqljam.sh sync --due >> ~/.sqljam/sync.log 2>&1
+```
+
+```text
+:: Windows, in a console (or the same command in the Task Scheduler)
+schtasks /Create /TN "SqlJam sync" /SC MINUTE /MO 15 /TR "C:\SqlJam\sqljam.bat sync --task \"Shop to PostgreSQL\""
+```
+
 ## 8. Performance
 
 ![Benchmark](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/benchmark.png)
 
 | Scenario (200,000 rows × 6 columns) | Time | Rows/s |
 |---|---|---|
-| H2 → MySQL | 10.3 s | 19.5k |
-| H2 → MariaDB | 9.5 s | 21.1k |
-| H2 → PostgreSQL | 6.4 s | 31.3k |
-| H2 → Oracle | 4.2 s | 47.9k |
-| H2 → SQL Server | 12.0 s | 16.7k |
-| H2 → Db2 | 9.3 s | 21.6k |
-| H2 → ClickHouse | 4.2 s | 47.4k |
-| H2 → DuckDB | 5.7 s | 35.1k |
-| H2 → SQL package | 2.6 s | 76.1k |
-| H2 → Parquet package | 5.7 s | 35.4k |
-| H2 → CSV package | 5.8 s | 34.7k |
-| SQL package → PostgreSQL | 24.3 s | 8.2k |
-| Qdrant → PostgreSQL (20,000 points, 256-d vectors and payload) | 18.4 s | 1.1k |
+| H2 → MySQL | 9.9 s | 20.2k |
+| H2 → MariaDB | 7.7 s | 26.0k |
+| H2 → PostgreSQL | 6.9 s | 28.8k |
+| H2 → Oracle | 4.8 s | 41.6k |
+| H2 → SQL Server | 13.3 s | 15.1k |
+| H2 → Db2 | 10.7 s | 18.7k |
+| H2 → ClickHouse | 5.4 s | 36.8k |
+| H2 → DuckDB | 5.4 s | 37.2k |
+| H2 → SQL package | 2.5 s | 81.0k |
+| H2 → Parquet package | 5.8 s | 34.6k |
+| H2 → CSV package | 5.5 s | 36.7k |
+| SQL package → PostgreSQL | 10.1 s | 19.8k |
+| Qdrant → PostgreSQL (20,000 points, 256-d vectors and payload) | 18.3 s | 1.1k |
 
 Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a server of the local network (about 100 Mbit/s), H2, DuckDB and the packages are local. Default settings. Each scenario is measured by `TransferBenchmark`.
 

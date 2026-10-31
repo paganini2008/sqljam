@@ -94,7 +94,7 @@ import javafx.stage.Window;
  *               Server), vector databases (the filter of the tree, a Qdrant collection page by page, conditions,
  *               nearest neighbors and whole values, its import into PostgreSQL, the tenants of Weaviate, the info)
  *               and the scheduled sync (a task of the example into PostgreSQL, the first and the next run, their
- *               reports, the system scheduler and the history). They are recorded once per major version, they
+ *               reports, the command line of a task and the history). They are recorded once per major version, they
  *               are not tests of the build (the name does not end with Test), run them by
  *               mvn test -Pui -Dtest=TutorialVideo -Dvideo.dir=docs/assets
  *               The windows are shown on the screen while recording, the target databases are those of the
@@ -359,7 +359,7 @@ class TutorialVideo {
 
     /**
      * A sync task of the example into PostgreSQL: the first run copies all rows, the next one the changed rows,
-     * every run leaves a report, the system scheduler runs it when SqlJam is closed, the history lists the runs
+     * every run leaves a report, its command line runs it without the window, the history lists the runs
      */
     @SuppressWarnings("unchecked")
     private void sync() throws Exception {
@@ -444,18 +444,11 @@ class TutorialVideo {
         recorder.caption("Errors of the connection are run again, errors of the data are not, the watermark moves "
                 + "after the commit only");
         pause(3500);
-        recorder.caption("Run by the system scheduler (crontab, Task Scheduler), the task runs when SqlJam is closed "
-                + "too");
+        recorder.caption("Copy Command gives the command line of the task, for a cron of your own when SqlJam is "
+                + "closed");
         FxTestSupport.run(() -> tab.getTable().getSelectionModel().select(0));
-        press(node(tab.getContent(), "syncEditButton"));
-        waitFor(() -> topNode("syncRunnerCombo"));
-        fitDialog(topWindow());
-        pause(800);
-        choose(topNode("syncRunnerCombo"), SyncTask.Runner.SYSTEM);
-        pause(800);
-        press(buttonOf(topWindow(), "OK"));
-        waitFor(() -> syncTask().getRunner() == SyncTask.Runner.SYSTEM ? true : null);
-        pause(2500);
+        press(node(tab.getContent(), "syncCommandButton"));
+        pause(3000);
 
         recorder.caption("Transfer > Import History keeps the report of every run, next to the imports and exports");
         fileMenu("historyMenuItem");

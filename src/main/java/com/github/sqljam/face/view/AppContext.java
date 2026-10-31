@@ -30,7 +30,6 @@ import com.github.sqljam.face.service.SettingsStore;
 import com.github.sqljam.face.service.SyncRunner;
 import com.github.sqljam.face.service.SyncScheduler;
 import com.github.sqljam.face.service.SyncTaskStore;
-import com.github.sqljam.face.service.SystemScheduler;
 import com.github.sqljam.face.service.TransferService;
 import javafx.application.HostServices;
 import lombok.Getter;
@@ -56,7 +55,6 @@ public class AppContext {
     private ExampleDatabase exampleDatabase = new ExampleDatabase();
     private ReportStore reportStore;
     private SyncScheduler syncScheduler;
-    private SystemScheduler systemScheduler;
     /**
      * Shows a report on its own page, set by the main window
      */
@@ -122,20 +120,6 @@ public class AppContext {
             }
         }
         return syncScheduler;
-    }
-
-    /**
-     * The scheduler of the system which runs sync tasks by the command line
-     */
-    public synchronized SystemScheduler getSystemScheduler() {
-        if (systemScheduler == null) {
-            systemScheduler = SystemScheduler.create(settingsStore.getConfig());
-        }
-        return systemScheduler;
-    }
-
-    public synchronized void setSystemScheduler(SystemScheduler systemScheduler) {
-        this.systemScheduler = systemScheduler;
     }
 
     public synchronized void setSyncScheduler(SyncScheduler syncScheduler) {

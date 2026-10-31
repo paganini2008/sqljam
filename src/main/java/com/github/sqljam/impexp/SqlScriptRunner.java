@@ -73,6 +73,16 @@ public class SqlScriptRunner {
     private static final Pattern INSERT_STATEMENT = Pattern.compile("(?is)^(INSERT|MERGE)\\s+INTO\\s.*");
     private static final Pattern MERGE_STATEMENT = Pattern.compile("(?is)^MERGE\\s+INTO\\s.*");
     /**
+     * INSERT INTO a table with its columns, up to its values: names without parentheses, quotes of strings or
+     * a SELECT
+     */
+    private static final Pattern INSERT_VALUES = Pattern.compile("(?is)INSERT\\s+INTO\\s+[^()'\\s]+\\s*(\\([^()']*\\))?"
+            + "\\s*VALUES\\s*");
+    /**
+     * Characters of a merged statement at most, rows of large values stay in statements of their own
+     */
+    static final int MAX_MERGED_LENGTH = 1_000_000;
+    /**
      * Statements of rows, their failures are skipped rows
      */
     private static final Pattern ROW_STATEMENT = Pattern.compile("(?is)^\\s*(INSERT|MERGE|UPSERT|REPLACE|UPDATE|"
@@ -95,6 +105,11 @@ public class SqlScriptRunner {
     private int batchSize = DEFAULT_BATCH_SIZE;
     private Boolean oracle;
     private Boolean sqlServer;
+    private Boolean backslashEscapes;
+    /**
+     * Rows into which INSERT statements of one row of a table are merged, 1 runs them as they are
+     */
+    private int rowsPerInsert = 1;
     /**
      * Errors of statements which create existing objects, they are skipped, e.g. tables which are not dropped
      */
@@ -144,6 +159,10 @@ public class SqlScriptRunner {
     /**
      * Statements per batch, 1 or less executes statement by statement
      */
+    public void setRowsPerInsert(int rowsPerInsert) {
+        this.rowsPerInsert = Math.max(1, rowsPerInsert);
+    }
+
     public void setBatchSize(int batchSize) {
         this.batchSize = batchSize;
     }
@@ -282,7 +301,9 @@ public class SqlScriptRunner {
                     statement().execute(sql);
                 }
             } else {
-                for (String sql : batch) {
+                // Statements of one row of a table become statements of many rows, a database parses them once
+                for (String sql : rowsPerInsert > 1 ? mergeInserts(batch, rowsPerInsert, MAX_MERGED_LENGTH,
+                        isBackslashEscaped()) : batch) {
                     statement().addBatch(sql);
                 }
                 statement().executeBatch();
@@ -412,6 +433,102 @@ public class SqlScriptRunner {
             sqlServer = productName != null && productName.toLowerCase(Locale.ENGLISH).contains("sql server");
         }
         return sqlServer;
+    }
+
+    /**
+     * Whether strings of the database escape quotes by backslashes, e.g. 'O\\'Brien' of MySQL
+     */
+    private boolean isBackslashEscaped() throws SQLException {
+        if (backslashEscapes == null) {
+            String productName = StringUtils.defaultString(connection.getMetaData().getDatabaseProductName())
+                    .toLowerCase(Locale.ENGLISH);
+            backslashEscapes = productName.contains("mysql") || productName.contains("mariadb") || productName
+                    .contains("clickhouse");
+        }
+        return backslashEscapes;
+    }
+
+    /**
+     * Merges INSERT statements of one row of the same table and columns which follow each other into statements
+     * of the rows, at most rows and length a statement. Statements which are not a plain INSERT of one row (MERGE,
+     * ON CONFLICT, RETURNING) stay as they are.
+     */
+    static List<String> mergeInserts(List<String> statements, int rows, int maxLength, boolean backslashEscapes) {
+        List<String> merged = new ArrayList<>();
+        String head = null;
+        StringBuilder current = null;
+        int count = 0;
+        for (String sql : statements) {
+            int values = valuesOfOneRow(sql, backslashEscapes);
+            String prefix = values >= 0 ? sql.substring(0, values) : null;
+            if (prefix != null && prefix.equals(head) && count < rows && current.length() + sql.length() - values
+                    + 1 <= maxLength) {
+                current.append(',').append(sql, values, sql.length());
+                count++;
+                continue;
+            }
+            if (current != null) {
+                merged.add(current.toString());
+            }
+            if (prefix != null) {
+                head = prefix;
+                current = new StringBuilder(sql);
+                count = 1;
+            } else {
+                merged.add(sql);
+                head = null;
+                current = null;
+            }
+        }
+        if (current != null) {
+            merged.add(current.toString());
+        }
+        return merged;
+    }
+
+    /**
+     * Position of the values of an INSERT statement of one row which end the statement, -1 for other statements
+     */
+    static int valuesOfOneRow(String sql, boolean backslashEscapes) {
+        java.util.regex.Matcher matcher = INSERT_VALUES.matcher(sql);
+        if (!matcher.lookingAt()) {
+            return -1;
+        }
+        int start = matcher.end();
+        int end = sql.length();
+        while (end > start && Character.isWhitespace(sql.charAt(end - 1))) {
+            end--;
+        }
+        if (start >= end || sql.charAt(start) != '(') {
+            return -1;
+        }
+        int depth = 0;
+        boolean quoted = false;
+        for (int i = start; i < end; i++) {
+            char c = sql.charAt(i);
+            if (quoted) {
+                if (backslashEscapes && c == '\\') {
+                    i++;
+                } else if (c == '\'') {
+                    if (i + 1 < end && sql.charAt(i + 1) == '\'') {
+                        i++;
+                    } else {
+                        quoted = false;
+                    }
+                }
+            } else if (c == '\'') {
+                quoted = true;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+                // The row ends the statement, nothing follows it
+                if (depth == 0) {
+                    return i == end - 1 ? start : -1;
+                }
+            }
+        }
+        return -1;
     }
 
     private boolean isOracle() throws SQLException {
