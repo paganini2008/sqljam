@@ -79,11 +79,32 @@ wait_for weaviate curl -sf http://localhost:18080/v1/meta -H 'Authorization: Bea
 
 SQLCMD="/opt/mssql-tools18/bin/sqlcmd -C -b -S localhost -U sa -P $SA_PASSWORD"
 wait_for sqlserver docker exec sj-sqlserver $SQLCMD -Q 'SELECT 1'
-docker exec sj-sqlserver $SQLCMD -Q "CREATE LOGIN admin WITH PASSWORD = 'admin123', CHECK_POLICY = OFF;
-    ALTER SERVER ROLE sysadmin ADD MEMBER admin; CREATE DATABASE demo;
-    CREATE LOGIN sjit_reader WITH PASSWORD = 'Ro#Vector2026x', CHECK_POLICY = OFF;"
-docker exec sj-sqlserver $SQLCMD -d demo -Q "EXEC('CREATE SCHEMA sjit_src'); EXEC('CREATE SCHEMA sjit_dst');
-    ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON; CREATE USER sjit_reader FOR LOGIN sjit_reader;"
+# SQL Server answers before it finished its own start, its statements may be chosen as victims of deadlocks
+# meanwhile (Msg 1205): the setup may run again, it is retried
+sqlserver_setup() {
+    docker exec sj-sqlserver $SQLCMD -Q "
+        IF SUSER_ID('admin') IS NULL CREATE LOGIN admin WITH PASSWORD = 'admin123', CHECK_POLICY = OFF;
+        ALTER SERVER ROLE sysadmin ADD MEMBER admin;
+        IF SUSER_ID('sjit_reader') IS NULL
+            CREATE LOGIN sjit_reader WITH PASSWORD = 'Ro#Vector2026x', CHECK_POLICY = OFF;
+        IF DB_ID('demo') IS NULL CREATE DATABASE demo;" \
+    && docker exec sj-sqlserver $SQLCMD -d demo -Q "
+        IF SCHEMA_ID('sjit_src') IS NULL EXEC('CREATE SCHEMA sjit_src');
+        IF SCHEMA_ID('sjit_dst') IS NULL EXEC('CREATE SCHEMA sjit_dst');
+        ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON;
+        IF USER_ID('sjit_reader') IS NULL CREATE USER sjit_reader FOR LOGIN sjit_reader;"
+}
+for i in 1 2 3 4 5 6; do
+    if sqlserver_setup; then
+        break
+    fi
+    if [ "$i" = 6 ]; then
+        echo "sqlserver is not set up" >&2
+        exit 1
+    fi
+    echo "sqlserver setup is retried" >&2
+    sleep 5
+done
 
 wait_for oracle docker exec sj-oracle healthcheck.sh
 printf '%s\n' 'GRANT DBA TO admin;' 'CREATE USER sjit_reader IDENTIFIED BY "Sjit_reader123";' \
