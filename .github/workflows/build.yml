@@ -1,7 +1,8 @@
-# Builds SqlJam. Database servers are not available here: the ci environment runs the integration tests of H2,
-# SQLite and DuckDB only, the others are skipped.
+# Builds SqlJam. The ci environment runs the integration tests of H2, SQLite, DuckDB and Access, and of the main
+# database servers where they run in Docker (.github/workflows/databases.sh), the others are skipped.
 #
-#   check      pull requests: one Linux build with all tests, the check of merging
+#   check      pull requests: one Linux build with all tests against PostgreSQL, MySQL, Oracle, SQL Server, Qdrant
+#              and Weaviate in Docker, the check of merging
 #   platforms  tags v* and manual runs (Actions > build > Run workflow): Windows, macOS and Linux build, start the
 #              runnable jar and take screenshots, packages for download (src/packaging/package.sh)
 #   release    tags v*: a GitHub release with the packages of every platform and their SHA-256 checksums
@@ -28,7 +29,7 @@ jobs:
   check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -38,8 +39,15 @@ jobs:
           java-version: '17'
           cache: maven
 
-      - name: Build and test (UI tests run headless)
-        run: ./mvnw -B -ntp verify -Dit.env=ci -Djacoco.haltOnFailure=false
+      # The databases start while SqlJam is compiled
+      - name: Build and test against the main databases (UI tests run headless)
+        run: |
+          bash .github/workflows/databases.sh > databases.log 2>&1 &
+          DATABASES=$!
+          ./mvnw -B -ntp test-compile
+          wait $DATABASES || { cat databases.log; exit 1; }
+          cat databases.log
+          ./mvnw -B -ntp verify -Dit.env=ci -Djacoco.haltOnFailure=false
 
   platforms:
     if: github.event_name != 'pull_request'

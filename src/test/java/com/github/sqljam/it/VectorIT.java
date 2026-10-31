@@ -34,6 +34,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
@@ -811,7 +812,7 @@ class VectorIT {
     private static List<String> indexDefinitions(Connection connection, String schema) throws SQLException {
         List<String> definitions = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("SELECT indexdef FROM pg_indexes WHERE schemaname = ?"
-                + " AND tablename = ? AND indexname NOT LIKE '%pkey' ORDER BY indexdef")) {
+                + " AND tablename = ? AND indexname NOT LIKE '%pkey'")) {
             ps.setString(1, schema);
             ps.setString(2, TABLE);
             try (ResultSet rs = ps.executeQuery()) {
@@ -821,6 +822,8 @@ class VectorIT {
                 }
             }
         }
+        // Sorted without the index names, their order depends on the collation of the database
+        Collections.sort(definitions);
         return definitions;
     }
 }
