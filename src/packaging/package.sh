@@ -10,7 +10,8 @@
 #   mac-aarch64, mac   SqlJam.app in SqlJam-<version>-<platform>.dmg
 #   win                SqlJam-<version>-win.zip, SqlJam\SqlJam.exe without installing, and SqlJam-<version>-win.msi
 #                      of releases (not of pre-releases like 1.0.0-rc1) when the WiX Toolset 3 is on the path
-#   linux              SqlJam-<version>-linux.tar.gz (SqlJam/bin/SqlJam) and sqljam_<version>_amd64.deb
+#   linux              SqlJam-<version>-linux.tar.gz (SqlJam/bin/SqlJam), sqljam_<version>_amd64.deb and
+#                      sqljam-<version>-1.x86_64.rpm
 #   every platform     SqlJam-<version>-<platform>-jar.zip, the runnable jar with its launch scripts (Java 17+)
 #
 # The packages have their own Java runtime and the JVM options of sqljam.vmoptions. They are not signed with a
@@ -135,6 +136,13 @@ case "$PLATFORM" in
             jpackage --type deb --dest "$WORK" --app-image "$WORK/SqlJam" --name SqlJam --app-version "$APP_VERSION" \
                 --vendor "Fred Feng" --linux-package-name sqljam --linux-shortcut --linux-menu-group Development
             mv "$WORK"/sqljam_*.deb "$OUT/"
+        fi
+        # An rpm for Fedora, RHEL and openSUSE, the same installation as the deb
+        if command -v rpmbuild >/dev/null 2>&1; then
+            jpackage --type rpm --dest "$WORK" --app-image "$WORK/SqlJam" --name SqlJam --app-version "$APP_VERSION" \
+                --vendor "Fred Feng" --linux-package-name sqljam --linux-shortcut --linux-menu-group Development \
+                --linux-rpm-license-type "ASL 2.0"
+            mv "$WORK"/sqljam-*.rpm "$OUT/"
         fi
         ;;
 esac

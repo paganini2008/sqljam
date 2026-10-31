@@ -71,9 +71,10 @@ jobs:
         shell: bash
         run: ./mvnw -B -ntp verify -Dit.env=ci -Djacoco.haltOnFailure=false
 
-      - name: Install a virtual display
+      # rpmbuild of the rpm package
+      - name: Install a virtual display and rpmbuild
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11-apps imagemagick libgtk-3-0
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq xvfb x11-apps imagemagick libgtk-3-0 rpm
 
       - name: Start the runnable jar of the platform
         shell: bash
@@ -137,6 +138,7 @@ jobs:
             run.log
             bin/SqlJam-*
             bin/sqljam_*.deb
+            bin/sqljam-*.rpm
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -154,7 +156,7 @@ jobs:
       - name: Collect the packages and their checksums
         run: |
           mkdir release
-          find artifacts -type f \( -name 'SqlJam-*' -o -name 'sqljam_*.deb' \) -exec cp {} release/ \;
+          find artifacts -type f \( -name 'SqlJam-*' -o -name 'sqljam_*.deb' -o -name 'sqljam-*.rpm' \) -exec cp {} release/ \;
           cd release
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt

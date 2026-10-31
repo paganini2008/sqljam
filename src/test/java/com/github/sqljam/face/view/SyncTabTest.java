@@ -308,11 +308,12 @@ class SyncTabTest {
         task.getTables().add(new SyncTask.Table("ORDERS", "ID", SyncTask.WatermarkType.INCREASING_KEY));
         task.setScheduleType(SyncTask.ScheduleType.MANUAL);
         FxTestSupport.run(() -> tab.save(task));
-        // The toolbar puts its buttons into the scene when it is laid out
+        // Found among the items of the toolbar, a narrow window puts it into the overflow menu instead of the scene
         Button command = FxTestSupport.call(() -> {
             tab.getContent().applyCss();
-            ((javafx.scene.Parent) tab.getContent()).layout();
-            return (Button) tab.getContent().lookup("#syncCommandButton");
+            return (Button) tab.getContent().lookupAll(".tool-bar").stream()
+                    .flatMap(bar -> ((javafx.scene.control.ToolBar) bar).getItems().stream())
+                    .filter(item -> "syncCommandButton".equals(item.getId())).findFirst().orElseThrow();
         });
         assertTrue(FxTestSupport.call(command::isDisabled));
         FxTestSupport.run(() -> tab.getTable().getSelectionModel().select(0));

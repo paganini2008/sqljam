@@ -83,31 +83,61 @@ public final class Dialogs {
         });
     }
 
-    private static void fitShown(Dialog<?> dialog) {
+    static void fitShown(Dialog<?> dialog) {
         javafx.scene.Scene scene = dialog.getDialogPane().getScene();
         if (scene == null || scene.getWindow() == null) {
             return;
         }
         Window window = scene.getWindow();
         javafx.geometry.Rectangle2D area = screenArea.apply(window);
-        boolean fits = window.getHeight() <= area.getHeight() && window.getWidth() <= area.getWidth();
-        if (fits && area.contains(window.getX(), window.getY(), window.getWidth(), window.getHeight())) {
+        boolean fits = fits(window.getWidth(), window.getHeight(), scene.getY(), scene.getHeight(), area);
+        if (fits && area.contains(window.getX(), window.getY(), window.getWidth(), outerHeight(window))) {
             return;
         }
         javafx.scene.control.DialogPane pane = dialog.getDialogPane();
         javafx.scene.Node content = pane.getContent();
         if (!fits && content != null && !(content instanceof javafx.scene.control.ScrollPane)) {
+            double needed = pane.prefHeight(scene.getWidth());
             javafx.scene.control.ScrollPane scroll = new javafx.scene.control.ScrollPane(content);
             scroll.setFitToWidth(true);
             scroll.getStyleClass().add("fit-scroll");
             scroll.setStyle("-fx-background-color: transparent;");
             pane.setContent(scroll);
+            // As high as the screen without the title bar, the scene follows the window then
+            pane.setPrefHeight(Math.min(needed, area.getHeight() - titleBar(window)));
+            if (window instanceof javafx.stage.Stage) {
+                ((javafx.stage.Stage) window).sizeToScene();
+            }
             // The fields are found in the scroll pane at once, not only after the next pulse
             pane.applyCss();
             pane.layout();
         }
         // Moved into the screen, made as large as it when it is larger
         fit(window, area);
+    }
+
+    /**
+     * Whether a window and its scene below the title bar fit the area. macOS makes a window as tall as the screen
+     * at most, its scene stays as tall as before and is cut at the bottom then
+     */
+    static boolean fits(double windowWidth, double windowHeight, double sceneY, double sceneHeight,
+                        javafx.geometry.Rectangle2D area) {
+        return Math.max(windowHeight, sceneY + sceneHeight) <= area.getHeight() && windowWidth <= area.getWidth();
+    }
+
+    /**
+     * The height of a window with its title bar, also when the system reports it without
+     */
+    private static double outerHeight(Window window) {
+        javafx.scene.Scene scene = window.getScene();
+        return scene == null ? window.getHeight() : Math.max(window.getHeight(), scene.getY() + scene.getHeight());
+    }
+
+    /**
+     * The height of the title bar of a window
+     */
+    private static double titleBar(Window window) {
+        return Math.max(0, Math.max(window.getScene().getY(), window.getHeight() - window.getScene().getHeight()));
     }
 
     /**
@@ -126,7 +156,7 @@ public final class Dialogs {
             window.setWidth(area.getWidth());
         }
         window.setX(Math.max(area.getMinX(), Math.min(window.getX(), area.getMaxX() - window.getWidth())));
-        window.setY(Math.max(area.getMinY(), Math.min(window.getY(), area.getMaxY() - window.getHeight())));
+        window.setY(Math.max(area.getMinY(), Math.min(window.getY(), area.getMaxY() - outerHeight(window))));
     }
 
     /**

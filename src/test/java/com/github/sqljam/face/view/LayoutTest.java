@@ -15,6 +15,7 @@
  */
 package com.github.sqljam.face.view;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
@@ -143,6 +144,19 @@ class LayoutTest {
     /**
      * The progress of a transfer and the package viewer, windows of their own
      */
+    /**
+     * macOS makes a window as tall as the screen at most before it is shown, its scene stays taller then
+     */
+    @Test
+    void findsScenesTallerThanTheirWindows() {
+        Rectangle2D area = new Rectangle2D(0, 30, 1352, 781);
+        assertTrue(Dialogs.fits(800, 700, 28, 672, area));
+        assertFalse(Dialogs.fits(800, 781, 28, 931, area));
+        assertFalse(Dialogs.fits(800, 781, 28, 781, area));
+        assertFalse(Dialogs.fits(800, 900, 28, 872, area));
+        assertFalse(Dialogs.fits(1400, 700, 28, 672, area));
+    }
+
     @Test
     void fitsWindowsToSmallScreens() throws Exception {
         Dialogs.screenArea = window -> new Rectangle2D(0, 0, 1280, 560);

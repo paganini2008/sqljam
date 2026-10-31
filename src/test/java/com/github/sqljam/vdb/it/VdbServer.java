@@ -79,9 +79,13 @@ public enum VdbServer {
         private static final Properties PROPERTIES = new Properties();
         private static final Map<VdbServer, Boolean> AVAILABLE = new EnumMap<>(VdbServer.class);
 
+        // Servers of the environment like those of the databases (-Dit.env), the ci environment has none
         static {
-            try (InputStream in = VdbServer.class.getResourceAsStream("/it-vdb-test.properties")) {
-                PROPERTIES.load(new InputStreamReader(in, StandardCharsets.UTF_8));
+            String environment = System.getProperty("it.env", "test");
+            try (InputStream in = VdbServer.class.getResourceAsStream("/it-vdb-" + environment + ".properties")) {
+                if (in != null) {
+                    PROPERTIES.load(new InputStreamReader(in, StandardCharsets.UTF_8));
+                }
             } catch (IOException e) {
                 throw new IllegalStateException(e);
             }

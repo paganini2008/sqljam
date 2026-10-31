@@ -53,6 +53,16 @@
     -fx-border-width: 0;
 }
 
+.tree-error {
+    -fx-text-fill: -color-danger-fg;
+}
+
+.tree-error .ikonli-font-icon,
+.tree-failed-mark {
+    -fx-icon-color: -color-danger-fg;
+    -fx-fill: -color-danger-fg;
+}
+
 .tree-message {
     -fx-text-fill: -color-fg-subtle;
     -fx-font-style: italic;

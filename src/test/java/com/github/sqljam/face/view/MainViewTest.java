@@ -225,8 +225,28 @@ class MainViewTest {
         FxTestSupport.waitForDialogPane();
         FxTestSupport.closeAllDialogs();
         FxTestSupport.waitUntil(() -> unreachable.getChildren().get(0).getValue().getKind()
-                == DbNode.Kind.MESSAGE);
-        assertTrue(labels(unreachable).get(0).startsWith("Error:"));
+                == DbNode.Kind.ERROR);
+        // A short reason in the tree, the data source marked, the full error in the detail
+        assertTrue(labels(unreachable).get(0).startsWith("Cannot connect: "));
+        assertTrue(FxTestSupport.call(() -> tree().isFailed(unreachable)));
+        assertNotNull(FxTestSupport.call(() -> unreachable.getChildren().get(0).getValue().getDetail()));
+        // Retry connects again, the failure shows its dialog again
+        FxTestSupport.run(() -> tree().retry(unreachable.getChildren().get(0)));
+        FxTestSupport.waitForDialogPane();
+        FxTestSupport.closeAllDialogs();
+        FxTestSupport.waitUntil(() -> unreachable.getChildren().get(0).getValue().getKind()
+                == DbNode.Kind.ERROR);
+    }
+
+    @Test
+    void summarizesErrorsInOneLine() {
+        Exception error = new RuntimeException("Failed to initialize pool: ORA-17820: Network adapter\n"
+                + "https://docs.oracle.com/error-help/db/ora-17820/", new java.io.IOException(
+                "Connection refused https://example.com/help"));
+        assertEquals("Cannot connect: Connection refused", ConnectionTree.summary(error));
+        assertEquals("Cannot connect: ORA-17820: Network adapter", ConnectionTree.summary(new RuntimeException(
+                "ORA-17820: Network adapter\nhttps://docs.oracle.com/error-help/db/ora-17820/")));
+        assertEquals("Cannot connect: NullPointerException", ConnectionTree.summary(new NullPointerException()));
     }
 
     @Test

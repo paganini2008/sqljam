@@ -609,17 +609,63 @@ public class ConnectionTree extends TreeView<DbNode> {
             Stream.concat(connectionItems.stream(), sourceItems.values().stream().flatMap(List::stream))
                     .filter(item -> id.equals(item.getValue().getProfile() != null ? item.getValue().getProfile()
                             .getId() : item.getValue().getSource().getId())).findFirst()
-                    .ifPresentOrElse(item -> item.setExpanded(true), () -> {
+                    .ifPresentOrElse(item -> {
+                        // Connected again without dialogs, a failure is shown in the tree
+                        if (item instanceof LazyItem) {
+                            ((LazyItem) item).quiet = true;
+                        }
+                        item.setExpanded(true);
+                    }, () -> {
                         // A data source which was deleted meanwhile
                         context.getSettings().getConnectedSources().remove(id);
                     });
         }
     }
 
+    /**
+     * The reason of an error in one short line: the message of its deepest cause without links, e.g. Connection
+     * refused instead of the message of the pool around it
+     */
+    static String summary(Throwable error) {
+        String message = null;
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (StringUtils.isNotBlank(cause.getMessage())) {
+                message = cause.getMessage();
+            }
+        }
+        if (message == null) {
+            return Messages.format("tree.failed", error.getClass().getSimpleName());
+        }
+        String line = message.replaceAll("https?://\\S+", " ").trim().split("\\R", 2)[0].trim();
+        return Messages.format("tree.failed", StringUtils.abbreviate(StringUtils.defaultIfBlank(line, message
+                .trim()), 120));
+    }
+
+    /**
+     * Connects the data source of an error node again
+     */
+    void retry(TreeItem<DbNode> errorItem) {
+        if (errorItem != null && errorItem.getParent() instanceof LazyItem) {
+            ((LazyItem) errorItem.getParent()).reload();
+        }
+    }
+
+    boolean isFailed(TreeItem<DbNode> item) {
+        return item instanceof LazyItem && ((LazyItem) item).failed;
+    }
+
     private class LazyItem extends TreeItem<DbNode> {
 
         private boolean loaded;
         private boolean loading;
+        /**
+         * The data source could not be connected the last time
+         */
+        private boolean failed;
+        /**
+         * Connected when SqlJam starts, a failure shows no dialog
+         */
+        private boolean quiet;
 
         LazyItem(DbNode node) {
             super(node);
@@ -679,6 +725,8 @@ public class ConnectionTree extends TreeView<DbNode> {
             TaskRunner.run(() -> loadChildren(node), children -> {
                 loading = false;
                 loaded = true;
+                quiet = false;
+                setFailed(false);
                 getChildren().setAll(children);
                 if (node.getKind() == DbNode.Kind.CONNECTION || node.getKind() == DbNode.Kind.SOURCE) {
                     rememberConnected(node, true);
@@ -690,10 +738,25 @@ public class ConnectionTree extends TreeView<DbNode> {
                     connect(node);
                     return;
                 }
-                getChildren().setAll(Collections.singletonList(new TreeItem<>(DbNode.message(Messages.format(
-                        "tree.error", e.getMessage())))));
-                Dialogs.showError(getWindow(), Messages.format("tree.loadError", node.getLabel()), e);
+                getChildren().setAll(Collections.singletonList(new TreeItem<>(DbNode.error(summary(e),
+                        StringUtils.defaultIfBlank(e.getMessage(), e.getClass().getName())))));
+                boolean shown = !quiet;
+                quiet = false;
+                if (node.getKind() == DbNode.Kind.CONNECTION || node.getKind() == DbNode.Kind.SOURCE) {
+                    setFailed(true);
+                }
+                if (shown) {
+                    Dialogs.showError(getWindow(), Messages.format("tree.loadError", node.getLabel()), e);
+                }
             });
+        }
+
+        private void setFailed(boolean failed) {
+            if (this.failed != failed) {
+                this.failed = failed;
+                // The cell of the data source shows its mark
+                refresh();
+            }
         }
     }
 
@@ -705,6 +768,9 @@ public class ConnectionTree extends TreeView<DbNode> {
                 if (node != null && node.getKind() == DbNode.Kind.TABLE && event.getButton() == MouseButton.PRIMARY
                         && event.getClickCount() == 2 && onOpenTable != null) {
                     onOpenTable.accept(node);
+                } else if (node != null && node.getKind() == DbNode.Kind.ERROR && event.getButton()
+                        == MouseButton.PRIMARY && event.getClickCount() == 2) {
+                    retry(getTreeItem());
                 } else if (node != null && node.getKind() == DbNode.Kind.SOURCE_ITEM && node.getItem().getKind()
                         != SourceItem.Kind.DATABASE && event.getButton() == MouseButton.PRIMARY
                         && event.getClickCount() == 2 && onOpenSourceItem != null) {
@@ -716,7 +782,7 @@ public class ConnectionTree extends TreeView<DbNode> {
         @Override
         protected void updateItem(DbNode node, boolean empty) {
             super.updateItem(node, empty);
-            getStyleClass().removeAll("tree-message", "tree-group");
+            getStyleClass().removeAll("tree-message", "tree-group", "tree-error");
             if (empty || node == null) {
                 setText(null);
                 setGraphic(null);
@@ -727,7 +793,7 @@ public class ConnectionTree extends TreeView<DbNode> {
             setText(node.getLabel());
             switch (node.getKind()) {
                 case CONNECTION:
-                    setGraphic(DbTypeCells.iconOf(node.getProfile()));
+                    setGraphic(failedMark(DbTypeCells.iconOf(node.getProfile())));
                     break;
                 case CATALOG:
                     setGraphic(Icons.of(Icons.CATALOG));
@@ -753,7 +819,11 @@ public class ConnectionTree extends TreeView<DbNode> {
                     getStyleClass().add("tree-group");
                     break;
                 case SOURCE:
-                    setGraphic(DbIcons.of(node.getSource().getTypeName()));
+                    setGraphic(failedMark(DbIcons.of(node.getSource().getTypeName())));
+                    break;
+                case ERROR:
+                    setGraphic(Icons.of(Icons.ALERT));
+                    getStyleClass().add("tree-error");
                     break;
                 case SOURCE_ITEM:
                     SourceItem.Kind itemKind = node.getItem().getKind();
@@ -770,19 +840,58 @@ public class ConnectionTree extends TreeView<DbNode> {
                     break;
             }
             String tooltip = node.getKind() == DbNode.Kind.TABLE ? tableTooltip(node.getTable())
+                    : node.getKind() == DbNode.Kind.ERROR ? node.getDetail() + "\n\n" + Messages.get(
+                            "tree.retry.tooltip")
+                    : isFailed(getTreeItem()) ? errorOf(getTreeItem())
                     : node.getKind() == DbNode.Kind.SOURCE ? node.getSource().getTypeName()
                     : node.getKind() == DbNode.Kind.SOURCE_ITEM ? node.getItem().getKindName() : null;
             if (tooltip != null) {
-                setTooltip(new Tooltip(tooltip));
+                Tooltip tip = new Tooltip(tooltip);
+                tip.setWrapText(true);
+                tip.setMaxWidth(560);
+                setTooltip(tip);
             } else {
                 setTooltip(null);
             }
             setContextMenu(createContextMenu(node));
         }
 
+        /**
+         * The icon of a data source with a red dot when it could not be connected, like DataGrip and DBeaver
+         */
+        private javafx.scene.Node failedMark(javafx.scene.Node icon) {
+            if (!isFailed(getTreeItem())) {
+                return icon;
+            }
+            javafx.scene.shape.Circle dot = new javafx.scene.shape.Circle(3.5);
+            dot.getStyleClass().add("tree-failed-mark");
+            javafx.scene.layout.StackPane pane = new javafx.scene.layout.StackPane(icon, dot);
+            javafx.scene.layout.StackPane.setAlignment(dot, Pos.BOTTOM_RIGHT);
+            return pane;
+        }
+
+        private String errorOf(TreeItem<DbNode> item) {
+            return item.getChildren().stream().map(TreeItem::getValue).filter(child -> child.getKind()
+                    == DbNode.Kind.ERROR).map(DbNode::getLabel).findFirst().orElse(null);
+        }
+
         private ContextMenu createContextMenu(DbNode node) {
             ContextMenu menu = new ContextMenu();
             switch (node.getKind()) {
+                case ERROR:
+                    MenuItem retry = menuItem("tree.retry", Icons.REFRESH, () -> retry(getTreeItem()));
+                    retry.setId("retryMenuItem");
+                    menu.getItems().addAll(retry, menuItem("tree.copyError", Icons.COPY, () -> {
+                        javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+                        content.putString(node.getDetail());
+                        javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
+                    }));
+                    DbNode parent = getTreeItem().getParent() != null ? getTreeItem().getParent().getValue() : null;
+                    if (parent != null && parent.getKind() == DbNode.Kind.CONNECTION) {
+                        menu.getItems().add(menuItem("action.editConnection", Icons.EDIT, () -> fire(
+                                onEditConnection, parent)));
+                    }
+                    break;
                 case CONNECTION:
                     // Connect before the connection is opened, disconnect after it is opened
                     MenuItem connect = menuItem("tree.connect", Icons.CONNECT, () -> getTreeItem().setExpanded(true));

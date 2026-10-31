@@ -118,7 +118,7 @@ class StartupTest {
     private static boolean connected(TreeItem<DbNode> item) {
         return FxTestSupport.call(() -> !item.getChildren().isEmpty() && item.getChildren().stream().noneMatch(
                 child -> child.getValue().getKind() == DbNode.Kind.LOADING || child.getValue().getKind()
-                        == DbNode.Kind.MESSAGE));
+                        == DbNode.Kind.ERROR));
     }
 
     private static DialogPane credentials() {
@@ -185,7 +185,7 @@ class StartupTest {
         FxTestSupport.run(() -> ((Button) refused.lookupButton(ButtonType.CANCEL)).fire());
         FxTestSupport.closeAllDialogs();
         FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> again.getChildren().stream().anyMatch(child -> child
-                .getValue().getKind() == DbNode.Kind.MESSAGE)));
+                .getValue().getKind() == DbNode.Kind.ERROR)));
     }
 
     @Test
