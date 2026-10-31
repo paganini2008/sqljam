@@ -580,4 +580,12 @@ public class AccessDialect extends Dialect {
         }
         return super.getStringValue(catalog, schema, tableName, columnName, columnValue);
     }
+
+    /**
+     * No INSERT statement of several rows by VALUES, the statements of a package run one by one
+     */
+    @Override
+    public int getRowsPerScriptInsert() {
+        return 1;
+    }
 }

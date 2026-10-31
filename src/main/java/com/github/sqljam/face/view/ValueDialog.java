@@ -101,9 +101,7 @@ public final class ValueDialog {
 
     public static void show(Window owner, String column, String value) {
         Alert alert = new Alert(Alert.AlertType.NONE);
-        if (owner != null && owner.getScene() != null) {
-            alert.initOwner(owner);
-        }
+        Dialogs.initOwner(alert, owner);
         Branding.applyIcons(alert);
         alert.setTitle(column);
         alert.setHeaderText(column + "  ·  " + (value == null ? "NULL" : describe(value)));

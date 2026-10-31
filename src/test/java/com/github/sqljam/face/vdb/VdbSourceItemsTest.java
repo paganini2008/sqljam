@@ -108,6 +108,8 @@ class VdbSourceItemsTest {
     @Test
     void showsCollectionsWhenDatabasesAreNotListed() throws Exception {
         DataSourceExtension.Source source = source(null);
+        // The info of a vector database has a dashboard
+        org.junit.jupiter.api.Assertions.assertTrue(source.getDashboard().get() instanceof VdbMetrics);
         List<SourceItem> items = source.loadItems(null);
         assertEquals(List.of("COLLECTION docs", "COLLECTION faq"), names(items));
         // Partitions are not listed by this server, the collection is read whole

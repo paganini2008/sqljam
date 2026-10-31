@@ -59,21 +59,6 @@ public class SyncTask {
         INCREASING_KEY
     }
 
-    /**
-     * Who runs the task on its schedule
-     */
-    public enum Runner {
-        /**
-         * The scheduler of SqlJam, while it is open
-         */
-        SQLJAM,
-        /**
-         * The scheduler of the system (crontab, Task Scheduler of Windows) by the command line, also when SqlJam
-         * is closed
-         */
-        SYSTEM
-    }
-
     public enum ScheduleType {
         /**
          * Run Now only
@@ -164,7 +149,6 @@ public class SyncTask {
     private String targetSchema;
     private List<Table> tables = new ArrayList<>();
     private ScheduleType scheduleType = ScheduleType.INTERVAL;
-    private Runner runner = Runner.SQLJAM;
     private int intervalMinutes = 60;
     /**
      * Time of a daily run, HH:mm

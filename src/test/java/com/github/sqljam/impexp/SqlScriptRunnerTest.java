@@ -175,6 +175,76 @@ class SqlScriptRunnerTest {
         assertFalse(SqlScriptRunner.isRowStatement("CREATE TABLE inserts (id INT)"));
     }
 
+    /**
+     * INSERT statements of one row of a table are merged into statements of many rows, others stay as they are
+     */
+    @Test
+    void mergesInsertsOfOneRow() {
+        List<String> merged = SqlScriptRunner.mergeInserts(List.of(
+                "INSERT INTO \"s\".\"t\" (\"a\",\"b\") VALUES (1, 'x, (y)')",
+                "INSERT INTO \"s\".\"t\" (\"a\",\"b\") VALUES (2, 'it''s')",
+                "INSERT INTO \"s\".\"t\" (\"a\") VALUES (3)",
+                "INSERT INTO \"s\".\"u\" VALUES (4)",
+                "INSERT INTO \"s\".\"u\" VALUES (5) ON CONFLICT (a) DO UPDATE SET b = (1)",
+                "INSERT INTO \"s\".\"u\" VALUES (6) RETURNING (a)",
+                "INSERT INTO \"s\".\"u\" SELECT 7",
+                "MERGE INTO \"s\".\"u\" USING x ON (1 = 1)",
+                "INSERT INTO \"s\".\"u\" VALUES (8)",
+                "INSERT INTO \"s\".\"u\" VALUES (9)",
+                "INSERT INTO \"s\".\"u\" VALUES (10)"), 2, 1000, false);
+        assertEquals(List.of(
+                "INSERT INTO \"s\".\"t\" (\"a\",\"b\") VALUES (1, 'x, (y)'),(2, 'it''s')",
+                "INSERT INTO \"s\".\"t\" (\"a\") VALUES (3)",
+                "INSERT INTO \"s\".\"u\" VALUES (4)",
+                "INSERT INTO \"s\".\"u\" VALUES (5) ON CONFLICT (a) DO UPDATE SET b = (1)",
+                "INSERT INTO \"s\".\"u\" VALUES (6) RETURNING (a)",
+                "INSERT INTO \"s\".\"u\" SELECT 7",
+                "MERGE INTO \"s\".\"u\" USING x ON (1 = 1)",
+                "INSERT INTO \"s\".\"u\" VALUES (8),(9)",
+                "INSERT INTO \"s\".\"u\" VALUES (10)"), merged);
+        // A long statement is not merged beyond the length
+        assertEquals(2, SqlScriptRunner.mergeInserts(List.of("INSERT INTO t VALUES ('aaaa')",
+                "INSERT INTO t VALUES ('bbbb')"), 100, 35, false).size());
+        // Backslashes escape quotes in MySQL, not in PostgreSQL
+        assertTrue(SqlScriptRunner.valuesOfOneRow("INSERT INTO t VALUES ('O\\'Brien', 1)", true) > 0);
+        assertEquals(-1, SqlScriptRunner.valuesOfOneRow("INSERT INTO t VALUES ('O\\'Brien', 1)", false));
+        assertTrue(SqlScriptRunner.valuesOfOneRow("insert into t values ('a\\', 1)  ", false) > 0);
+        assertEquals(-1, SqlScriptRunner.valuesOfOneRow("INSERT INTO t VALUES ('open", false));
+        assertEquals(-1, SqlScriptRunner.valuesOfOneRow("UPDATE t SET a = 1", false));
+    }
+
+    /**
+     * Merged statements of a batch which fails are run one by one again, the rows with errors are skipped alone
+     */
+    @Test
+    void runsMergedInsertsOneByOneAfterAnError() throws Exception {
+        try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:merged;DB_CLOSE_DELAY=-1")) {
+            List<String> skipped = new ArrayList<>();
+            SqlScriptRunner runner = new SqlScriptRunner(connection);
+            runner.setStopOnError(false);
+            runner.setRowsPerInsert(100);
+            runner.setExportListener(new ExportListener() {
+                @Override
+                public void onRowSkipped(String catalogName, String schemaName, String tableName, String key,
+                                         Throwable e) {
+                    skipped.add(key);
+                }
+            });
+            StringBuilder script = new StringBuilder("CREATE TABLE m (id INT PRIMARY KEY, name VARCHAR(5));\n");
+            for (int i = 1; i <= 250; i++) {
+                script.append("INSERT INTO m VALUES (").append(i).append(", '").append(i == 120 ? "too long" : "n")
+                        .append("');\n");
+            }
+            runner.runScript(script.toString());
+            assertEquals(List.of("INSERT INTO m VALUES (120, 'too long')"), skipped);
+            assertEquals(1, runner.getFailedCount());
+            try (ResultSet rs = connection.createStatement().executeQuery("SELECT COUNT(*) FROM m")) {
+                rs.next();
+                assertEquals(249, rs.getInt(1));
+            }
+        }
+    }
+
     @Test
     void runBatches() throws Exception {
         try (Connection connection = DriverManager.getConnection("jdbc:h2:mem:batch;DB_CLOSE_DELAY=-1")) {

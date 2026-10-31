@@ -216,6 +216,11 @@ public class VdbDataSourceExtension implements DataSourceExtension {
         }
 
         @Override
+        public java.util.function.Supplier<com.github.sqljam.face.service.MetricSource> getDashboard() {
+            return () -> new VdbMetrics(profile);
+        }
+
+        @Override
         public Map<String, Map<String, String>> loadHealth() {
             try (VdbClient client = profile.getType().createClient(profile.toSource())) {
                 return client.getHealth();

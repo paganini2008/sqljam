@@ -582,7 +582,7 @@ class DocScreenshots {
     }
 
     /**
-     * Sync tasks of the MySQL fixture into H2, one run now, one run by the system scheduler every night
+     * Sync tasks of the MySQL fixture into H2, one run now, one run every night
      */
     @Test
     void syncTasks() throws Exception {
@@ -610,7 +610,6 @@ class DocScreenshots {
                 com.github.sqljam.face.model.SyncTask.WatermarkType.INCREASING_KEY));
         nightly.setScheduleType(com.github.sqljam.face.model.SyncTask.ScheduleType.DAILY);
         nightly.setDailyTime("02:00");
-        nightly.setRunner(com.github.sqljam.face.model.SyncTask.Runner.SYSTEM);
         context.getSyncScheduler().getStore().saveTask(nightly);
         context.getSyncScheduler().runNow(hourly.getId()).get(120, java.util.concurrent.TimeUnit.SECONDS);
         FxTestSupport.run(mainView::openSync);

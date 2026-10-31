@@ -80,6 +80,49 @@ public class QdrantClient extends AbstractVdbClient {
      * Readiness and liveness probes, the state of the cluster of distributed deployments
      */
     @Override
+    public long countRecords(String collection) {
+        return rest.post("/collections/" + encode(collection) + "/points/count", RestClient.getMapper()
+                .createObjectNode().put("exact", true)).path("result").path("count").asLong(-1);
+    }
+
+    /**
+     * The common metrics, and of /metrics: the REST and gRPC requests and the memory of the server
+     */
+    @Override
+    public Map<String, Double> getMetrics() {
+        Map<String, Double> metrics = super.getMetrics();
+        try {
+            Map<String, Double> values = VdbInfo.prometheus(rest.get("/metrics").asText());
+            // Newer servers count the requests in their histograms of durations
+            double requests = 0;
+            boolean counted = false;
+            for (String name : new String[]{"rest_responses_total", "grpc_responses_total",
+                    "rest_responses_duration_seconds_count", "grpc_responses_duration_seconds_count"}) {
+                if (values.containsKey(name) && !(name.endsWith("_count") && values.containsKey(name.replace(
+                        "_duration_seconds_count", "_total")))) {
+                    requests += values.get(name);
+                    counted = true;
+                }
+            }
+            if (counted) {
+                metrics.put("requests", requests);
+            }
+            putIfPresent(metrics, "cpu.cores", values.get("cpu_cores_used"));
+            putIfPresent(metrics, "memory.resident", values.get("memory_resident_bytes"));
+            putIfPresent(metrics, "memory.allocated", values.get("memory_allocated_bytes"));
+        } catch (RuntimeException e) {
+            // Metrics switched off or not allowed, the common ones stay
+        }
+        return metrics;
+    }
+
+    private static void putIfPresent(Map<String, Double> metrics, String key, Double value) {
+        if (value != null) {
+            metrics.put(key, value);
+        }
+    }
+
+    @Override
     public Map<String, Map<String, String>> getHealth() {
         Map<String, Map<String, String>> sections = super.getHealth();
         Map<String, String> health = section(sections, "Qdrant");

@@ -116,7 +116,6 @@ public class SyncTaskDialog extends Dialog<SyncTask> {
     private final ComboBox<String> targetCatalogCombo = new ComboBox<>();
     private final ComboBox<String> targetSchemaCombo = new ComboBox<>();
     private final ComboBox<SyncTask.ScheduleType> scheduleCombo = new ComboBox<>();
-    private final ComboBox<SyncTask.Runner> runnerCombo = new ComboBox<>();
     private final Spinner<Integer> intervalSpinner = new Spinner<>(1, 7 * 24 * 60, 60);
     private final TextField dailyField = new TextField("02:00");
     private final Spinner<Integer> retriesSpinner = new Spinner<>(0, 10, 3);
@@ -151,11 +150,6 @@ public class SyncTaskDialog extends Dialog<SyncTask> {
         targetCatalogCombo.setId("syncTargetCatalogCombo");
         targetSchemaCombo.setId("syncTargetSchemaCombo");
         scheduleCombo.setId("syncScheduleCombo");
-        runnerCombo.setId("syncRunnerCombo");
-        runnerCombo.getItems().setAll(SyncTask.Runner.values());
-        runnerCombo.setConverter(converter(runner -> Messages.get("sync.runner." + runner.name().toLowerCase(Locale
-                .ENGLISH))));
-        runnerCombo.setValue(SyncTask.Runner.SQLJAM);
         intervalSpinner.setId("syncIntervalSpinner");
         dailyField.setId("syncDailyField");
         retriesSpinner.setId("syncRetriesSpinner");
@@ -268,7 +262,6 @@ public class SyncTaskDialog extends Dialog<SyncTask> {
         HBox schedule = new HBox(8, scheduleCombo, intervalSpinner, new Label(Messages.get("sync.minutes")),
                 dailyField);
         grid.addRow(row++, new Label(Messages.get("sync.schedule")), schedule);
-        grid.addRow(row++, new Label(Messages.get("sync.runner")), runnerCombo);
         grid.addRow(row++, new Label(Messages.get("sync.retries")), retriesSpinner);
         Label note = new Label(Messages.get("sync.note"));
         note.getStyleClass().add("muted");
@@ -352,7 +345,6 @@ public class SyncTaskDialog extends Dialog<SyncTask> {
     private void scheduleChanged() {
         SyncTask.ScheduleType type = scheduleCombo.getValue();
         intervalSpinner.setDisable(type != SyncTask.ScheduleType.INTERVAL);
-        runnerCombo.setDisable(type == SyncTask.ScheduleType.MANUAL);
         dailyField.setDisable(type != SyncTask.ScheduleType.DAILY);
     }
 
@@ -381,7 +373,6 @@ public class SyncTaskDialog extends Dialog<SyncTask> {
         targetCatalogCombo.setValue(task.getTargetCatalog());
         targetSchemaCombo.setValue(task.getTargetSchema());
         scheduleCombo.setValue(task.getScheduleType());
-        runnerCombo.setValue(task.getRunner());
         intervalSpinner.getValueFactory().setValue(task.getIntervalMinutes());
         dailyField.setText(task.getDailyTime());
         retriesSpinner.getValueFactory().setValue(task.getRetries());
@@ -667,7 +658,6 @@ public class SyncTaskDialog extends Dialog<SyncTask> {
         }
         task.setTables(tables);
         task.setScheduleType(scheduleCombo.getValue());
-        task.setRunner(runnerCombo.getValue());
         task.setIntervalMinutes(intervalSpinner.getValue());
         task.setDailyTime(dailyField.getText().trim());
         task.setRetries(retriesSpinner.getValue());

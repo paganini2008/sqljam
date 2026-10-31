@@ -295,7 +295,8 @@ public class MainView extends BorderPane {
                     connectionTree::isConnected));
             sqlQuery.setDisable(connectionTree.getSelectedNode() == null);
             info.setDisable(!isInfoAvailable());
-            dashboard.setDisable(item == null);
+            DbNode source = connectionTree.getSelectedSource();
+            dashboard.setDisable(item == null && (source == null || source.getSource().getDashboard() == null));
         });
         return menu;
     }
@@ -542,11 +543,13 @@ public class MainView extends BorderPane {
      * The info of the selected data source on its dashboard
      */
     private void dashboardSelected() {
+        // A data source, or a source of an extension which tells its metrics, e.g. a vector database
         TreeItem<DbNode> item = selectedConnectionItem();
-        if (item == null) {
+        DbNode source = connectionTree.getSelectedSource();
+        if (item == null && (source == null || source.getSource().getDashboard() == null)) {
             return;
         }
-        openInfo(item.getValue());
+        openInfo(item != null ? item.getValue() : source);
         Tab tab = tabPane.getSelectionModel().getSelectedItem();
         if (tab instanceof InfoTab) {
             ((InfoTab) tab).showDashboard();
@@ -829,7 +832,7 @@ public class MainView extends BorderPane {
         if (node.getSource() != null) {
             DataSourceExtension.Source source = node.getSource();
             tab = new InfoTab(source.getName(), DbIcons.of(source.getTypeName()), source::loadOverview,
-                    source::loadHealth);
+                    source::loadHealth, source.getDashboard());
         } else {
             ConnectionProfile profile = node.getProfile();
             DatabaseSession session = context.getSessionManager().getSession(profile);

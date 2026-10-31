@@ -387,7 +387,7 @@ class ConnectionFormTest {
         ConnectionDialog dialog = FxTestSupport.call(() -> new ConnectionDialog(stage, context, null));
         FxTestSupport.run(dialog::show);
         FxTestSupport.run(() -> {
-            ConnectionForm dialogForm = (ConnectionForm) dialog.getDialogPane().getContent();
+            ConnectionForm dialogForm = (ConnectionForm) Dialogs.contentOf(dialog);
             @SuppressWarnings("unchecked")
             ComboBox<DbType> combo = (ComboBox<DbType>) dialogForm.lookup("#dbTypeCombo");
             combo.setValue(DbType.POSTGRESQL);

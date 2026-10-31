@@ -102,6 +102,9 @@ class SyncTabTest {
         }
         mainView = new MainView(context);
         stage.setScene(new Scene(mainView, 1200, 800));
+        // The window of the tests keeps the size of the tests before, the toolbar needs its own width
+        stage.setWidth(1200);
+        stage.setHeight(800);
         stage.show();
     }
 
@@ -293,46 +296,34 @@ class SyncTabTest {
     }
 
     /**
-     * A task of the system scheduler is registered when it is saved, removed when it is switched off or deleted
+     * Copy Command gives the command line of the task, SqlJam registers nothing with the system
      */
     @Test
-    void registersTasksOfTheSystemScheduler() throws Exception {
-        String[] crontab = {null};
-        context.setSystemScheduler(new com.github.sqljam.face.service.SystemScheduler("Linux", List.of("sqljam"),
-                new File(dir, "sync.log"), (command, input) -> {
-                    if (command.contains("-l")) {
-                        return new com.github.sqljam.face.service.SystemScheduler.Result(crontab[0] == null ? 1 : 0,
-                                crontab[0] == null ? "" : crontab[0]);
-                    }
-                    crontab[0] = input;
-                    return new com.github.sqljam.face.service.SystemScheduler.Result(0, "");
-                }));
+    void copiesTheCommandOfATask() throws Exception {
         SyncTab tab = openSync();
-        SyncTaskDialog dialog = dialog(null);
-        FxTestSupport.run(() -> {
-            ComboBox<ConnectionProfile> targets = node(dialog, "syncTargetCombo");
-            targets.setValue(targets.getItems().stream().filter(profile -> profile.getName().equals("target"))
-                    .findFirst().orElseThrow());
-            row(dialog, "ORDERS").selected.set(true);
-            ((ComboBox<SyncTask.Runner>) node(dialog, "syncRunnerCombo")).setValue(SyncTask.Runner.SYSTEM);
-        });
-        FxTestSupport.waitUntil(() -> "UPDATED_AT".equals(row(dialog, "ORDERS").watermarkColumn.get()));
-        SyncTask task = FxTestSupport.call(dialog::buildTask);
-        assertEquals(SyncTask.Runner.SYSTEM, task.getRunner());
+        SyncTask task = new SyncTask();
+        task.setName("nightly");
+        task.setSourceId(source.getId());
+        task.setTargetId(target.getId());
+        task.getTables().add(new SyncTask.Table("ORDERS", "ID", SyncTask.WatermarkType.INCREASING_KEY));
+        task.setScheduleType(SyncTask.ScheduleType.MANUAL);
         FxTestSupport.run(() -> tab.save(task));
-        assertTrue(crontab[0].contains("0 * * * * sqljam sync --task " + task.getId()), crontab[0]);
-        assertEquals("System scheduler", FxTestSupport.call(() -> tab.getTable().getColumns().get(4).getCellData(0)));
-        // The scheduler of SqlJam leaves it to the system
-        context.getSyncScheduler().tick();
-        assertFalse(context.getSyncScheduler().isRunning(task.getId()));
+        // Found among the items of the toolbar, a narrow window puts it into the overflow menu instead of the scene
+        Button command = FxTestSupport.call(() -> {
+            tab.getContent().applyCss();
+            return (Button) tab.getContent().lookupAll(".tool-bar").stream()
+                    .flatMap(bar -> ((javafx.scene.control.ToolBar) bar).getItems().stream())
+                    .filter(item -> "syncCommandButton".equals(item.getId())).findFirst().orElseThrow();
+        });
+        assertTrue(FxTestSupport.call(command::isDisabled));
         FxTestSupport.run(() -> tab.getTable().getSelectionModel().select(0));
-        FxTestSupport.run(((Button) tab.getContent().lookup("#syncToggleButton"))::fire);
-        assertEquals("", crontab[0]);
-        FxTestSupport.run(((Button) tab.getContent().lookup("#syncToggleButton"))::fire);
-        assertTrue(crontab[0].contains(task.getId()));
-        Platform.runLater(() -> tab.delete(tab.getTasks().get(0)));
-        FxTestSupport.closeDialog(ButtonType.OK);
-        FxTestSupport.waitUntil(() -> "".equals(crontab[0]));
+        assertFalse(FxTestSupport.call(command::isDisabled));
+        FxTestSupport.run(command::fire);
+        // The headless screen of the tests has no clipboard of the system, the copied line is told
+        String copied = FxTestSupport.call(() -> tab.copyCommand(tab.getTable().getSelectionModel()
+                .getSelectedItem()));
+        assertTrue(copied.endsWith(" sync --task " + task.getId()), copied);
+        assertNull(FxTestSupport.call(() -> tab.copyCommand(null)));
     }
 
     @Test

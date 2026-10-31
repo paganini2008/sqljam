@@ -99,7 +99,6 @@ class SyncCommandTest {
         task.getTables().add(new SyncTask.Table("ITEMS", "ID", SyncTask.WatermarkType.INCREASING_KEY));
         task.setScheduleType(SyncTask.ScheduleType.INTERVAL);
         task.setIntervalMinutes(30);
-        task.setRunner(SyncTask.Runner.SYSTEM);
         context.getSyncScheduler().getStore().saveTask(task);
     }
 
@@ -128,7 +127,7 @@ class SyncCommandTest {
         assertTrue(SyncCommand.isCommand(new String[]{"sync", "--list"}));
         assertFalse(SyncCommand.isCommand(new String[]{}));
         assertEquals(0, run("sync", "--list"));
-        assertTrue(out().contains("Items\tSYSTEM\tevery 30 min"), out());
+        assertTrue(out().contains("Items\tevery 30 min"), out());
 
         // Created just now: not due yet
         assertEquals(0, run("sync", "--task", "items", "--if-due"));

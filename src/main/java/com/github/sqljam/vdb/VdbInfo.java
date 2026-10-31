@@ -65,4 +65,36 @@ public final class VdbInfo {
         }
         return String.format(Locale.ENGLISH, "%.1f %s", value, units[unit]);
     }
+
+    /**
+     * Values of the metrics of the Prometheus text of a server by name, the values of their labels added up, e.g.
+     * rest_responses_total of every endpoint
+     */
+    public static java.util.Map<String, Double> prometheus(String text) {
+        java.util.Map<String, Double> values = new java.util.LinkedHashMap<>();
+        for (String line : text.split("\\R")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("#")) {
+                continue;
+            }
+            int brace = trimmed.indexOf('{');
+            int end = brace >= 0 ? brace : trimmed.indexOf(' ');
+            if (end <= 0) {
+                continue;
+            }
+            // The value follows the labels or the name, a timestamp may follow the value
+            String rest = (brace >= 0 ? trimmed.substring(trimmed.lastIndexOf('}') + 1) : trimmed.substring(end))
+                    .trim();
+            if (rest.isEmpty()) {
+                continue;
+            }
+            String[] tail = rest.split("\\s+");
+            try {
+                values.merge(trimmed.substring(0, end), Double.parseDouble(tail[0]), Double::sum);
+            } catch (NumberFormatException e) {
+                // NaN of a label or not a sample
+            }
+        }
+        return values;
+    }
 }

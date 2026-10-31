@@ -31,7 +31,7 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 | 表格工具要 CSV | CSV 导出包可选分隔符、引号、NULL 表示、表头、编码（Excel 用的 UTF-8 BOM、GBK 等）和日期格式，`manifest.json` 记录每列类型，导回时精确还原，也能加载其他工具的 CSV 文件 |
 | 导错了怎么办 | 默认**一个事务**：出错整体回滚，也可以**每 N 行提交一次**。勾选**跳过出错的行**则继续导入，每条跳过的记录都写进日志，可筛选、可保存。勾选**提交前确认**，导入成功后先看结果再 **Commit** 或 **Roll Back** |
 | 数据到底全过去了没有 | 每次导入导出都有**迁移报告**，成功、失败、取消或回滚都有：每张表的源行数、写入行数、跳过行数，结束后重新统计的目标行数和 ✓ / ✗ 核对结果，创建了哪些对象，每条跳过的行和原因，停在哪张表的第几行，以及中断的错误。**View Report** 单独一页打开，**Transfer → Import History** 列出全部历史报告，可导出 Markdown、HTML、JSON |
-| 副本要一直保持最新 | **Sync Tasks** 定时同步：按更新时间列或递增主键找出上次之后变化的行，每 N 分钟或每天定点运行。首次全量，提交成功后才移动水位，连接类错误自动重试，数据类错误不重试。可以由 SqlJam 在打开时运行，也可以登记到**系统调度器**（crontab、Windows 任务计划），SqlJam 关着也照跑。向量库集合同样可以同步，每次同步都有迁移报告 |
+| 副本要一直保持最新 | **Sync Tasks** 定时同步：按更新时间列或递增主键找出上次之后变化的行，每 N 分钟或每天定点运行。首次全量，提交成功后才移动水位，连接类错误自动重试，数据类错误不重试。SqlJam 打开时自动运行，关着时可以复制任务的命令行，自己填进 crontab 或 Windows 任务计划，SqlJam 不会改动系统。向量库集合同样可以同步，每次同步都有迁移报告 |
 | 目标已有部分数据 | **按主键更新或插入**：主键（或自选的唯一索引列）相同的行更新，其余插入。**按主键跳过已存在的行**：已有的行保持不变，只插入新行。默认是插入 |
 | 数仓和业务库割裂 | DuckDB、ClickHouse 作为 OLAP 数据源，和关系型数据库分组展示 |
 | 只要表的一部分 | 数据页查询（列、WHERE、GROUP BY、ORDER BY），只导出查询结果的行 |
@@ -42,7 +42,7 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 | 向量检索跟着数据走 | pgvector、MySQL、MariaDB、Oracle、SQL Server、Db2、DuckDB、ClickHouse 的向量保留维度，向量索引保留距离和参数 |
 | 向量存在向量数据库里 | Milvus、Qdrant、Weaviate、Pinecone、Elasticsearch、OpenSearch、Chroma 作为**向量数据库**出现在连接树中：浏览数据库、集合、分区、租户和命名空间，分页查看记录，再把集合直接写进支持向量的数据库：id、向量、每个字段各成一列，完整 payload 保存为 JSON |
 | 数据库在跳板机后面 | 每个数据源可配 **SSH 隧道**，用密码或私钥认证，主机密钥首次信任后记住，隧道断开后自动重连 |
-| 连的是哪台服务器，状态如何 | **信息页**显示数据源或向量数据库的概览和健康状况。**Dashboard** 子页画最近 5 分钟的实时曲线，每 1 到 30 秒采样一次：会话、事务、语句、行数、缓存命中、锁等待、网络、CPU、内存和库大小，取自各数据库自己的统计视图。嵌入式数据库跑在 SqlJam 进程里，显示 SqlJam 的 CPU 和内存。服务器不提供的指标会列出原因 |
+| 连的是哪台服务器，状态如何 | **信息页**显示数据源或向量数据库的概览和健康状况。**Dashboard** 子页画最近 5 分钟的实时曲线，每 1 到 30 秒采样一次：会话、事务、语句、行数、缓存命中、锁等待、网络、CPU、内存和库大小，取自各数据库自己的统计视图。嵌入式数据库跑在 SqlJam 进程里，显示 SqlJam 的 CPU 和内存。向量数据库显示集合数和记录数，Elasticsearch、OpenSearch 还有 CPU、堆内存、写入和查询速率，Qdrant 还有请求数和内存。服务器不提供的指标会列出原因 |
 | 长内容，要把几行贴进工单 | 单元格只显示一行，双击查看完整内容，**Copy Rows As** 复制为 CSV、TSV、JSON 或 Markdown |
 | 数据源太多 | 按关系型、OLAP、向量数据库分组并显示各自的图标，树上方的**过滤框**按名称或类型查找 |
 
@@ -87,7 +87,7 @@ bin/
 
 所有数据表格每格只显示一行，双击或 **Shift+Enter** 查看完整内容（JSON 自动缩进，向量显示维度），点表头对本页排序，**Copy Rows As** 把选中的行复制为 CSV、TSV、JSON 或 Markdown。工具栏的 **Info** 显示所选数据源的服务器、驱动、会话和健康状况。
 
-三段教学视频，每段约 2 分钟：[SQL 数据库](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sql.mp4)（筛选行、导出到文件、导出包导入 PostgreSQL、SQL 查询器、直接复制到 SQL Server），[向量数据库](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-vectors.mp4)（浏览 Qdrant 集合、导入 PostgreSQL、Weaviate 租户），[定时同步与迁移报告](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sync.mp4)（示例库同步到 PostgreSQL、首次全量和增量、查看报告、交给系统调度器）。
+三段教学视频，每段约 2 分钟：[SQL 数据库](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sql.mp4)（筛选行、导出到文件、导出包导入 PostgreSQL、SQL 查询器、直接复制到 SQL Server），[向量数据库](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-vectors.mp4)（浏览 Qdrant 集合、导入 PostgreSQL、Weaviate 租户），[定时同步与迁移报告](https://github.com/paganini2008/sqljam/blob/master/docs/assets/sqljam-sync.mp4)（示例库同步到 PostgreSQL、首次全量和增量、查看报告、复制任务的命令行）。
 
 | 1. 数据源 | 2. 导出向导 | 3. 进度 |
 |---|---|---|
@@ -284,25 +284,40 @@ try (VdbClient client = VdbType.QDRANT.createClient(new VdbSource(VdbType.QDRANT
 | `sqljam.vdb.connections.file` | `${sqljam.home}/vdb-connections.json` | 保存的向量数据库 |
 | `sqljam.ssh.known-hosts.file` | `${sqljam.home}/ssh_known_hosts` | SSH 隧道服务器的主机密钥 |
 
+
+同步任务也可以不开窗口运行：在 Transfer > Sync Tasks 里选中任务，点 **Copy Command** 复制它的完整命令行，再自己填进系统的调度器。SqlJam 不会改动你的系统。注意记住相关数据源的密码，并把任务在 SqlJam 里设为 Run Now only，避免两边重复运行。
+
+```text
+# macOS、Linux 的 crontab（crontab -e）：每 15 分钟运行一个任务
+*/15 * * * * /opt/sqljam/sqljam.sh sync --task "Shop to PostgreSQL" >> ~/.sqljam/sync.log 2>&1
+# 或者每 5 分钟检查一次，各任务按 SqlJam 里设的时间到点才运行
+*/5 * * * * /opt/sqljam/sqljam.sh sync --due >> ~/.sqljam/sync.log 2>&1
+```
+
+```text
+:: Windows 控制台（也可以把同样的命令填进任务计划程序）
+schtasks /Create /TN "SqlJam sync" /SC MINUTE /MO 15 /TR "C:\SqlJam\sqljam.bat sync --task \"Shop to PostgreSQL\""
+```
+
 ## 8. Performance
 
 ![Benchmark](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/benchmark.png)
 
 | 场景（20 万行 × 6 列） | 耗时 | 行/秒 |
 |---|---|---|
-| H2 → MySQL | 10.3 s | 19.5k |
-| H2 → MariaDB | 9.5 s | 21.1k |
-| H2 → PostgreSQL | 6.4 s | 31.3k |
-| H2 → Oracle | 4.2 s | 47.9k |
-| H2 → SQL Server | 12.0 s | 16.7k |
-| H2 → Db2 | 9.3 s | 21.6k |
-| H2 → ClickHouse | 4.2 s | 47.4k |
-| H2 → DuckDB | 5.7 s | 35.1k |
-| H2 → SQL 导出包 | 2.6 s | 76.1k |
-| H2 → Parquet 导出包 | 5.7 s | 35.4k |
-| H2 → CSV 导出包 | 5.8 s | 34.7k |
-| SQL 导出包 → PostgreSQL | 24.3 s | 8.2k |
-| Qdrant → PostgreSQL （2 万个点，256 维向量和 payload） | 18.4 s | 1.1k |
+| H2 → MySQL | 9.9 s | 20.2k |
+| H2 → MariaDB | 7.7 s | 26.0k |
+| H2 → PostgreSQL | 6.9 s | 28.8k |
+| H2 → Oracle | 4.8 s | 41.6k |
+| H2 → SQL Server | 13.3 s | 15.1k |
+| H2 → Db2 | 10.7 s | 18.7k |
+| H2 → ClickHouse | 5.4 s | 36.8k |
+| H2 → DuckDB | 5.4 s | 37.2k |
+| H2 → SQL 导出包 | 2.5 s | 81.0k |
+| H2 → Parquet 导出包 | 5.8 s | 34.6k |
+| H2 → CSV 导出包 | 5.5 s | 36.7k |
+| SQL 导出包 → PostgreSQL | 10.1 s | 19.8k |
+| Qdrant → PostgreSQL （2 万个点，256 维向量和 payload） | 18.3 s | 1.1k |
 
 环境：Apple M2 Max / 32 GB / JDK 17。数据库在局域网服务器的 Docker 中（约 100 Mbit/s），H2、DuckDB 和导出包在本机。默认配置。每个场景由 `TransferBenchmark` 测得。
 

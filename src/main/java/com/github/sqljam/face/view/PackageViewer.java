@@ -98,6 +98,7 @@ public class PackageViewer {
         this.directory = directory;
         stage.initOwner(owner);
         Branding.applyIcons(stage);
+        Dialogs.fitToScreen(stage);
         stage.setTitle(Messages.format("package.title", directory.getName()));
 
         fileTree.setId("packageFileTree");

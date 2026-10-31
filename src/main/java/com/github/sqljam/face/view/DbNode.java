@@ -48,6 +48,11 @@ public class DbNode {
         MESSAGE,
 
         /**
+         * A data source which could not be connected, its full error is the detail
+         */
+        ERROR,
+
+        /**
          * Group of the sources of an extension, e.g. Vector databases
          */
         GROUP,
@@ -79,6 +84,10 @@ public class DbNode {
      * Item of a source of an extension: a database, a collection or a partition
      */
     private final SourceItem item;
+    /**
+     * Full text of an error, the label is its summary
+     */
+    private String detail;
 
     private DbNode(Kind kind, ConnectionProfile profile, String catalog, String schema, TableInfo table,
                    String label) {
@@ -146,6 +155,12 @@ public class DbNode {
 
     public static DbNode message(String message) {
         return new DbNode(Kind.MESSAGE, null, null, null, null, message);
+    }
+
+    public static DbNode error(String summary, String detail) {
+        DbNode node = new DbNode(Kind.ERROR, null, null, null, null, summary);
+        node.detail = detail;
+        return node;
     }
 
     public boolean isContainer() {
