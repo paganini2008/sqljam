@@ -32,7 +32,7 @@ import com.github.sqljam.impexp.MetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
 import com.github.sqljam.impexp.VectorIndex;
 import com.github.sqljam.impexp.VectorType;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 import lombok.extern.slf4j.Slf4j;
 

@@ -39,8 +39,10 @@ import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import lombok.extern.slf4j.Slf4j;
+import com.github.sqljam.impexp.fs.CsvImporter;
+import com.github.sqljam.impexp.fs.ExcelImporter;
 
 /**
  * @Description: ScriptImporter imports a directory exported by {@link ScriptExporter} into a database: schema.sql,
@@ -127,7 +129,7 @@ public class ScriptImporter extends AbstractFileImporter {
         if (manifest.getDataFormat() != null && manifest.getDataFormat() != DataFormat.SQL) {
             throw new ImpExpException(String.format("Packages of %s files are imported by %s",
                     manifest.getDataFormat(), manifest.getDataFormat() == DataFormat.CSV ? "CsvImporter"
-                            : "ParquetImporter"));
+                            : manifest.getDataFormat() == DataFormat.EXCEL ? "ExcelImporter" : "ParquetImporter"));
         }
         for (ExportManifest.FileEntry fileEntry : manifest.getFiles()) {
             File file = new File(dir, fileEntry.getPath());

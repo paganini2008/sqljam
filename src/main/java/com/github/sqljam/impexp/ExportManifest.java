@@ -80,7 +80,12 @@ public class ExportManifest {
         /**
          * Rows of a table in a CSV file with a header row
          */
-        CSV
+        CSV,
+
+        /**
+         * Rows of a table in the sheet of an Excel workbook with a header row
+         */
+        EXCEL
     }
 
     private String format = FORMAT;

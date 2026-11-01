@@ -57,7 +57,6 @@ public class DuckDBDialect extends Dialect {
      */
     static final int ROWS_PER_INSERT = 256;
 
-
     /**
      * Max precision of DECIMAL
      */

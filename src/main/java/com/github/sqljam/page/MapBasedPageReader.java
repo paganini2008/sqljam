@@ -29,7 +29,7 @@ import javax.sql.DataSource;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.PooledConnectionFactory;
 import com.github.sqljam.jdbc.ConnectionFactory;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import com.github.sqljam.utils.CaseInsensitiveMap;
 
 /**

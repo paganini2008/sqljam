@@ -42,7 +42,7 @@ import org.testfx.framework.junit5.ApplicationExtension;
 import com.github.sqljam.face.view.DocImages;
 import com.github.sqljam.face.view.FxTestSupport;
 import com.github.sqljam.impexp.AbstractFileImporter;
-import com.github.sqljam.impexp.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvExporter;
 import com.github.sqljam.impexp.DataFileStrategy;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Exporter;

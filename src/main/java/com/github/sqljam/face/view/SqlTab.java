@@ -33,7 +33,7 @@ import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.face.service.SqlStatements;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.collections.ObservableList;
 import javafx.geometry.Orientation;

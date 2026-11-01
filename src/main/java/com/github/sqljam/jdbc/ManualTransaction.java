@@ -31,6 +31,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import lombok.extern.slf4j.Slf4j;
+import com.github.sqljam.utils.JdbcUtils;
 
 /**
  * @Description: ManualTransaction runs an import in one transaction which is committed or rolled back by the user

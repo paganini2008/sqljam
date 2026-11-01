@@ -55,7 +55,7 @@ import com.github.sqljam.impexp.MetaDataOperations;
 import com.github.sqljam.impexp.ScriptExporter;
 import com.github.sqljam.impexp.ScriptImporter;
 import com.github.sqljam.impexp.SqlScriptRunner;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 
 /**
  * @Description: PartitionIT backs up and restores partitioned tables of every partitioning type of each database

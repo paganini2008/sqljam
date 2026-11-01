@@ -27,7 +27,6 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
-
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TransferReport;

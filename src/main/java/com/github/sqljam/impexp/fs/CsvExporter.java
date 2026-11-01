@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.github.sqljam.impexp;
+package com.github.sqljam.impexp.fs;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -21,6 +21,10 @@ import java.util.List;
 import java.util.Map;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.DataFileExporter;
+import com.github.sqljam.impexp.DataFormat;
+import com.github.sqljam.impexp.DuckDBWorkspace;
+import com.github.sqljam.impexp.ExportManifest;
 
 /**
  * @Description: CsvExporter exports tables as an export package with CSV files: schema.sql and constraints.sql for

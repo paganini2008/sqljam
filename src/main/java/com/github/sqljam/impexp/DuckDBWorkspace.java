@@ -33,8 +33,10 @@ import java.util.stream.Collectors;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import lombok.extern.slf4j.Slf4j;
+import com.github.sqljam.impexp.fs.CsvOptions;
+import com.github.sqljam.impexp.fs.CsvSplitter;
 
 /**
  * @Description: DuckDBWorkspace is a temporary DuckDB database used to write and read Parquet and CSV files. Rows

@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.github.sqljam.impexp.CsvImporter;
+import com.github.sqljam.impexp.fs.CsvImporter;
 import com.github.sqljam.jdbc.ManualTransaction;
 import java.io.File;
 import java.nio.file.Files;
@@ -425,9 +425,8 @@ class ImportPackageDialogTest {
         assertTrue(new File(parquetDir, ExportManifest.FILE_NAME).delete());
         open(parquetDir);
         assertTrue(startDisabled());
-        assertEquals("The directory contains Parquet or CSV files without manifest.json, please use Import Parquet or CSV"
-                + " Files",
-                text("warningLabel"));
+        assertEquals("The directory contains Parquet, CSV or Excel files without manifest.json, please use Import"
+                + " Parquet, CSV or Excel Files", text("warningLabel"));
         assertTrue(ImportPackageDialog.isParquetDirectory(parquetDir));
         assertFalse(ImportPackageDialog.isParquetDirectory(dir));
     }

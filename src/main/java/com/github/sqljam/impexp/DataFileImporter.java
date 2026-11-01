@@ -34,6 +34,8 @@ import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.Validate;
 import com.github.sqljam.jdbc.SharedConnectionFactory;
 import lombok.extern.slf4j.Slf4j;
+import com.github.sqljam.impexp.fs.CsvImporter;
+import com.github.sqljam.impexp.fs.CsvSplitter;
 
 /**
  * @Description: DataFileImporter imports data files into a database by a connection. Packages exported by

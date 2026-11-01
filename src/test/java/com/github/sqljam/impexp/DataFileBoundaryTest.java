@@ -34,6 +34,9 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import com.github.sqljam.impexp.fs.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvImporter;
+import com.github.sqljam.impexp.fs.CsvOptions;
 
 /**
  * @Description: DataFileBoundaryTest verifies CSV and Parquet packages at their boundaries with H2 databases: empty

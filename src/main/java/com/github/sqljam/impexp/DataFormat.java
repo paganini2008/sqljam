@@ -17,8 +17,8 @@ package com.github.sqljam.impexp;
 
 /**
  * @Description: DataFormat of rows in an export package: SQL insert statements, Parquet files (one file per
- *               table) for analytical tools, or CSV files (one file per table with a header row) for spreadsheets
- *               and text tools
+ *               table) for analytical tools, CSV files (one file per table with a header row) for spreadsheets
+ *               and text tools, or Excel workbooks (one .xlsx file per table with a header row)
  * @Author: Fred Feng
  * @Date: 26/03/2023
  * @Version 1.0.0
@@ -29,5 +29,7 @@ public enum DataFormat {
 
     PARQUET,
 
-    CSV
+    CSV,
+
+    EXCEL
 }

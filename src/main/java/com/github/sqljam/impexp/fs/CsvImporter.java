@@ -13,13 +13,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.github.sqljam.impexp;
+package com.github.sqljam.impexp.fs;
 
 import java.io.File;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.List;
+import com.github.sqljam.impexp.DataFileImporter;
+import com.github.sqljam.impexp.DataFormat;
+import com.github.sqljam.impexp.DbType;
+import com.github.sqljam.impexp.DuckDBWorkspace;
+import com.github.sqljam.impexp.ExportManifest;
 
 /**
  * @Description: CsvImporter imports CSV files with a header row into a database by a connection: packages exported

@@ -2,7 +2,7 @@
 
 **Use the engine of SqlJam from your own Java code.**
 
-The desktop application is a thin layer over the `com.github.sqljam.impexp` API. Every export, import and copy that the UI runs is a few lines of Java: configure a source, pick an exit, call `export`. This guide shows those lines for each task.
+The desktop application is a thin layer over the `com.github.sqljam.impexp` API (CSV and Excel classes in `com.github.sqljam.impexp.fs`). Every export, import and copy that the UI runs is a few lines of Java: configure a source, pick an exit, call `export`. This guide shows those lines for each task.
 
 ---
 
@@ -13,10 +13,10 @@ The desktop application is a thin layer over the `com.github.sqljam.impexp` API.
 | [Add SqlJam to a project](#add-sqljam-to-a-project) | Maven coordinates |
 | [Core classes](#core-classes) | Overview of the API |
 | [1. Export tables as a SQL package](#1-export-tables-as-a-sql-package) | `ScriptExporter` |
-| [2. Export Parquet and CSV packages](#2-export-parquet-and-csv-packages) | `ParquetExporter`, `CsvExporter`, `CsvOptions` |
+| [2. Export Parquet and CSV packages](#2-export-parquet-and-csv-packages) | `ParquetExporter`, `CsvExporter`, `CsvOptions`, `ExcelExporter` |
 | [3. Copy tables into another database](#3-copy-tables-into-another-database) | `ImportExporter` |
 | [4. Import an export package](#4-import-an-export-package) | `AbstractFileImporter` |
-| [5. Load Parquet and CSV files of other tools](#5-load-parquet-and-csv-files-of-other-tools) | `ParquetImporter`, `CsvImporter` |
+| [5. Load Parquet and CSV files of other tools](#5-load-parquet-and-csv-files-of-other-tools) | `ParquetImporter`, `CsvImporter`, `ExcelImporter` |
 | [6. Export the rows of a query](#6-export-the-rows-of-a-query) | `ExportConfiguration.queries` |
 | [7. Export part of a table](#7-export-part-of-a-table) | `TableQuery` |
 | [8. Transactions and errors](#8-transactions-and-errors) | `ManualTransaction`, `SharedConnectionFactory` |
@@ -59,10 +59,10 @@ flowchart LR
     S[(Source database)] --> E[Exporter<br/>metadata, pages of rows]
     Q[Free query] --> E
     E --> H1[ScriptExportHandler<br/>SQL package]
-    E --> H2[DuckDB workspace<br/>Parquet / CSV package]
+    E --> H2[DuckDB workspace<br/>Parquet / CSV / Excel package]
     E --> H3[ImportExportHandler<br/>target database]
     P[Export package] --> I[AbstractFileImporter] --> T[(Target database)]
-    F[Parquet / CSV files] --> D[DataFileImporter] --> T
+    F[Parquet / CSV / Excel files] --> D[DataFileImporter] --> T
     H3 --> T
 ```
 
@@ -70,10 +70,10 @@ flowchart LR
 |---|---|
 | `Exporter.ExportConfiguration` | Source: database, catalogs, schemas, tables, queries and options |
 | `ScriptExporter` | Writes a SQL package: `schema.sql`, data files, LOB files, `constraints.sql`, `manifest.json` |
-| `ParquetExporter` / `CsvExporter` | Write Parquet or CSV packages through an embedded DuckDB |
+| `ParquetExporter` / `CsvExporter` / `ExcelExporter` | Write Parquet, CSV or Excel packages through an embedded DuckDB |
 | `ImportExporter` | Copies tables straight into another database |
-| `AbstractFileImporter` | Imports any package: SQL, Parquet or CSV, chosen by its `manifest.json` |
-| `ParquetImporter` / `CsvImporter` | Load files of other tools into a table |
+| `AbstractFileImporter` | Imports any package: SQL, Parquet, CSV or Excel, chosen by its `manifest.json` |
+| `ParquetImporter` / `CsvImporter` / `ExcelImporter` | Load files of other tools into a table, no `manifest.json` needed |
 | `ManualTransaction` | One transaction for a whole import, committed or rolled back by you |
 | `ExportListener` | Progress, messages, errors and cancel |
 | `Dialect` / `MetaDataOperations` | Everything special to one database, one subclass per database and version |
@@ -162,6 +162,15 @@ csv.exportDdlAndData();
 
 The column types are kept in `manifest.json`, so an import of the package restores every value with its type.
 
+An Excel package has one `.xlsx` workbook for each table, numbers, dates and booleans are cells of their types and longer values (more than 15 digits, microseconds, binaries) are text:
+
+```java
+ExcelExporter excel = new ExcelExporter(new File("export/excel"));
+configureSource(excel.getConfiguration());
+excel.setMaxRows(500_000);                        // orders.xlsx, orders_2.xlsx … (1,048,575 at most)
+excel.exportDdlAndData();
+```
+
 ---
 
 ## 3. Copy tables into another database
@@ -220,7 +229,7 @@ SshUtils.close("pg-prod");
 
 ## 4. Import an export package
 
-The package decides the importer: SQL, Parquet or CSV.
+The package decides the importer: SQL, Parquet, CSV or Excel.
 
 ```java
 try (Connection connection = DriverManager.getConnection(
@@ -251,6 +260,14 @@ try (Connection connection = DriverManager.getConnection("jdbc:h2:./warehouse", 
     long rows = importer.importFiles(List.of(new File("sales.csv"), new File("sales_2.csv")),
             "SALES", DataFileImporter.Mode.CREATE);
 }
+```
+
+A workbook of a spreadsheet needs no `manifest.json` either. The first row of the sheet names the columns, the types are detected:
+
+```java
+ExcelImporter importer = new ExcelImporter(connection, DbType.H2);
+importer.setSheet("Orders 2024");                 // the first sheet if not set
+long rows = importer.importFiles(List.of(new File("orders.xlsx")), "ORDERS", DataFileImporter.Mode.CREATE);
 ```
 
 | `DataFileImporter.Mode` | Target table |

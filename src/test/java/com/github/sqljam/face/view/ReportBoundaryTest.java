@@ -428,8 +428,8 @@ class ReportBoundaryTest {
         List<File> files = manifest.getTables().get(0).getDataFiles().stream().map(path -> new File(packageDir,
                 path)).toList();
         ProgressDialog files2 = FxTestSupport.call(() -> mainView.startFileImport(new ImportParquetDialog
-                .ParquetRequest(files, "BIG_COPY", DataFileImporter.Mode.CREATE, List.of(), null, target, null, null,
-                true, false, false, 0)));
+                .ParquetRequest(files, "BIG_COPY", DataFileImporter.Mode.CREATE, List.of(), null, null, target, null,
+                null, true, false, false, 0)));
         TransferReport fileReport = saved(context, files2);
         assertEquals(TransferReport.Status.COMPLETED, fileReport.getStatus(), fileReport.getFailure());
         assertEquals(TransferReport.Kind.FILE_IMPORT, fileReport.getKind());

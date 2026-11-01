@@ -56,7 +56,7 @@ import com.github.sqljam.impexp.QueryMetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
 import com.github.sqljam.impexp.TableQuery;
 import com.github.sqljam.jdbc.ConnectionFactory;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import com.github.sqljam.utils.SshUtils;
 
 /**

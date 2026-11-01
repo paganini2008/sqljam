@@ -27,10 +27,11 @@ import com.github.sqljam.face.service.TransferService;
 import com.github.sqljam.impexp.ParquetExporter;
 import javafx.scene.control.CheckBox;
 import com.github.sqljam.impexp.DuckDBWorkspace;
-import com.github.sqljam.impexp.CsvSplitter;
-import com.github.sqljam.impexp.CsvExporter;
-import com.github.sqljam.impexp.CsvOptions;
+import com.github.sqljam.impexp.fs.CsvSplitter;
+import com.github.sqljam.impexp.fs.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvOptions;
 import com.github.sqljam.impexp.ParquetImporter;
+import com.github.sqljam.utils.ExcelUtils;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
@@ -87,6 +88,16 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
      */
     private final CsvOptionsPane csvOptionsPane = new CsvOptionsPane(detectedCsvOptions(), true);
     private VBox csvOptionsBox;
+    /**
+     * Sheet of Excel workbooks, shown when the files are workbooks
+     */
+    private final ComboBox<String> sheetCombo = new ComboBox<>();
+    private HBox sheetBox;
+    /**
+     * Workbook whose sheets are listed, they are read again for another first file
+     */
+    private File sheetsOf;
+    private boolean loadingSheets;
     private final ComboBox<ConnectionProfile> targetCombo = new ComboBox<>();
     private final TransactionOption transactionOption;
     private final ComboBox<String> catalogCombo = new ComboBox<>();
@@ -110,9 +121,13 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
          */
         private final List<String> keyColumns;
         /**
-         * Options of CSV files, null for Parquet files
+         * Options of CSV files, null for Parquet and Excel files
          */
         private final CsvOptions csvOptions;
+        /**
+         * Sheet of Excel workbooks, null for other files
+         */
+        private final String sheet;
         private final ConnectionProfile target;
         private final String catalog;
         private final String schema;
@@ -134,13 +149,14 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
         private final int commitRows;
 
         ParquetRequest(List<File> files, String tableName, ParquetImporter.Mode mode, List<String> keyColumns,
-                       CsvOptions csvOptions, ConnectionProfile target, String catalog, String schema,
+                       CsvOptions csvOptions, String sheet, ConnectionProfile target, String catalog, String schema,
                        boolean oneTransaction, boolean confirmCommit, boolean skipErrors, int commitRows) {
             this.files = files;
             this.tableName = tableName;
             this.mode = mode;
             this.keyColumns = keyColumns;
             this.csvOptions = csvOptions;
+            this.sheet = sheet;
             this.target = target;
             this.catalog = catalog;
             this.schema = schema;
@@ -229,7 +245,19 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
         csvOptionsBox.setVisible(false);
         csvOptionsBox.setManaged(false);
         csvOptionsPane.setOnChange(this::loadPreview);
-        VBox filesPane = new VBox(8, filesTitle, fileBox, csvOptionsBox, previewLabel, previewTable);
+        sheetCombo.setId("sheetCombo");
+        sheetCombo.valueProperty().addListener((obs, oldSheet, sheet) -> {
+            if (!loadingSheets && sheet != null) {
+                loadPreview();
+            }
+        });
+        Label sheetLabel = new Label(Messages.get("parquet.sheet"));
+        sheetBox = new HBox(8, sheetLabel, sheetCombo);
+        sheetBox.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
+        sheetBox.setId("sheetBox");
+        sheetBox.setVisible(false);
+        sheetBox.setManaged(false);
+        VBox filesPane = new VBox(8, filesTitle, fileBox, csvOptionsBox, sheetBox, previewLabel, previewTable);
         filesPane.getStyleClass().add("form-section");
 
         ToggleGroup modeGroup = new ToggleGroup();
@@ -331,11 +359,14 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
         FileChooser chooser = new FileChooser();
         chooser.setTitle(Messages.get("parquet.files.add"));
         chooser.getExtensionFilters().addAll(new FileChooser.ExtensionFilter(Messages.get("parquet.files.filter"),
-                "*" + ParquetExporter.PARQUET_EXTENSION, "*" + CsvExporter.CSV_EXTENSION, "*.tsv", "*.txt"),
+                "*" + ParquetExporter.PARQUET_EXTENSION, "*" + CsvExporter.CSV_EXTENSION, "*.tsv", "*.txt",
+                "*" + ExcelUtils.EXCEL_EXTENSION),
                 new FileChooser.ExtensionFilter(Messages.get("parquet.files.filter.parquet"),
                         "*" + ParquetExporter.PARQUET_EXTENSION),
                 new FileChooser.ExtensionFilter(Messages.get("parquet.files.filter.csv"),
-                        "*" + CsvExporter.CSV_EXTENSION, "*.tsv", "*.txt"));
+                        "*" + CsvExporter.CSV_EXTENSION, "*.tsv", "*.txt"),
+                new FileChooser.ExtensionFilter(Messages.get("parquet.files.filter.excel"),
+                        "*" + ExcelUtils.EXCEL_EXTENSION));
         String lastDirectory = context.getSettings().getLastImportDirectory();
         if (StringUtils.isNotBlank(lastDirectory) && new File(lastDirectory).isDirectory()) {
             chooser.setInitialDirectory(new File(lastDirectory));
@@ -392,12 +423,16 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
             validate();
             return;
         }
-        // Files of one table are all Parquet or all CSV
+        // Files of one table are all Parquet, all CSV or all Excel
         long csvFiles = files.stream().filter(DuckDBWorkspace::isCsv).count();
+        long excelFiles = files.stream().filter(ExcelUtils::isExcel).count();
         boolean csv = csvFiles > 0 && csvFiles == files.size();
+        boolean excel = excelFiles > 0 && excelFiles == files.size();
         csvOptionsBox.setVisible(csv);
         csvOptionsBox.setManaged(csv);
-        if (csvFiles > 0 && csvFiles < files.size()) {
+        sheetBox.setVisible(excel);
+        sheetBox.setManaged(excel);
+        if (csvFiles > 0 && csvFiles < files.size() || excelFiles > 0 && excelFiles < files.size()) {
             showPreview(null);
             validate();
             warningLabel.setText(Messages.get("parquet.error.mixed"));
@@ -408,7 +443,11 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
         previewTable.getItems().clear();
         validate();
         CsvOptions csvOptions = csv ? csvOptionsPane.getOptions() : null;
-        TaskRunner.run(() -> context.getTransferService().previewParquet(files, PREVIEW_ROWS, csvOptions),
+        if (excel && !loadSheets(files.get(0))) {
+            return;
+        }
+        String sheet = excel ? sheetCombo.getValue() : null;
+        TaskRunner.run(() -> context.getTransferService().previewParquet(files, PREVIEW_ROWS, csvOptions, sheet),
                 preview -> {
             if (version == previewVersion) {
                 filesValid = true;
@@ -423,6 +462,34 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
                 startButton.setDisable(true);
             }
         });
+    }
+
+    /**
+     * Lists the sheets of the first workbook, the first sheet is chosen
+     *
+     * @return whether the sheets are read
+     */
+    private boolean loadSheets(File workbook) {
+        if (workbook.equals(sheetsOf) && !sheetCombo.getItems().isEmpty()) {
+            return true;
+        }
+        loadingSheets = true;
+        try {
+            sheetCombo.getItems().setAll(ExcelUtils.sheetNames(workbook));
+            sheetCombo.getSelectionModel().selectFirst();
+            sheetsOf = workbook;
+            return true;
+        } catch (Exception e) {
+            sheetCombo.getItems().clear();
+            sheetsOf = null;
+            showPreview(null);
+            warningLabel.setText(Messages.format("parquet.error.read", StringUtils.defaultIfBlank(e.getMessage(),
+                    e.getClass().getSimpleName())));
+            startButton.setDisable(true);
+            return false;
+        } finally {
+            loadingSheets = false;
+        }
     }
 
     private void showPreview(TransferService.ParquetPreview preview) {
@@ -510,7 +577,7 @@ public class ImportParquetDialog extends Dialog<ImportParquetDialog.ParquetReque
                         ? ParquetImporter.Mode.SKIP_EXISTING : appendRadio.isSelected()
                         ? ParquetImporter.Mode.APPEND : ParquetImporter.Mode.CREATE, KeyColumnsDialog.parse(
                         keyColumnsField.getText()), csvOptionsBox.isVisible() ? csvOptionsPane.getOptions() : null,
-                targetCombo.getValue(), catalogCombo.isDisabled() ? null : catalogCombo.getValue(),
+                sheetBox.isVisible() ? sheetCombo.getValue() : null, targetCombo.getValue(), catalogCombo.isDisabled() ? null : catalogCombo.getValue(),
                 schemaCombo.isDisabled() ? null : StringUtils.trimToNull(schemaCombo.getEditor().getText()),
                 transactionOption.isOneTransaction(), transactionOption.isConfirmCommit(),
                 transactionOption.isSkipErrors(), transactionOption.isOneTransaction() ? 0

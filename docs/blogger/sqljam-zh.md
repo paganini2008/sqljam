@@ -9,7 +9,7 @@
 **SqlJam**：*Move tables across databases. Schema, data and all.*
 
 一个 Java 17 + JavaFX 的桌面导入导出工具，支持关系型与 OLAP 数据库（**MySQL、MariaDB、PostgreSQL、Oracle、SQL Server、Db2、H2、SQLite、Microsoft Access、DuckDB、ClickHouse** 等）任意互导：
-可以**直接导入目标库**，也可以在同一个 schema 里复制表，或者导出为带描述文件的 **SQL / Parquet / CSV 导出包**，之后再成对导入。导入目标库默认在**一个事务**里完成，出错整体回滚，数据可以**按主键更新、插入或跳过**。
+可以**直接导入目标库**，也可以在同一个 schema 里复制表，或者导出为带描述文件的 **SQL / Parquet / CSV / Excel 导出包**，之后再成对导入。导入目标库默认在**一个事务**里完成，出错整体回滚，数据可以**按主键更新、插入或跳过**。
 
 ![SqlJam 主界面](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
 
@@ -29,6 +29,7 @@ SqlJam 用**一棵元数据树 + 按目标库和版本选择的方言**，把这
 | 脚本没有上下文 | `manifest.json`：源、目标、选项、文件 SHA-256、行数 |
 | 分析要 Parquet | 内置 DuckDB 生成 Parquet 导出包，也能把其他工具产出的 Parquet 文件加载进任意表 |
 | 表格工具要 CSV | CSV 导出包可选分隔符、引号、NULL 表示、表头、编码（Excel 用的 UTF-8 BOM、GBK 等）和日期格式，`manifest.json` 记录每列类型，导回时精确还原，也能加载其他工具的 CSV 文件 |
+| 业务同事只用 Excel | Excel 导出包每张表一个 `.xlsx` 工作簿，数字、日期、布尔是真正的单元格，`manifest.json` 记录每列类型，导回时精确还原。其他工具的 Excel 文件不需要 `manifest.json`，选好工作表，第一行作为列名，类型自动识别 |
 | 导错了怎么办 | 默认**一个事务**：出错整体回滚，也可以**每 N 行提交一次**。勾选**跳过出错的行**则继续导入，每条跳过的记录都写进日志，可筛选、可保存。勾选**提交前确认**，导入成功后先看结果再 **Commit** 或 **Roll Back** |
 | 数据到底全过去了没有 | 每次导入导出都有**迁移报告**，成功、失败、取消或回滚都有：每张表的源行数、写入行数、跳过行数，结束后重新统计的目标行数和 ✓ / ✗ 核对结果，创建了哪些对象，每条跳过的行和原因，停在哪张表的第几行，以及中断的错误。**View Report** 单独一页打开，**Transfer → Import History** 列出全部历史报告，可导出 Markdown、HTML、JSON |
 | 副本要一直保持最新 | **Sync Tasks** 定时同步：按更新时间列或递增主键找出上次之后变化的行，每 N 分钟或每天定点运行。首次全量，提交成功后才移动水位，连接类错误自动重试，数据类错误不重试。SqlJam 打开时自动运行，关着时可以复制任务的命令行，自己填进 crontab 或 Windows 任务计划，SqlJam 不会改动系统。向量库集合同样可以同步，每次同步都有迁移报告 |
@@ -77,7 +78,7 @@ bin/
 
 右键数据源选 **Connect**，连上之后同一个菜单变成 **Disconnect**，断开时它的表页签一起关闭。导入导出选目标数据源时，旁边的 **+** 按钮可以当场新建一个。工具栏最右边是 **Exit**。**Help → About SqlJam** 里有版本、主页、仓库地址和作者联系方式，右下角的 GitHub 图标点一下直接打开仓库。
 
-工具栏的 **SQL Query** 为选中的数据源打开查询器。**Ctrl+Enter**（macOS 上是 **⌘+Enter**）执行光标所在的语句，**Ctrl+Shift+Enter** 执行全部，**Export…** 把查询的全部结果导出为 SQL、Parquet、CSV 或导入另一个数据库：
+工具栏的 **SQL Query** 为选中的数据源打开查询器。**Ctrl+Enter**（macOS 上是 **⌘+Enter**）执行光标所在的语句，**Ctrl+Shift+Enter** 执行全部，**Export…** 把查询的全部结果导出为 SQL、Parquet、CSV、Excel 或导入另一个数据库：
 
 ![SQL Query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sql-editor.png)
 
@@ -155,8 +156,8 @@ flowchart LR
     D --> I[直接导入] --> TD[(目标库)]
     D --> E[导出包<br/>schema.sql · data*.sql · lob/ · manifest.json]
     E --> SI[ScriptImporter] --> TD
-    D --> P[Parquet / CSV 导出包<br/>DuckDB 中转 · data/*.parquet 或 *.csv]
-    P --> PI[ParquetImporter · CsvImporter] --> TD
+    D --> P[Parquet / CSV / Excel 导出包<br/>DuckDB 中转 · data/*.parquet、*.csv 或 *.xlsx]
+    P --> PI[ParquetImporter · CsvImporter · ExcelImporter] --> TD
     V[(向量数据库)] --> VC[VdbClient · REST API] --> VT[集合树] --> VD[Vdb 方言] --> TD
 ```
 
@@ -164,6 +165,7 @@ flowchart LR
 - **按目标生成 SQL**：`DbType.createDialect(major, minor)` 选出版本子类。
 - **数据流**：先统计行数（百分比进度）→ 按主键分页读取 → 值归一化 → 批量写入或生成字面量。
 - **Parquet 与 CSV**：数据经过内置的 DuckDB 中转，`COPY ... TO` 写出，`read_parquet` 或按 `manifest.json` 中列类型的 `read_csv` 读回。
+- **Excel**：同一个 DuckDB 中转，每张表写成一个带冻结表头的工作表。读回时工作表先转成 CSV，所以任何表格软件的工作簿都能像外部 CSV 文件一样加载。
 - **事务**：导入在一个事务里完成，成功自动提交或经你确认后提交。MySQL、MariaDB、Oracle、H2 执行 DDL 会隐式提交，外键和自增值等语句延后到提交之后执行。
 - **按主键更新或跳过**：使用各库的 `ON CONFLICT`、`ON DUPLICATE KEY UPDATE` 或 `MERGE`，已存在的表、索引、键自动跳过。
 - **跳过出错的行**：出错的一页在 savepoint 保护下逐行重写，每条坏行连同主键和错误写进日志，其余行照常保留。
@@ -207,6 +209,9 @@ parquet.exportDdlAndData();   // schema.sql、data/orders.parquet、constraints.
 CsvExporter csv = new CsvExporter(new File("export-csv"));
 csv.setDelimiter(";");
 csv.exportDdlAndData();       // data/orders.csv、data/orders_2.csv ...
+
+ExcelExporter excel = new ExcelExporter(new File("export-excel"));
+excel.exportDdlAndData();     // data/orders.xlsx，一个带表头的工作表
 ```
 
 ### Example 2：Oracle 直接导入 SQL Server（自动建 schema）
@@ -321,7 +326,7 @@ schtasks /Create /TN "SqlJam sync" /SC MINUTE /MO 15 /TR "C:\SqlJam\sqljam.bat s
 
 环境：Apple M2 Max / 32 GB / JDK 17。数据库在局域网服务器的 Docker 中（约 100 Mbit/s），H2、DuckDB 和导出包在本机。默认配置。每个场景由 `TransferBenchmark` 测得。
 
-**质量**：覆盖每种数据库全部字段类型的跨库互导矩阵，SQL、Parquet、CSV 导出包回放，事务提交与回滚、按主键更新或插入在每种数据库上验证，同 schema 复制，旧版本语法在真实库上执行，界面功能与边界测试。
+**质量**：覆盖每种数据库全部字段类型的跨库互导矩阵，SQL、Parquet、CSV、Excel 导出包回放，事务提交与回滚、按主键更新或插入在每种数据库上验证，同 schema 复制，旧版本语法在真实库上执行，界面功能与边界测试。
 
 ## 9. 设计取舍（Design Trade-offs）
 
@@ -346,7 +351,7 @@ schtasks /Create /TN "SqlJam sync" /SC MINUTE /MO 15 /TR "C:\SqlJam\sqljam.bat s
 6. 时间、无符号、bit、money、UUID、JSON 等值跨库不失真。
 7. 连接池 + 批量写入，直接导入 4 万 ~ 9.5 万行/秒。
 8. 暗色主流界面，7 种主题，百分比进度与取消。
-9. Parquet、CSV 导出包与外部文件加载，DuckDB、ClickHouse 作为 OLAP 数据源，导入默认一个事务、出错整体回滚，支持按主键更新或插入。
+9. Parquet、CSV、Excel 导出包与外部文件加载，DuckDB、ClickHouse 作为 OLAP 数据源，导入默认一个事务、出错整体回滚，支持按主键更新或插入。
 10. SQL Query 查询器的任意查询结果都能走同样的导出出口，来自表的列保留原类型。
 11. 表数据可查询，只导出查询结果，也能在同一 schema 内复制表。
 12. Milvus、Qdrant、Weaviate、Pinecone、Elasticsearch、OpenSearch、Chroma 的集合直接导入支持向量的数据库，导入前可按条件、原生过滤或最近邻搜索预览。

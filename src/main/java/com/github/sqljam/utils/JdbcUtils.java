@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.github.sqljam.jdbc;
+package com.github.sqljam.utils;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
@@ -50,9 +50,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.lang3.StringUtils;
-import com.github.sqljam.utils.CaseInsensitiveMap;
-import com.github.sqljam.utils.ConvertUtils;
-import com.github.sqljam.utils.Observable;
+import com.github.sqljam.jdbc.Cursor;
+import com.github.sqljam.jdbc.PreparedStatementCallback;
 import lombok.experimental.UtilityClass;
 
 /**

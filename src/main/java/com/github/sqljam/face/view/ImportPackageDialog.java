@@ -24,13 +24,14 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.config.Config;
 import com.github.sqljam.face.model.ConnectionProfile;
-import com.github.sqljam.impexp.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvExporter;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.ExportManifest;
 import com.github.sqljam.impexp.ParquetExporter;
 import com.github.sqljam.impexp.SqlScriptRunner;
 import com.github.sqljam.impexp.WriteMode;
+import com.github.sqljam.utils.ExcelUtils;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.event.ActionEvent;
 import javafx.geometry.Insets;
@@ -339,7 +340,7 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
     }
 
     /**
-     * Directory with Parquet or CSV files (directly or in data/) but without manifest.json
+     * Directory with Parquet, CSV or Excel files (directly or in data/) but without manifest.json
      */
     static boolean isParquetDirectory(File directory) {
         return hasDataFiles(directory) || hasDataFiles(new File(directory, "data"));
@@ -348,7 +349,8 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
     private static boolean hasDataFiles(File directory) {
         File[] files = directory.listFiles((parent, name) -> name.toLowerCase(Locale.ENGLISH)
                 .endsWith(ParquetExporter.PARQUET_EXTENSION) || name.toLowerCase(Locale.ENGLISH)
-                .endsWith(CsvExporter.CSV_EXTENSION));
+                .endsWith(CsvExporter.CSV_EXTENSION) || name.toLowerCase(Locale.ENGLISH)
+                .endsWith(ExcelUtils.EXCEL_EXTENSION));
         return files != null && files.length > 0;
     }
 
@@ -382,7 +384,8 @@ public class ImportPackageDialog extends Dialog<ImportPackageDialog.ImportReques
         writeModeValue.setText(Messages.get(writeMode == WriteMode.UPSERT ? "export.writeMode.upsert"
                 : writeMode == WriteMode.SKIP_EXISTING ? "export.writeMode.skip" : "export.writeMode.insert"));
         formatValue.setText(Messages.get(manifest.getDataFormat() == DataFormat.PARQUET ? "export.format.parquet"
-                : manifest.getDataFormat() == DataFormat.CSV ? "export.format.csv" : "export.format.sql"));
+                : manifest.getDataFormat() == DataFormat.CSV ? "export.format.csv"
+                : manifest.getDataFormat() == DataFormat.EXCEL ? "export.format.excel" : "export.format.sql"));
         tableView.getItems().setAll(manifest.getTables());
         filterTargets();
     }

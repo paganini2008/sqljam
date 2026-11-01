@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.github.sqljam.impexp;
+package com.github.sqljam.impexp.fs;
 
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -24,6 +24,7 @@ import java.util.Objects;
 import org.apache.commons.lang3.StringUtils;
 import lombok.Getter;
 import lombok.Setter;
+import com.github.sqljam.impexp.DuckDBWorkspace;
 
 /**
  * @Description: CsvOptions of CSV files like the CSV settings of spreadsheets: delimiter, quote character (doubled
