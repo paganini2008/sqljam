@@ -30,7 +30,7 @@ import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.impexp.MetaDataOperations;
 import com.github.sqljam.impexp.TableMetaData;
 import com.github.sqljam.impexp.VectorType;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import lombok.extern.slf4j.Slf4j;
 
 /**

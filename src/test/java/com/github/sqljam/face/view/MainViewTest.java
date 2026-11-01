@@ -349,11 +349,11 @@ class MainViewTest {
     @Test
     void opensParquetImportFromMenuAndTree() {
         MenuItem importParquet = fileMenuItem("importParquetMenuItem");
-        assertEquals("Import Parquet or CSV Files...", importParquet.getText());
+        assertEquals("Import Parquet, CSV or Excel Files...", importParquet.getText());
         assertEquals("Open Export Package...", fileMenuItem("openPackageMenuItem").getText());
         Platform.runLater(importParquet::fire);
         DialogPane pane = FxTestSupport.waitForDialogPane();
-        assertEquals("Load Parquet or CSV files into a table of a database", FxTestSupport.call(pane::getHeaderText));
+        assertEquals("Load Parquet, CSV or Excel files into a table of a database", FxTestSupport.call(pane::getHeaderText));
         assertTrue(FxTestSupport.call(() -> pane.lookupButton(ButtonType.OK).isDisabled()));
         FxTestSupport.closeDialog(ButtonType.CANCEL);
         // The context menu of a data source offers both imports
@@ -368,7 +368,7 @@ class MainViewTest {
                     .flatMap(cell -> cell.getContextMenu().getItems().stream()).map(MenuItem::getText)
                     .filter(text -> text != null).collect(Collectors.toList());
         });
-        assertTrue(items.containsAll(List.of("Import Export Package...", "Import Parquet or CSV Files...")),
+        assertTrue(items.containsAll(List.of("Import Export Package...", "Import Parquet, CSV or Excel Files...")),
                 items.toString());
     }
 

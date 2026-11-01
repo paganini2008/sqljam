@@ -20,7 +20,7 @@ import java.sql.SQLException;
 
 import javax.sql.DataSource;
 import com.github.sqljam.jdbc.ConnectionFactory;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 
 /**
  * @Description: PooledConnectionFactory provides connections of a DataSource

@@ -34,7 +34,7 @@ import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.face.model.TransferReport;
 import com.github.sqljam.face.view.UiDatabase;
-import com.github.sqljam.impexp.CsvImporter;
+import com.github.sqljam.impexp.fs.CsvImporter;
 import com.github.sqljam.impexp.DataFileImporter;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;

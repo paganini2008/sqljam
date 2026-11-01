@@ -19,8 +19,8 @@ import java.util.List;
 import java.util.function.Function;
 
 import org.apache.commons.lang3.StringUtils;
-import com.github.sqljam.impexp.CsvExporter;
-import com.github.sqljam.impexp.CsvOptions;
+import com.github.sqljam.impexp.fs.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvOptions;
 import javafx.scene.Node;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;

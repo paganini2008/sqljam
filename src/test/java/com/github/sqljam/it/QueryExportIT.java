@@ -30,7 +30,7 @@ import org.apache.commons.io.FileUtils;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import com.github.sqljam.impexp.AbstractFileImporter;
-import com.github.sqljam.impexp.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvExporter;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.ImportExporter;
 

@@ -21,6 +21,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.File;
+import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.sql.Connection;
@@ -31,6 +32,8 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 import javafx.scene.control.CheckBox;
+import org.dhatim.fastexcel.Workbook;
+import org.dhatim.fastexcel.Worksheet;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -162,7 +165,8 @@ class ImportParquetDialogTest {
         open(null);
         assertTrue(startDisabled());
         assertEquals("Files of one table are loaded together in this order, columns and the first rows are previewed."
-                + " Delimiters and column types of CSV files are detected",
+                + " Delimiters and column types of CSV files are detected, the first row of an Excel sheet names its"
+                + " columns",
                 text("parquetPreviewLabel"));
         // The only data source is the target
         assertEquals("Target H2", FxTestSupport.call(() -> {
@@ -259,7 +263,7 @@ class ImportParquetDialogTest {
     void rejectsMixedFormats() throws Exception {
         open(null);
         addFiles(writeParquet("orders.parquet", 0, 10), writeCsv("orders.csv", 10, 20));
-        assertEquals("Files of one table must be all Parquet or all CSV", text("warningLabel"));
+        assertEquals("Files of one table must be all Parquet, all CSV or all Excel", text("warningLabel"));
         assertTrue(startDisabled());
         assertTrue(FxTestSupport.call(() -> preview().getColumns().isEmpty()));
     }
@@ -391,5 +395,61 @@ class ImportParquetDialogTest {
         FxTestSupport.waitUntil(() -> preview().getItems().size() == 2);
         assertEquals("北京", FxTestSupport.call(() -> preview().getItems().get(0).get(1)));
         assertEquals("GBK", FxTestSupport.call(dialog::buildRequest).getCsvOptions().getEncoding());
+    }
+
+    /**
+     * Workbooks of a spreadsheet: their sheets are listed, the first one is previewed, another sheet is previewed
+     * when it is chosen and loaded into the table without manifest.json
+     */
+    @Test
+    void previewsAndLoadsSheetsOfWorkbooks() throws Exception {
+        open(DbNode.connection(target));
+        File file = new File(dir, "orders.xlsx");
+        try (OutputStream out = Files.newOutputStream(file.toPath())) {
+            Workbook workbook = new Workbook(out, "Spreadsheet", "1.0");
+            Worksheet summary = workbook.newWorksheet("Summary");
+            summary.value(0, 0, "total");
+            summary.value(1, 0, 3);
+            Worksheet orders = workbook.newWorksheet("Orders");
+            orders.value(0, 0, "ID");
+            orders.value(0, 1, "NAME");
+            for (int i = 1; i <= 3; i++) {
+                orders.value(i, 0, i);
+                orders.value(i, 1, "name " + i);
+            }
+            workbook.finish();
+        }
+        addFiles(file);
+        waitForPreview();
+        assertTrue(FxTestSupport.call(() -> node("sheetBox").isVisible()));
+        assertFalse(FxTestSupport.call(() -> node("csvOptionsBox").isVisible()));
+        ComboBox<String> sheets = FxTestSupport.call(() -> (ComboBox<String>) node("sheetCombo"));
+        assertEquals(List.of("Summary", "Orders"), FxTestSupport.call(() -> List.copyOf(sheets.getItems())));
+        assertEquals("1 columns, 1 rows, the first 1 are shown", text("parquetPreviewLabel"));
+        FxTestSupport.run(() -> sheets.setValue("Orders"));
+        FxTestSupport.waitUntil(() -> text("parquetPreviewLabel").startsWith("2 columns, 3 rows"));
+        assertEquals("name 1", FxTestSupport.call(() -> preview().getItems().get(0).get(1)));
+        ImportParquetDialog.ParquetRequest request = FxTestSupport.call(dialog::buildRequest);
+        assertEquals("Orders", request.getSheet());
+        assertNull(request.getCsvOptions());
+
+        ProgressDialog progress = FxTestSupport.call(() -> new ProgressDialog(stage, context, "Import", 1));
+        FxTestSupport.run(() -> progress.run(() -> context.getTransferService().importFiles(target, null, null,
+                request.getFiles(), "ORDERS", ParquetImporter.Mode.CREATE, List.of(), null, request.getSheet(), false,
+                0, null, progress.getListener()), (DataFileImporter importer) -> String.valueOf(importer
+                .getImportedRows()), null));
+        FxTestSupport.waitUntil(progress::isFinished);
+        assertEquals("Completed", status(progress));
+        assertEquals(3, countRows());
+    }
+
+    @Test
+    void reportsUnreadableWorkbooks() throws Exception {
+        open(null);
+        File file = new File(dir, "broken.xlsx");
+        Files.writeString(file.toPath(), "not a workbook");
+        addFiles(file);
+        FxTestSupport.waitUntil(() -> text("warningLabel").startsWith("Unable to read the files"));
+        assertTrue(startDisabled());
     }
 }

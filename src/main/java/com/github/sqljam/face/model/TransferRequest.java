@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.Map;
 
 import com.github.sqljam.impexp.ColumnMapping;
-import com.github.sqljam.impexp.CsvOptions;
+import com.github.sqljam.impexp.fs.CsvOptions;
 import com.github.sqljam.impexp.DataFileStrategy;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;

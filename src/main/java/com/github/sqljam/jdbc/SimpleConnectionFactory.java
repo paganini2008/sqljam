@@ -17,6 +17,7 @@ package com.github.sqljam.jdbc;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import com.github.sqljam.utils.JdbcUtils;
 import com.github.sqljam.impexp.TransactionIsolationLevel;
 
 /**

@@ -31,6 +31,7 @@ import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import com.github.sqljam.it.CollectingListener;
+import com.github.sqljam.impexp.fs.CsvExporter;
 
 /**
  * @Description: QueryExportTest exports free queries like tables at their boundaries with H2: a join whose columns

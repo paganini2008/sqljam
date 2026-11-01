@@ -34,9 +34,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 import com.github.sqljam.impexp.AbstractFileImporter;
-import com.github.sqljam.impexp.CsvExporter;
-import com.github.sqljam.impexp.CsvImporter;
-import com.github.sqljam.impexp.CsvOptions;
+import com.github.sqljam.impexp.fs.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvImporter;
+import com.github.sqljam.impexp.fs.CsvOptions;
 import com.github.sqljam.impexp.DataFileExporter;
 import com.github.sqljam.impexp.DataFileImporter;
 import com.github.sqljam.impexp.DataFormat;
@@ -45,6 +45,8 @@ import com.github.sqljam.impexp.ExportMode;
 import com.github.sqljam.impexp.ParquetExporter;
 import com.github.sqljam.impexp.ParquetImporter;
 import com.github.sqljam.impexp.ScriptExportHandler;
+import com.github.sqljam.impexp.fs.ExcelExporter;
+import com.github.sqljam.impexp.fs.ExcelImporter;
 
 /**
  * @Description: AbstractParquetIT exports fixture tables of a source database as Parquet and CSV packages (split
@@ -61,6 +63,10 @@ public abstract class AbstractParquetIT {
      */
     private static final long CSV_PART_SIZE = 8 * 1024;
     private static final long PARQUET_PART_SIZE = 16 * 1024;
+    /**
+     * Few rows of a workbook, so that tables of the fixture are split: emp.xlsx, emp_2.xlsx ...
+     */
+    private static final int EXCEL_PART_ROWS = 100;
 
     protected final ItDatabase source;
 
@@ -91,6 +97,10 @@ public abstract class AbstractParquetIT {
             csvExporter.setOptions(options);
             csvExporter.setMaxFileSize(CSV_PART_SIZE);
             exporter = csvExporter;
+        } else if (format == DataFormat.EXCEL) {
+            ExcelExporter excelExporter = new ExcelExporter(dir);
+            excelExporter.setMaxRows(EXCEL_PART_ROWS);
+            exporter = excelExporter;
         } else {
             ParquetExporter parquetExporter = new ParquetExporter(dir);
             // Compressions are rotated over the matrix
@@ -117,6 +127,12 @@ public abstract class AbstractParquetIT {
     @EnumSource(ItDatabase.class)
     void exportAndImportCsv(ItDatabase target) throws Exception {
         exportAndImport(target, DataFormat.CSV);
+    }
+
+    @ParameterizedTest(name = "excel for {0}")
+    @EnumSource(ItDatabase.class)
+    void exportAndImportExcel(ItDatabase target) throws Exception {
+        exportAndImport(target, DataFormat.EXCEL);
     }
 
     private void exportAndImport(ItDatabase target, DataFormat format) throws Exception {
@@ -150,12 +166,16 @@ public abstract class AbstractParquetIT {
         // ClickHouse has no identity columns
         assertEquals(source == ItDatabase.CLICKHOUSE ? 0 : 1, emp.getIdentityColumns().size(), "Identity column of emp");
         ExportManifest.FileType fileType = format == DataFormat.CSV ? ExportManifest.FileType.CSV
-                : ExportManifest.FileType.PARQUET;
+                : format == DataFormat.EXCEL ? ExportManifest.FileType.EXCEL : ExportManifest.FileType.PARQUET;
         assertTrue(manifest.getFiles().stream().anyMatch(f -> f.getType() == fileType));
         assertEquals(ExportManifest.FileType.SCHEMA, manifest.getFiles().get(0).getType());
         List<String> empFiles = List.copyOf(emp.getDataFiles());
         for (String path : empFiles) {
             assertTrue(new File(dir, path).isFile(), "Data file of emp: " + path);
+        }
+        if (format == DataFormat.EXCEL) {
+            assertTrue(empFiles.size() > 1, "emp is split: " + empFiles);
+            assertTrue(empFiles.get(1).toLowerCase().endsWith("emp_2.xlsx"), empFiles.toString());
         }
         if (format == DataFormat.CSV) {
             // Every column with its type, parts named like data files of sql scripts, each with the header
@@ -174,7 +194,8 @@ public abstract class AbstractParquetIT {
 
         try (Connection connection = target.getTargetConnection()) {
             AbstractFileImporter importer = AbstractFileImporter.forDirectory(dir, connection, target.getDbType());
-            assertEquals(format == DataFormat.CSV ? CsvImporter.class : ParquetImporter.class, importer.getClass());
+            assertEquals(format == DataFormat.CSV ? CsvImporter.class : format == DataFormat.EXCEL
+                    ? ExcelImporter.class : ParquetImporter.class, importer.getClass());
             listener = new CollectingListener();
             importer.setExportListener(listener);
             try {
@@ -217,6 +238,15 @@ public abstract class AbstractParquetIT {
         loadFiles(DataFormat.CSV);
     }
 
+    /**
+     * Excel workbooks without manifest.json are loaded into a new table (the first row names the columns, types
+     * detected) and appended to it, parts in order
+     */
+    @Test
+    void loadExcelFiles() throws Exception {
+        loadFiles(DataFormat.EXCEL);
+    }
+
     private void loadFiles(DataFormat format) throws Exception {
         ItDatabase target = ItDatabase.H2;
         assumeTrue(source.isAvailable() && target.isAvailable());
@@ -237,7 +267,8 @@ public abstract class AbstractParquetIT {
         // The parts are given in any order, they are imported in the order of their numbers
         Collections.reverse(files);
 
-        String tableName = source.getPrefix() + (format == DataFormat.CSV ? "csv_emp" : "pq_emp");
+        String tableName = source.getPrefix() + (format == DataFormat.CSV ? "csv_emp" : format == DataFormat.EXCEL
+                ? "xl_emp" : "pq_emp");
         try (Connection connection = target.getTargetConnection()) {
             DataFileImporter importer;
             if (format == DataFormat.CSV) {
@@ -247,6 +278,8 @@ public abstract class AbstractParquetIT {
                 options.setDelimiter("");
                 csvImporter.setOptions(options);
                 importer = csvImporter;
+            } else if (format == DataFormat.EXCEL) {
+                importer = new ExcelImporter(connection, target.getDbType());
             } else {
                 importer = new ParquetImporter(connection, target.getDbType());
             }

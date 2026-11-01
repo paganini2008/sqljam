@@ -529,6 +529,25 @@ class ExportDialogTest {
     }
 
     /**
+     * Excel workbooks are split at the rows of a sheet, the size of files does not apply
+     */
+    @Test
+    void mapsExcelFormat() {
+        open(schemaNode());
+        setText("directoryField", dir.getAbsolutePath());
+        FxTestSupport.run(() -> ((RadioButton) node("excelFormatRadio")).setSelected(true));
+        for (String id : new String[]{"singleFileRadio", "perTableRadio", "lobSeparatedCheck", "compressionCombo",
+                "csvDelimiterCombo", "maxFileSizeSpinner"}) {
+            assertTrue(FxTestSupport.call(() -> node(id).isDisabled()), id);
+        }
+        assertEquals("schema.sql\ndata/<table>.xlsx, <table>_2.xlsx ... above 1,048,575 rows\nconstraints.sql"
+                + "\nmanifest.json", FxTestSupport.call(() -> ((Label) node("layoutHint")).getText()));
+        assertEquals(DataFormat.EXCEL, build().getDataFormat());
+        // The size of text files is kept
+        assertEquals(10L * 1024 * 1024, context.getSettings().getMaxDataFileSize());
+    }
+
+    /**
      * Parquet files are split at their own size, sql scripts and CSV files share one
      */
     @Test

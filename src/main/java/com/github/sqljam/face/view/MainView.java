@@ -101,7 +101,6 @@ public class MainView extends BorderPane {
     static final double TREE_WIDTH = 0.24;
     static final double MIN_SPLIT_WIDTH = 200;
 
-
     private final AppContext context;
     private final ConnectionTree connectionTree;
     private final TabPane tabPane = new TabPane();
@@ -1014,8 +1013,8 @@ public class MainView extends BorderPane {
             return context.getTransferService().importFiles(parquetRequest.getTarget(), parquetRequest
                     .getCatalog(), parquetRequest.getSchema(), parquetRequest.getFiles(), parquetRequest
                     .getTableName(), parquetRequest.getMode(), parquetRequest.getKeyColumns(), parquetRequest
-                    .getCsvOptions(), parquetRequest.isSkipErrors(), parquetRequest.getCommitRows(), transaction.get(),
-                    progress.getListener());
+                    .getCsvOptions(), parquetRequest.getSheet(), parquetRequest.isSkipErrors(), parquetRequest
+                    .getCommitRows(), transaction.get(), progress.getListener());
         }, (DataFileImporter importer) -> Messages.format("parquet.summary", importer.getImportedRows(),
                 parquetRequest.getTableName()), transaction::get, parquetRequest.isConfirmCommit(),
                 () -> context.getSessionManager().closeSession(parquetRequest.getTarget().getId()));

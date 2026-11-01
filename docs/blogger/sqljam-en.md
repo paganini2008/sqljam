@@ -9,7 +9,7 @@
 **SqlJam**: *Move tables across databases. Schema, data and all.*
 
 A Java 17 + JavaFX desktop tool that copies tables between relational and OLAP databases (**MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, Microsoft Access, DuckDB, ClickHouse** and more) in any direction:
-**import directly** into a target database or into the same schema as copies, or save a self-describing **export package** of SQL, **Parquet** or **CSV** files and import it later. Imports into a database run in **one transaction** which an error rolls back, and rows are **inserted, updated or skipped by key**.
+**import directly** into a target database or into the same schema as copies, or save a self-describing **export package** of SQL, **Parquet**, **CSV** or **Excel** files and import it later. Imports into a database run in **one transaction** which an error rolls back, and rows are **inserted, updated or skipped by key**.
 
 ![SqlJam main window](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/main-dark.png)
 
@@ -29,6 +29,7 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 | Scripts without context | `manifest.json`: source, target, options, SHA-256 per file, row counts |
 | Analytics needs Parquet | Parquet packages through an embedded DuckDB, Parquet files of other tools loaded into any table |
 | Spreadsheets need CSV | CSV packages with your delimiter, quote, NULL text, header, encoding (UTF-8 with BOM, GBK and more) and date format, exact types kept in `manifest.json`, CSV files of other tools loaded too |
+| Business teams use Excel | Excel packages with one `.xlsx` workbook for each table, real number and date cells, exact types kept in `manifest.json`, workbooks of other tools loaded without `manifest.json` from the sheet you choose |
 | An import went wrong | **One transaction** by default, rolled back on any error, or **commit every N rows**. **Skip rows with errors** goes on and logs each skipped row. **Confirm before commit** reviews a successful import first |
 | Did every row arrive? | A **migration report** for every import and export, also when it fails or is cancelled: rows per table, skipped rows with their errors, target rows counted afterwards, created objects and where it stopped. **Import History** lists every report, Markdown, HTML or JSON on export |
 | A copy has to stay up to date | **Sync Tasks** copy the changed rows by an update time or an increasing key, every N minutes or every day, run by SqlJam while it is open or by your own scheduler through its command line, vector collections included, a report for every run |
@@ -77,7 +78,7 @@ SqlJam opens its main window like DBeaver and DataGrip, where it was closed, wit
 
 Right-click a data source to **Connect**, and once it is connected the same menu offers **Disconnect**, which also closes its table tabs. When an import or export needs a target data source, the **+** button next to it creates one on the spot. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and how to reach the author, and the GitHub icon at the bottom right opens the repository.
 
-**SQL Query** on the toolbar opens an editor for the selected data source. **Ctrl+Enter** (**⌘+Enter** on macOS) runs the statement at the caret, **Ctrl+Shift+Enter** runs them all, and **Export…** sends all rows of the query to SQL, Parquet, CSV or another database:
+**SQL Query** on the toolbar opens an editor for the selected data source. **Ctrl+Enter** (**⌘+Enter** on macOS) runs the statement at the caret, **Ctrl+Shift+Enter** runs them all, and **Export…** sends all rows of the query to SQL, Parquet, CSV, Excel or another database:
 
 ![SQL Query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sql-editor.png)
 
@@ -155,8 +156,8 @@ flowchart LR
     D --> I[Import directly] --> TD[(Target DB)]
     D --> E[Export package<br/>schema.sql · data*.sql · lob/ · manifest.json]
     E --> SI[ScriptImporter] --> TD
-    D --> P[Parquet or CSV package<br/>DuckDB workspace · data/*.parquet or *.csv]
-    P --> PI[ParquetImporter · CsvImporter] --> TD
+    D --> P[Parquet, CSV or Excel package<br/>DuckDB workspace · data/*.parquet, *.csv or *.xlsx]
+    P --> PI[ParquetImporter · CsvImporter · ExcelImporter] --> TD
     V[(Vector DB)] --> VC[VdbClient · REST API] --> VT[Collection tree] --> VD[Vdb dialect] --> TD
 ```
 
@@ -164,6 +165,7 @@ flowchart LR
 - **Generate for the target**: `DbType.createDialect(major, minor)` picks the version subclass.
 - **Stream rows**: count rows (percentage progress) → page by primary key → normalize values → batch insert or SQL literals.
 - **Parquet and CSV**: rows pass an embedded DuckDB workspace, `COPY ... TO` writes them, `read_parquet` or `read_csv` with the column types of `manifest.json` loads them back.
+- **Excel**: the same workspace writes one sheet for each table with a frozen header row. A sheet is read back as CSV, so a workbook of any spreadsheet loads like a CSV file of another tool.
 - **Transactions**: an import runs in one transaction, committed when it succeeds or after your confirmation. MySQL, MariaDB, Oracle and H2 commit around DDL, so keys and identity values are set after the commit.
 - **Upserts and skips**: `ON CONFLICT`, `ON DUPLICATE KEY UPDATE` or `MERGE` of each database, kept tables, indexes and keys are skipped.
 - **Skipped errors**: a failed page is written row by row under savepoints, each bad row is logged with its key and the others are kept.
@@ -207,6 +209,9 @@ parquet.exportDdlAndData();   // schema.sql, data/orders.parquet, constraints.sq
 CsvExporter csv = new CsvExporter(new File("export-csv"));
 csv.setDelimiter(";");
 csv.exportDdlAndData();       // data/orders.csv, data/orders_2.csv ...
+
+ExcelExporter excel = new ExcelExporter(new File("export-excel"));
+excel.exportDdlAndData();     // data/orders.xlsx, one sheet with a header row
 ```
 
 ### Example 2: Oracle → SQL Server directly (schema created)
@@ -321,7 +326,7 @@ schtasks /Create /TN "SqlJam sync" /SC MINUTE /MO 15 /TR "C:\SqlJam\sqljam.bat s
 
 Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a server of the local network (about 100 Mbit/s), H2, DuckDB and the packages are local. Default settings. Each scenario is measured by `TransferBenchmark`.
 
-**Quality**: a full cross-database import matrix with every column type of every database, SQL, Parquet and CSV package round trips, commit and roll back verified on every database, copies in the same schema, old-version SQL executed on real servers, UI and boundary tests.
+**Quality**: a full cross-database import matrix with every column type of every database, SQL, Parquet, CSV and Excel package round trips, commit and roll back verified on every database, copies in the same schema, old-version SQL executed on real servers, UI and boundary tests.
 
 ## 9. Design Trade-offs
 
@@ -346,7 +351,7 @@ Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a serve
 6. Timestamps, unsigned numbers, bits, money, UUID and JSON survive the trip.
 7. Pooled connections and batch inserts: 40k to 95k rows/s for direct imports.
 8. A mainstream dark UI with 7 themes, percentage progress and cancel.
-9. Parquet and CSV packages and files of other tools, DuckDB and ClickHouse as OLAP data sources, imports in one transaction and rows updated by key.
+9. Parquet, CSV and Excel packages and files of other tools, DuckDB and ClickHouse as OLAP data sources, imports in one transaction and rows updated by key.
 10. A SQL Query editor exports the rows of any query through the same exits, columns of tables keep their types.
 11. Query the rows of a table, export just those rows, or copy tables inside the same schema.
 12. Collections of Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma go straight into a database with vectors, previewed by conditions, native filters or nearest neighbor searches.

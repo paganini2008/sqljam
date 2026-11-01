@@ -27,6 +27,7 @@
         <richtextfx.version>0.11.7</richtextfx.version>
         <db2.version>12.1.5.0</db2.version>
         <duckdb.version>1.5.6.0</duckdb.version>
+        <fastexcel.version>0.20.2</fastexcel.version>
         <ucanaccess.version>5.1.8</ucanaccess.version>
         <clickhouse.version>0.10.0</clickhouse.version>
         <lombok.version>1.18.48</lombok.version>
@@ -179,6 +180,17 @@
             <groupId>org.duckdb</groupId>
             <artifactId>duckdb_jdbc</artifactId>
             <version>${duckdb.version}</version>
+        </dependency>
+        <dependency>
+            <!-- Excel (.xlsx) written and read as streams, Apache License 2.0 -->
+            <groupId>org.dhatim</groupId>
+            <artifactId>fastexcel</artifactId>
+            <version>${fastexcel.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.dhatim</groupId>
+            <artifactId>fastexcel-reader</artifactId>
+            <version>${fastexcel.version}</version>
         </dependency>
         <dependency>
             <!-- Microsoft Access (.accdb, .mdb) in pure Java, no ODBC: UCanAccess on Jackcess -->

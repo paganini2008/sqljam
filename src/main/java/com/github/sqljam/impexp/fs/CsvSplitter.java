@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.github.sqljam.impexp;
+package com.github.sqljam.impexp.fs;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -40,6 +40,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.apache.commons.io.FilenameUtils;
+import com.github.sqljam.impexp.ImpExpException;
 
 /**
  * @Description: CsvSplitter splits a large CSV file into parts of a maximum size, named like data files of sql

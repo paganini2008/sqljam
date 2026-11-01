@@ -21,6 +21,8 @@ import java.sql.Connection;
 import java.sql.SQLException;
 
 import org.apache.commons.lang3.StringUtils;
+import com.github.sqljam.impexp.fs.CsvImporter;
+import com.github.sqljam.impexp.fs.ExcelImporter;
 
 /**
  * @Description: AbstractFileImporter imports files of an export package into a database by a connection:
@@ -58,8 +60,8 @@ public abstract class AbstractFileImporter {
 
     /**
      * Importer of an export directory by the data format of its manifest: Parquet packages are imported by
-     * {@link ParquetImporter}, CSV packages by {@link CsvImporter}, sql scripts (with or without manifest) by
-     * {@link ScriptImporter}
+     * {@link ParquetImporter}, CSV packages by {@link CsvImporter}, Excel packages by {@link ExcelImporter}, sql
+     * scripts (with or without manifest) by {@link ScriptImporter}
      */
     public static AbstractFileImporter forDirectory(File dir, Connection connection, DbType dbType)
             throws IOException {
@@ -69,6 +71,9 @@ public abstract class AbstractFileImporter {
         }
         if (manifest != null && manifest.getDataFormat() == DataFormat.CSV) {
             return new CsvImporter(connection, dbType);
+        }
+        if (manifest != null && manifest.getDataFormat() == DataFormat.EXCEL) {
+            return new ExcelImporter(connection, dbType);
         }
         return new ScriptImporter(connection, dbType);
     }

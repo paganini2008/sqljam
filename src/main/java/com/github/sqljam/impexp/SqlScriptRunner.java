@@ -34,7 +34,7 @@ import java.util.function.Predicate;
 import java.util.regex.Pattern;
 
 import org.apache.commons.lang3.StringUtils;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 

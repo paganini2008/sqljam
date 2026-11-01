@@ -43,7 +43,7 @@ import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Exporter;
 import com.github.sqljam.impexp.ImportExportHandler;
 import com.github.sqljam.impexp.SqlScriptRunner;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 
 /**
  * @Description: ItDatabase holds the databases used by integration tests. Each database has its own fixture tables

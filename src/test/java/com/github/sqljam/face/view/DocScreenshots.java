@@ -20,7 +20,6 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 
-
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -201,7 +200,6 @@ class DocScreenshots {
         ConnectionDialog dialog = FxTestSupport.call(() -> new ConnectionDialog(stage, context, profile));
         snapshotDialog(dialog, 640, 760, "data-source.png");
     }
-
 
     /**
      * Node of a fixture table of the MySQL test database

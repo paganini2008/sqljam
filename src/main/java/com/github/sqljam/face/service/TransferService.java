@@ -22,6 +22,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -36,14 +37,16 @@ import com.github.sqljam.face.model.ConnectionProfile;
 import com.github.sqljam.face.model.TransferReport;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.impexp.AbstractFileImporter;
-import com.github.sqljam.impexp.CsvExporter;
-import com.github.sqljam.impexp.CsvImporter;
-import com.github.sqljam.impexp.CsvOptions;
+import com.github.sqljam.impexp.fs.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvImporter;
+import com.github.sqljam.impexp.fs.CsvOptions;
 import com.github.sqljam.impexp.DataFileImporter;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
 import com.github.sqljam.impexp.Dialect;
 import com.github.sqljam.impexp.DuckDBWorkspace;
+import com.github.sqljam.impexp.fs.ExcelExporter;
+import com.github.sqljam.impexp.fs.ExcelImporter;
 import com.github.sqljam.impexp.ExportListener;
 import com.github.sqljam.impexp.Exporter;
 import com.github.sqljam.impexp.ImportExportHandler;
@@ -53,7 +56,8 @@ import com.github.sqljam.impexp.ParquetImporter;
 import com.github.sqljam.impexp.ScriptExporter;
 import com.github.sqljam.impexp.SqlScriptRunner;
 import com.github.sqljam.impexp.WriteMode;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.ExcelUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import com.github.sqljam.jdbc.ManualTransaction;
 import com.github.sqljam.jdbc.SharedConnectionFactory;
 
@@ -281,6 +285,10 @@ public class TransferService {
             exportCsv(request, listener);
             return;
         }
+        if (request.getDataFormat() == DataFormat.EXCEL) {
+            exportExcel(request, listener);
+            return;
+        }
         ScriptExporter scriptExporter = new ScriptExporter(request.getOutputDirectory(),
                 request.getDataFileStrategy(), request.getMaxFileSize());
         configureSource(scriptExporter.getConfiguration(), request);
@@ -336,6 +344,24 @@ public class TransferService {
     }
 
     /**
+     * Export package with Excel workbooks: schema.sql and constraints.sql for the target database type, a workbook
+     * of one sheet for each table (split at the rows of a sheet), the types of the columns are kept in manifest.json
+     */
+    private void exportExcel(TransferRequest request, ExportListener listener) throws Exception {
+        ExcelExporter excelExporter = new ExcelExporter(request.getOutputDirectory());
+        configureSource(excelExporter.getConfiguration(), request);
+        excelExporter.setTargetDbType(request.getScriptDbType());
+        excelExporter.setTargetSchemaName(request.getScriptSchema());
+        excelExporter.setIdentifierCase(request.getIdentifierCase());
+        int[] version = parseVersion(request.getScriptDbVersion());
+        if (version != null) {
+            excelExporter.setTargetVersion(version[0], version[1]);
+        }
+        excelExporter.setExportListener(listener);
+        excelExporter.export(request.getExportMode());
+    }
+
+    /**
      * Imports Parquet files of other tools into a table: a new table created from the Parquet schema, or rows
      * appended to an existing table
      */
@@ -370,10 +396,27 @@ public class TransferService {
                                         String tableName, DataFileImporter.Mode mode, List<String> keyColumns,
                                         CsvOptions csvOptions, boolean skipErrors, int commitRows,
                                         ManualTransaction transaction, ExportListener listener) throws Exception {
+        return importFiles(target, catalog, schema, files, tableName, mode, keyColumns, csvOptions, null, skipErrors,
+                commitRows, transaction, listener);
+    }
+
+    /**
+     * Imports Parquet, CSV or Excel files of other tools into a table (Excel when all files are .xlsx)
+     *
+     * @param sheet sheet of Excel workbooks, null for the first sheet
+     */
+    public DataFileImporter importFiles(ConnectionProfile target, String catalog, String schema, List<File> files,
+                                        String tableName, DataFileImporter.Mode mode, List<String> keyColumns,
+                                        CsvOptions csvOptions, String sheet, boolean skipErrors, int commitRows,
+                                        ManualTransaction transaction, ExportListener listener) throws Exception {
         Connection connection = transaction != null ? transaction.getConnection() : connect(target, catalog, schema);
         try {
             DataFileImporter importer;
-            if (files.stream().allMatch(DuckDBWorkspace::isCsv)) {
+            if (files.stream().allMatch(ExcelUtils::isExcel)) {
+                ExcelImporter excelImporter = new ExcelImporter(connection, target.getDbType());
+                excelImporter.setSheet(sheet);
+                importer = excelImporter;
+            } else if (files.stream().allMatch(DuckDBWorkspace::isCsv)) {
                 CsvImporter csvImporter = new CsvImporter(connection, target.getDbType());
                 csvImporter.setOptions(csvOptions);
                 importer = csvImporter;
@@ -415,7 +458,28 @@ public class TransferService {
      * Columns, rows and first rows of Parquet or CSV files, CSV files are read with the options (null to detect)
      */
     public ParquetPreview previewParquet(List<File> files, int rowLimit, CsvOptions csvOptions) throws Exception {
+        return previewParquet(files, rowLimit, csvOptions, null);
+    }
+
+    /**
+     * Columns, rows and first rows of Parquet, CSV or Excel files, a sheet of workbooks is read as a CSV file
+     *
+     * @param sheet sheet of Excel workbooks, null for the first sheet
+     */
+    public ParquetPreview previewParquet(List<File> files, int rowLimit, CsvOptions csvOptions, String sheet)
+            throws Exception {
         try (DuckDBWorkspace workspace = new DuckDBWorkspace(null)) {
+            if (!files.isEmpty() && files.stream().allMatch(ExcelUtils::isExcel)) {
+                List<File> csvFiles = new ArrayList<>();
+                for (File file : files) {
+                    File csv = new File(workspace.getFile().getParentFile(), "excel-" + (csvFiles.size() + 1)
+                            + ".csv");
+                    ExcelUtils.toCsv(file, sheet, csv);
+                    csvFiles.add(csv);
+                }
+                files = csvFiles;
+                csvOptions = new CsvOptions();
+            }
             List<List<String>> firstRows = rowLimit > 0 ? workspace.readRows(files, rowLimit, csvOptions)
                     : Collections.emptyList();
             return new ParquetPreview(workspace.describeFiles(files, csvOptions), workspace.countFileRows(files,

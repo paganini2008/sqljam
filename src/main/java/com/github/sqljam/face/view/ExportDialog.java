@@ -32,8 +32,8 @@ import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.TransferRequest;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.impexp.ColumnMapping;
-import com.github.sqljam.impexp.CsvExporter;
-import com.github.sqljam.impexp.CsvOptions;
+import com.github.sqljam.impexp.fs.CsvExporter;
+import com.github.sqljam.impexp.fs.CsvOptions;
 import com.github.sqljam.impexp.DataFileStrategy;
 import com.github.sqljam.impexp.DataFormat;
 import com.github.sqljam.impexp.DbType;
@@ -45,6 +45,7 @@ import com.github.sqljam.impexp.IdentifierCase;
 import com.github.sqljam.impexp.ParquetExporter;
 import com.github.sqljam.impexp.TableQuery;
 import com.github.sqljam.impexp.WriteMode;
+import com.github.sqljam.utils.ExcelUtils;
 import javafx.beans.InvalidationListener;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -148,6 +149,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
     private final RadioButton sqlFormatRadio = new RadioButton(Messages.get("export.format.sql"));
     private final RadioButton parquetFormatRadio = new RadioButton(Messages.get("export.format.parquet"));
     private final RadioButton csvFormatRadio = new RadioButton(Messages.get("export.format.csv"));
+    private final RadioButton excelFormatRadio = new RadioButton(Messages.get("export.format.excel"));
     private final ComboBox<String> compressionCombo = new ComboBox<>();
     private CsvOptionsPane csvOptionsPane;
     private TransactionOption transactionOption;
@@ -257,6 +259,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
         parquetFormatRadio.setId("parquetFormatRadio");
         compressionCombo.setId("compressionCombo");
         csvFormatRadio.setId("csvFormatRadio");
+        excelFormatRadio.setId("excelFormatRadio");
         layoutHint.setId("layoutHint");
         targetCombo.setId("targetCombo");
         targetCatalogCombo.setId("targetCatalogCombo");
@@ -548,6 +551,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
         sqlFormatRadio.setToggleGroup(formatGroup);
         parquetFormatRadio.setToggleGroup(formatGroup);
         csvFormatRadio.setToggleGroup(formatGroup);
+        excelFormatRadio.setToggleGroup(formatGroup);
         sqlFormatRadio.setSelected(true);
         compressionCombo.getItems().setAll(ParquetExporter.COMPRESSIONS);
         compressionCombo.setValue(ParquetExporter.DEFAULT_COMPRESSION);
@@ -561,6 +565,8 @@ public class ExportDialog extends Dialog<TransferRequest> {
         singleFileRadio.disableProperty().bind(sqlFormatRadio.selectedProperty().not());
         perTableRadio.disableProperty().bind(sqlFormatRadio.selectedProperty().not());
         lobSeparatedCheck.disableProperty().bind(sqlFormatRadio.selectedProperty().not());
+        // Workbooks are split at the rows of a sheet, not at a size
+        maxFileSizeSpinner.disableProperty().bind(excelFormatRadio.selectedProperty());
         formatGroup.selectedToggleProperty().addListener((obs, oldToggle, toggle) -> {
             // Parquet files are split at their own size, sql scripts and CSV files share one
             boolean wasParquet = oldToggle == parquetFormatRadio;
@@ -591,7 +597,7 @@ public class ExportDialog extends Dialog<TransferRequest> {
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.version")), scriptVersionCombo);
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.schema")), scriptSchemaField);
         scriptGrid.addRow(row++, new Label(Messages.get("export.format")), new HBox(16, sqlFormatRadio,
-                parquetFormatRadio, csvFormatRadio));
+                parquetFormatRadio, csvFormatRadio, excelFormatRadio));
         scriptGrid.addRow(row++, new Label(Messages.get("export.format.compression")), compressionCombo);
         scriptGrid.addRow(row++, new Label(Messages.get("csv.options")), csvOptionsPane.getNode());
         scriptGrid.addRow(row++, new Label(Messages.get("export.script.strategy")), new HBox(16, singleFileRadio,
@@ -680,6 +686,13 @@ public class ExportDialog extends Dialog<TransferRequest> {
 
     private void updateLayoutHint() {
         boolean split = maxFileSizeSpinner.getValue() != null && maxFileSizeSpinner.getValue() > 0;
+        if (excelFormatRadio.isSelected()) {
+            String extension = ExcelUtils.EXCEL_EXTENSION;
+            layoutHint.setText("schema.sql\ndata/<table>" + extension + ", <table>_2" + extension + " "
+                    + Messages.format("export.format.excel.split", String.format("%,d", ExcelUtils.MAX_ROWS))
+                    + "\nconstraints.sql\nmanifest.json");
+            return;
+        }
         if (!sqlFormatRadio.isSelected()) {
             String extension = parquetFormatRadio.isSelected() ? ParquetExporter.PARQUET_EXTENSION
                     : CsvExporter.CSV_EXTENSION;
@@ -1167,13 +1180,13 @@ public class ExportDialog extends Dialog<TransferRequest> {
             request.setMaxFileSize(maxFileSizeSpinner.getValue() * MB);
             request.setLobSeparated(lobSeparatedCheck.isSelected());
             request.setDataFormat(parquetFormatRadio.isSelected() ? DataFormat.PARQUET : csvFormatRadio.isSelected()
-                    ? DataFormat.CSV : DataFormat.SQL);
+                    ? DataFormat.CSV : excelFormatRadio.isSelected() ? DataFormat.EXCEL : DataFormat.SQL);
             request.setCompression(compressionCombo.getValue());
             request.setCsvOptions(csvOptionsPane.getOptions());
             context.getSettings().setLastExportDirectory(directory.getAbsolutePath());
             if (parquetFormatRadio.isSelected()) {
                 context.getSettings().setParquetMaxFileSize(maxFileSizeSpinner.getValue() * MB);
-            } else {
+            } else if (!excelFormatRadio.isSelected()) {
                 context.getSettings().setMaxDataFileSize(maxFileSizeSpinner.getValue() * MB);
             }
             if (csvFormatRadio.isSelected()) {

@@ -30,6 +30,7 @@ import com.github.sqljam.impexp.db.DuckDBDialect;
 import com.github.sqljam.impexp.db.DuckDBMetaDataOperations;
 import com.github.sqljam.jdbc.SharedConnectionFactory;
 import lombok.extern.slf4j.Slf4j;
+import com.github.sqljam.impexp.fs.CsvExporter;
 
 /**
  * @Description: DataFileExporter exports tables as an export package with data files: schema.sql and

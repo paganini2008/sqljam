@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import com.github.sqljam.jdbc.Cursor;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 
 /**
  * @Description: MetaDataOperations reads metadata by jdbc DatabaseMetaData, subclasses of each database fix and complete it

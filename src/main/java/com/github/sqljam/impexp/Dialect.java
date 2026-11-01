@@ -52,7 +52,8 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.SqlTextUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import com.github.sqljam.utils.MapUtils;
 
 /**

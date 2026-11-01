@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package com.github.sqljam.jdbc;
+package com.github.sqljam.utils;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -41,6 +41,8 @@ import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import com.github.sqljam.jdbc.Cursor;
+import com.github.sqljam.jdbc.SimpleConnectionFactory;
 import com.github.sqljam.impexp.TransactionIsolationLevel;
 import com.github.sqljam.impexp.db.H2Dialect;
 import com.github.sqljam.page.EachPage;

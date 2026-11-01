@@ -7,7 +7,7 @@
 **Move tables across databases. Schema, data and all.**
 
 SqlJam is a desktop import/export tool for relational and OLAP databases: MySQL, MariaDB, PostgreSQL, Oracle, SQL Server, Db2, H2, SQLite, Microsoft Access, DuckDB, ClickHouse and more.
-It copies tables (with indexes, constraints, sequences and partitions) **directly into another database** or into the same schema as copies, or saves them as a **self-describing export package** of SQL, **Parquet** or **CSV** files that can be imported later. Imports into a database run in **one transaction** which an error rolls back as a whole, and rows are **inserted, updated or skipped by key**.
+It copies tables (with indexes, constraints, sequences and partitions) **directly into another database** or into the same schema as copies, or saves them as a **self-describing export package** of SQL, **Parquet**, **CSV** or **Excel** files that can be imported later. Imports into a database run in **one transaction** which an error rolls back as a whole, and rows are **inserted, updated or skipped by key**.
 
 ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
 ![JavaFX](https://img.shields.io/badge/JavaFX-17-1f6feb)
@@ -35,16 +35,17 @@ It copies tables (with indexes, constraints, sequences and partitions) **directl
 | Long jobs are a black box | **Percentage progress**, per-table progress, error log and cancel in the UI |
 | Analytics teams want Parquet, not SQL | **Parquet packages** (ZSTD, Snappy, GZIP) through an embedded DuckDB, and **Parquet files of other tools** loaded into any table |
 | Spreadsheets and text tools want CSV | **CSV packages** with your delimiter, quote, NULL text, header, encoding (UTF-8 with BOM for Excel, GBK and more) and date format, read back with the exact column types kept in `manifest.json`, and **CSV files of other tools** with detected delimiter and types |
+| Business teams work in Excel | **Excel packages**: one `.xlsx` workbook for each table, numbers, dates and booleans as real cells, read back exactly with the column types kept in `manifest.json`. **Excel workbooks of other tools** need no `manifest.json`: choose a sheet, its first row names the columns and the types are detected |
 | An import went wrong, now what? | **One transaction** by default: an error rolls back the whole import, or **commit every N rows** like other import tools. **Skip rows with errors** goes on and lists every skipped row in the log, which you can filter and save. **Confirm before commit** lets you review a successful import in one transaction, then **Commit** or **Roll Back** |
 | Did every row arrive, and what happened when it stopped? | A **migration report** for every import and export, successful, failed, cancelled or rolled back: source, target and options, each table with its source rows, written and skipped rows, the rows counted in the target afterwards and a ✓ or ✗ against the written rows, the objects which were created, every skipped row with its error, where the transfer stopped and the error which ended it. It opens on its own page with **View Report**, and **Transfer → Import History** lists every report. Export one as Markdown, HTML or JSON |
 | A copy has to stay up to date | **Sync Tasks** copy the rows which changed since the last run into another database, found by a column of the update time or an increasing key, every N minutes or every day at a time. The first run copies all rows, the watermark moves on only after the commit, errors of the connection are run again and errors of the data are not. SqlJam runs the tasks while it is open. To run them when it is closed, **Copy Command** gives the command line of a task for the scheduler of your system, SqlJam itself never changes it. Collections of vector databases sync the same way, and every run leaves a migration report |
 | Some rows exist already | **Update or insert by key** updates the rows of the same primary key, or of the columns you choose, and inserts the others. **Skip existing by key** keeps them and inserts the new rows only. Insert is the default |
 | Warehouses live apart from OLTP databases | **DuckDB and ClickHouse data sources**, grouped as OLAP databases next to the relational ones |
-| The rows come from a join or a report, not from one table | **SQL Query** editor with syntax highlighting: run the SQL, check the first rows, then export all rows of the query as a table into SQL, Parquet, CSV or another database |
+| The rows come from a join or a report, not from one table | **SQL Query** editor with syntax highlighting: run the SQL, check the first rows, then export all rows of the query as a table into SQL, Parquet, CSV, Excel or another database |
 | Only part of a table is needed | **Data viewer query**: columns, WHERE, GROUP BY and ORDER BY, then export the rows of the query. Missing target tables are created with the selected columns |
 | Target columns are named or typed differently | **Map Columns…** renames a column, gives it a type of the target or leaves it out, for tables and for the fields of vector database collections. Keys, indexes and foreign keys follow the new names. Columns which are not changed are imported as they are |
 | A copy next to the original | **Copy in the same schema** with a table name such as `{table}_copy`. Keys, indexes and constraints get their own names and the source tables are protected |
-| What is inside this package? | **Package viewer**: files with size and modified time, previews of manifest, SQL, LOB, Parquet and CSV files |
+| What is inside this package? | **Package viewer**: files with size and modified time, previews of manifest, SQL, LOB, Parquet, CSV and Excel files |
 | Custom and modern types | PostgreSQL enums and domains, DuckDB unions and fixed arrays, ClickHouse variants, maps and tuples |
 | Embeddings move with their search | Vectors of pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse keep their dimensions, and vector indexes (HNSW, IVF) keep their distances and options |
 | Embeddings live in a vector database | **Vector databases** sit in the connection tree like the other data sources: Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma, read by their REST APIs. Expand one to its databases, collections, partitions, tenants or namespaces, open a collection to browse its fields and records page by page, then **Import…** writes it straight into a database with vectors: ids and vectors become columns, every top-level field becomes a column of its type and the whole payload is kept as JSON. Conditions, native filters and nearest neighbor searches choose the rows |
@@ -68,9 +69,9 @@ flowchart LR
     D --> DS[DdlScripter]
     DS --> I[ImportExporter] --> TD[(Target DB)]
     DS --> E[ScriptExporter] --> P[/Export package<br/>schema.sql · data*.sql · lob/ · manifest.json/]
-    DS --> PE[ParquetExporter · CsvExporter<br/>DuckDB workspace] --> PP[/Parquet or CSV package<br/>schema.sql · data/*.parquet or *.csv · manifest.json/]
+    DS --> PE[ParquetExporter · CsvExporter · ExcelExporter<br/>DuckDB workspace] --> PP[/Parquet, CSV or Excel package<br/>schema.sql · data/*.parquet, *.csv or *.xlsx · manifest.json/]
     P --> SI[ScriptImporter] --> TD
-    PP --> PI[ParquetImporter · CsvImporter] --> TD
+    PP --> PI[ParquetImporter · CsvImporter · ExcelImporter] --> TD
     VS[(Vector DB<br/>Milvus · Qdrant · Weaviate · Pinecone<br/>Elasticsearch · OpenSearch · Chroma)] --> VC[VdbClient<br/>REST API]
     VC --> VT[Collection tree<br/>collection · field · key · vector index]
     VT --> VV[VdbMetaDataVisitor] --> VD[Vdb dialect<br/>target with vectors] --> VI[VdbImportHandler] --> TD
@@ -83,6 +84,7 @@ flowchart LR
 | `ScriptImporter` | Imports an export package (validates `manifest.json`, runs files in order, restores LOBs) |
 | `ParquetExporter` / `ParquetImporter` | Parquet packages and Parquet files of other tools, written and read by an embedded DuckDB workspace |
 | `CsvExporter` / `CsvImporter` | CSV packages (column types in `manifest.json`) and CSV files of other tools, through the same DuckDB workspace |
+| `ExcelExporter` / `ExcelImporter` | Excel packages (column types in `manifest.json`) and Excel workbooks of other tools, a sheet is read through the same DuckDB workspace |
 | `ManualTransaction` | Runs an import in one transaction which the user commits or rolls back. DDL which would commit the rows (MySQL, MariaDB, Oracle, H2) waits for the commit |
 | `AbstractFileImporter` | Picks the importer of a package by the data format in its `manifest.json` |
 | `TableQuery` | Columns, WHERE, GROUP BY and ORDER BY of the data viewer, used by exports per table |
@@ -167,7 +169,7 @@ SqlJam starts with a splash screen while it loads the configuration, the data so
 
 1. SqlJam opens its main window with the data sources in the tree, where it was closed, and connects again the data sources which were connected then. Expand a data source to connect it. **+** on the toolbar creates one: choose its category first (relational, OLAP or vector databases), the types and the fields follow it. **Connect through SSH tunnel** reaches a database behind a bastion host. A password which is not saved is asked when the data source is connected, and asked again when the database refuses it. The first start brings an **Example Shop (H2)** data source with a few e-commerce tables to try everything right away. **Help → Restore Example Database** brings it back at any time.
 2. Right-click a database or schema → **Export…**
-3. Pick tables, choose **SQL scripts**, **Parquet** or **CSV** (folder) or **Database** (another data source, or a new one from the **+** button next to it), press **Start**. An import into a database runs in one transaction or commits every N rows (N is typed next to it), check **Skip rows with errors** to go on after bad rows and **Confirm before commit** to review it first, and choose **Update or insert by key** or **Skip existing by key** for rows which exist already.
+3. Pick tables, choose **SQL scripts**, **Parquet**, **CSV** or **Excel** (folder) or **Database** (another data source, or a new one from the **+** button next to it), press **Start**. An import into a database runs in one transaction or commits every N rows (N is typed next to it), check **Skip rows with errors** to go on after bad rows and **Confirm before commit** to review it first, and choose **Update or insert by key** or **Skip existing by key** for rows which exist already.
 4. Open a table, narrow its rows on the **Data** tab with columns, WHERE, GROUP BY and ORDER BY, then **Export…** just those rows. A header sorts the rows of the page, a double click shows a whole value and **Copy Rows As** copies the selected rows. **Info** on the toolbar or a right-click shows the overview and the health of the data source.
 5. **SQL Query** on the toolbar or a right-click opens an editor for the data source. **Ctrl+Enter** (**⌘+Enter** on macOS) runs the statement at the caret, **Ctrl+Shift+Enter** runs them all, then **Export…** sends all rows of the query through the same exits.
 6. Create a data source of the **Vector databases** category for Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch or Chroma, with an API key, a user and password or neither, as the database asks. Expand it in the tree to its databases, collections and partitions (tenants of Weaviate, namespaces of Pinecone), open a collection to see its fields and its records page by page, narrowed by conditions, a native filter or a nearest neighbor search. **Import…** on the collection tab, a right-click or **File → Import from Vector Database…** opens the wizard which imports the checked collections into a data source with vectors. Only such data sources are offered as targets.
@@ -220,7 +222,7 @@ export/
 └── manifest.json         # source, target, options, files (sha256), row counts
 ```
 
-A Parquet package has the same layout with `data/<table>.parquet` instead of SQL data and LOB files, a CSV package with `data/<table>.csv` and a header row. LOB values stay inside the Parquet or CSV columns, `manifest.json` records `"dataFormat": "PARQUET"` or `"CSV"` (with the type of every CSV column), so an import picks the right importer by itself and reads the values back exactly.
+A Parquet package has the same layout with `data/<table>.parquet` instead of SQL data and LOB files, a CSV package with `data/<table>.csv` and a header row, an Excel package with `data/<table>.xlsx` (one sheet with a header row, `<table>_2.xlsx` above 1,048,575 rows). LOB values stay inside the Parquet, CSV or Excel columns, `manifest.json` records `"dataFormat": "PARQUET"`, `"CSV"` or `"EXCEL"` (with the type of every CSV and Excel column), so an import picks the right importer by itself and reads the values back exactly.
 
 ---
 
@@ -256,6 +258,10 @@ CsvExporter csv = new CsvExporter(new File("export-csv"));
 csv.setDelimiter(";");
 csv.setMaxFileSize(10 * 1024 * 1024);
 csv.exportDdlAndData();
+
+// The same tables as an Excel package: data/orders.xlsx, one sheet with a header row
+ExcelExporter excel = new ExcelExporter(new File("export-excel"));
+excel.exportDdlAndData();
 ```
 
 **Output**: `export/schema.sql`, `export/data/orders.sql`, `export/data/orders_2.sql`, `export/lob/…`, `export/manifest.json`:
@@ -337,7 +343,7 @@ try (Connection connection = DriverManager.getConnection(
 }
 ```
 
-**Output**: `ScriptImporter` refuses packages whose status is not `COMPLETED`, whose target type differs, or whose files fail the SHA-256 check. `AbstractFileImporter.forDirectory(dir, connection, dbType)` returns the importer of the package (SQL, Parquet or CSV), and files of other tools are loaded by `ParquetImporter` or `CsvImporter`. A `ManualTransaction` keeps the import open until you commit or roll back:
+**Output**: `ScriptImporter` refuses packages whose status is not `COMPLETED`, whose target type differs, or whose files fail the SHA-256 check. `AbstractFileImporter.forDirectory(dir, connection, dbType)` returns the importer of the package (SQL, Parquet, CSV or Excel), and files of other tools are loaded by `ParquetImporter`, `CsvImporter` or `ExcelImporter` (`setSheet` picks a sheet, the first one by default). A `ManualTransaction` keeps the import open until you commit or roll back:
 
 ```java
 ParquetImporter importer = new ParquetImporter(connection, DbType.POSTGRESQL);
@@ -384,6 +390,7 @@ try (ManualTransaction transaction = new ManualTransaction(connection, DbType.PO
 | Import packages with SqlJam | Manifest validation, ordered files, LOB restore and FKs last |
 | Use **Parquet** for analytics and lakes | Compact columnar files any engine reads, the schema still travels in `schema.sql` |
 | Use **CSV** for spreadsheets and text tools | Opens anywhere, and SqlJam still restores the exact types from `manifest.json` |
+| Use **Excel** for business teams | Real number and date cells with a frozen header row, and the exact types still come back from `manifest.json` |
 | Keep **one transaction** for imports | An error rolls back everything, **Confirm before commit** shows the log and the row counts before the commit |
 | Load again with **Update or insert by key** | Kept tables are updated by their primary keys, nothing is dropped |
 | Shape a report in **SQL Query** first | The first rows show the columns and values, **Export…** then reads all rows by one cursor |
@@ -490,7 +497,7 @@ Export options (UI / `ExportConfiguration`):
 | `indexIncluded` / `foreignKeyIncluded` / `commentIncluded` / `sequenceIncluded` | `true` | Objects to copy |
 | `failFast` | `true` | Stop on the first data error, `false` skips the rows with errors and reports each of them |
 | `identifierCase` | `AUTO` | `AUTO`, `KEEP`, `LOWER`, `UPPER` |
-| `dataFormat` / `compression` | `SQL` / `ZSTD` | `SQL`, `PARQUET` or `CSV` packages, Parquet compression `ZSTD`, `SNAPPY`, `GZIP`, `UNCOMPRESSED` |
+| `dataFormat` / `compression` | `SQL` / `ZSTD` | `SQL`, `PARQUET`, `CSV` or `EXCEL` packages, Parquet compression `ZSTD`, `SNAPPY`, `GZIP`, `UNCOMPRESSED` |
 | `csvDelimiter` | `,` | Delimiter of CSV packages |
 | `writeMode` / `keyColumnNames` | `INSERT` | `UPSERT` updates the rows of the same key (the primary key or chosen columns) and inserts the others, `SKIP_EXISTING` keeps them and inserts the others |
 | `CsvOptions` | comma, `"`, UTF-8 | Delimiter, quote, NULL text, header, encoding and date format of CSV files |
@@ -527,7 +534,7 @@ Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a serve
 |---|---|
 | Rows paged by primary key | Stable, deterministic reads on every database |
 | Tables copied one by one | Predictable load on production servers |
-| Packages contain plain SQL, Parquet or CSV | Readable, editable and portable, or columnar for analytics |
+| Packages contain plain SQL, Parquet, CSV or Excel | Readable, editable and portable, or columnar for analytics |
 | Writes sized for each database | Batched inserts, rewritten into multi-row statements for PostgreSQL and MySQL, several rows a statement for DuckDB, with the same value conversions everywhere |
 | Inserts of a SQL package merged on import | The package stays one readable row a line, the database receives up to 100 rows a statement |
 
@@ -541,7 +548,7 @@ Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a serve
 | Blog | [docs/blogger/sqljam-en.md](docs/blogger/sqljam-en.md) |
 | Developer guide | [docs/developer-guide.md](docs/developer-guide.md), the Java API for exports, imports, copies and queries |
 | Change logs | [change_logs](change_logs) |
-| Core API | `com.github.sqljam.impexp` (`Exporter`, `ScriptExporter`, `ImportExporter`, `ScriptImporter`, `ParquetExporter`, `ParquetImporter`, `CsvExporter`, `CsvImporter`, `ManualTransaction`) |
+| Core API | `com.github.sqljam.impexp` (`Exporter`, `ScriptExporter`, `ImportExporter`, `ScriptImporter`, `ParquetExporter`, `ParquetImporter`, `ManualTransaction`) and `com.github.sqljam.impexp.fs` (`CsvExporter`, `CsvImporter`, `ExcelExporter`, `ExcelImporter`) |
 
 **FAQ**
 
@@ -552,6 +559,8 @@ Environment: Apple M2 Max, 32 GB, JDK 17. The databases run in Docker on a serve
 | Can I copy a table inside the same database? | Yes. Choose the same data source and schema as the target and a table name such as `{table}_copy` |
 | How are LOBs stored in Parquet? | Inside the Parquet columns (strings and binaries), no extra LOB files |
 | How exact is CSV? | Exact. NULL is an empty field, an empty string is `""`, binaries are escaped, and every column is read back with its type from `manifest.json` |
+| How exact is Excel? | Exact as well. A cell holds 15 digits and milliseconds, so longer numbers and timestamps with microseconds are written as text, and every column is read back with its type from `manifest.json` |
+| Can I import an Excel file without `manifest.json`? | Yes. **Import Parquet, CSV or Excel Files**, add the `.xlsx` file and choose a sheet. Its first row names the columns, number, date and boolean cells keep their types, formulas give their computed values. Older workbooks (`.xls`) are saved as `.xlsx` first |
 | How are rows matched when they are updated or skipped? | By the primary key, or by the columns chosen in **Key Columns**. Choose the columns of a unique index of the target table: MySQL and MariaDB match rows by their unique indexes, PostgreSQL, SQLite and DuckDB require such an index. A table without primary key and chosen columns is inserted |
 | Why does Db2 refuse a wide table? | Rows wider than a 4K page need a table space of larger pages. Create one once, e.g. `CREATE BUFFERPOOL BP32K PAGESIZE 32K` and `CREATE TABLESPACE TS32K PAGESIZE 32K BUFFERPOOL BP32K`, Db2 then places wide tables there by itself |
 | Do names have to match in case? | No. An existing target table and its columns are matched without case, e.g. `OrderId` of the source writes the column `orderid` of PostgreSQL or `ORDERID` of Oracle |

@@ -30,7 +30,7 @@ import java.util.Map;
 import org.apache.commons.lang3.ArrayUtils;
 import org.apache.commons.lang3.StringUtils;
 import com.github.sqljam.jdbc.ConnectionFactory;
-import com.github.sqljam.jdbc.JdbcUtils;
+import com.github.sqljam.utils.JdbcUtils;
 import com.github.sqljam.jdbc.SimpleConnectionFactory;
 import com.github.sqljam.page.EachPage;
 import com.github.sqljam.page.MapBasedPageReader;
