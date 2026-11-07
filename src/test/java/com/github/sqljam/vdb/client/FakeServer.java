@@ -35,15 +35,15 @@ import com.sun.net.httpserver.HttpServer;
  * @Date: 24/10/2026
  * @Version 1.0.0
  */
-final class FakeServer implements AutoCloseable {
+public final class FakeServer implements AutoCloseable {
 
     /**
      * A request: method, path with the query, body and the authorization header
      */
-    static final class Request {
-        final String target;
-        final String body;
-        final String authorization;
+    public static final class Request {
+        public final String target;
+        public final String body;
+        public final String authorization;
 
         Request(String target, String body, String authorization) {
             this.target = target;
@@ -55,9 +55,9 @@ final class FakeServer implements AutoCloseable {
     private final HttpServer server;
     private final Map<String, Function<String, String>> routes = new LinkedHashMap<>();
     private final Map<String, Integer> statuses = new LinkedHashMap<>();
-    final List<Request> requests = new ArrayList<>();
+    public final List<Request> requests = new ArrayList<>();
 
-    FakeServer() throws IOException {
+    public FakeServer() throws IOException {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/", exchange -> {
             String target = exchange.getRequestMethod() + " " + exchange.getRequestURI().toString();
@@ -83,28 +83,28 @@ final class FakeServer implements AutoCloseable {
         server.start();
     }
 
-    FakeServer route(String prefix, String response) {
+    public FakeServer route(String prefix, String response) {
         return route(prefix, body -> response);
     }
 
-    FakeServer route(String prefix, int status, String response) {
+    public FakeServer route(String prefix, int status, String response) {
         statuses.put(prefix, status);
         return route(prefix, body -> response);
     }
 
-    FakeServer route(String prefix, Function<String, String> response) {
+    public FakeServer route(String prefix, Function<String, String> response) {
         routes.put(prefix, response);
         return this;
     }
 
-    String getUrl() {
+    public String getUrl() {
         return "http://127.0.0.1:" + server.getAddress().getPort();
     }
 
     /**
      * Requests whose method and path start with the prefix
      */
-    List<Request> requests(String prefix) {
+    public List<Request> requests(String prefix) {
         List<Request> matched = new ArrayList<>();
         synchronized (requests) {
             requests.stream().filter(request -> request.target.startsWith(prefix)).forEach(matched::add);

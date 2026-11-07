@@ -691,6 +691,13 @@ class MainViewTest {
         assertTrue(shortcuts.stream().anyMatch(row -> row[0].equals("Transfer > Export...")), shortcuts.stream().map(
                 row -> row[0]).collect(Collectors.joining(", ")));
         assertTrue(shortcuts.stream().anyMatch(row -> row[0].equals("Database > Refresh")));
+        // Keys of the editors and tables, which have no menu item, and the key of this list
+        for (String action : new String[]{"SQL editor > Run", "SQL editor > Run All",
+                "SQL editor > Complete names of tables and columns", "Data table > Copy the selected rows",
+                "Data table > Show the whole value of a cell", "Help > Keyboard Shortcuts"}) {
+            assertTrue(shortcuts.stream().anyMatch(row -> row[0].equals(action)), action);
+        }
+        assertTrue(shortcuts.stream().noneMatch(row -> row[1] == null || row[1].isEmpty()));
         FxTestSupport.run(FxTestSupport.menuItem(mainView, "help-shortcuts-menu")::fire);
         javafx.scene.control.DialogPane pane = FxTestSupport.waitForDialogPane();
         assertEquals(shortcuts.size(), FxTestSupport.call(() -> ((javafx.scene.control.TableView<?>) pane.lookup(

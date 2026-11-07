@@ -186,6 +186,10 @@ public class ExportDialog extends Dialog<TransferRequest> {
     private final String freeQuery;
     private final DbNode queryNode;
     private final TextField queryTableField = new TextField(DEFAULT_QUERY_TABLE);
+    /**
+     * A note of the query, e.g. that its vectors are exported as text
+     */
+    private final Label queryNoteLabel = new Label();
     private VBox tablesBox;
     private Label tableNamePatternLabel;
     private Label mappingColumnsLabel;
@@ -224,6 +228,25 @@ public class ExportDialog extends Dialog<TransferRequest> {
      */
     public static ExportDialog forQuery(Window owner, AppContext context, DbNode node, String sql) {
         return new ExportDialog(owner, context, node, null, sql);
+    }
+
+    /**
+     * A note shown with the query, e.g. that the rows of an index are exported as a table and its vectors as text
+     */
+    public void setQueryNote(String note) {
+        queryNoteLabel.setText(StringUtils.defaultString(note));
+        boolean shown = freeQuery != null && StringUtils.isNotBlank(note);
+        queryNoteLabel.setVisible(shown);
+        queryNoteLabel.setManaged(shown);
+    }
+
+    /**
+     * Name of the table of the rows of the query in the target, a name which is not an identifier is kept as typed
+     */
+    public void setQueryTableName(String tableName) {
+        if (freeQuery != null && StringUtils.isNotBlank(tableName)) {
+            queryTableField.setText(tableName);
+        }
     }
 
     private ExportDialog(Window owner, AppContext context, DbNode node, TableQuery query, String sql) {
@@ -743,6 +766,12 @@ public class ExportDialog extends Dialog<TransferRequest> {
         GridPane queryGrid = grid();
         queryGrid.addRow(0, new Label(Messages.get("export.query.table")), queryTableField);
         queryGrid.addRow(1, new Label(Messages.get("export.query.sql")), sqlLabel);
+        queryNoteLabel.setId("queryNoteLabel");
+        queryNoteLabel.getStyleClass().add("status-pending");
+        queryNoteLabel.setWrapText(true);
+        queryNoteLabel.setVisible(false);
+        queryNoteLabel.setManaged(false);
+        queryGrid.add(queryNoteLabel, 1, 2);
         tablesBox.getChildren().setAll(queryGrid);
         for (Node control : new Node[]{sourceCombo, catalogCombo, schemaCombo}) {
             // Shown but not changed, a disabled catalog or schema means none
@@ -768,6 +797,10 @@ public class ExportDialog extends Dialog<TransferRequest> {
         ConnectionProfile profile = sourceCombo.getItems().stream()
                 .filter(item -> item.getId().equals(node.getProfile().getId())).findFirst()
                 .orElse(node.getProfile());
+        if (!sourceCombo.getItems().contains(profile)) {
+            // A data source which is not saved, e.g. the rows of a query of an index fetched into a file
+            sourceCombo.getItems().add(profile);
+        }
         String table = node.getTable() != null ? node.getTable().getName() : null;
         // Selecting the profile triggers loading, the node path is passed to keep the selection
         sourceCombo.setValue(null);

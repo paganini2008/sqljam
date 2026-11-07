@@ -29,15 +29,19 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.github.sqljam.utils.RestClient;
+import com.github.sqljam.utils.RestException;
 import com.github.sqljam.vdb.VdbCollection;
 import com.github.sqljam.vdb.VdbException;
 import com.github.sqljam.vdb.VdbField;
 import com.github.sqljam.vdb.VdbInfo;
 import com.github.sqljam.vdb.VdbQuery;
 import com.github.sqljam.vdb.VdbSource;
+import com.github.sqljam.vdb.VdbSqlResult;
 import com.github.sqljam.vdb.VdbValues;
 import com.github.sqljam.vdb.VectorIndex;
 import com.github.sqljam.vdb.VectorType;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * @Description: ElasticsearchClient reads Elasticsearch 8.0 and later by its REST API with a user and a password or
@@ -49,7 +53,14 @@ import com.github.sqljam.vdb.VectorType;
  * @Date: 24/10/2026
  * @Version 1.0.0
  */
+@Slf4j
 public class ElasticsearchClient extends AbstractVdbClient {
+
+    /**
+     * The reason of an error in the JSON of the server, the first one is the cause
+     */
+    private static final java.util.regex.Pattern SQL_REASON = java.util.regex.Pattern.compile(
+            "\"reason\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"");
 
     static final String ID = "_id";
     /**
@@ -510,5 +521,119 @@ public class ElasticsearchClient extends AbstractVdbClient {
             default:
                 return "lte";
         }
+    }
+
+    @Override
+    public boolean isSqlSupported() {
+        return true;
+    }
+
+    /**
+     * Path of SQL queries in JSON: columns, rows and a cursor
+     */
+    protected String sqlPath() {
+        return "/_sql?format=json";
+    }
+
+    protected String sqlClosePath() {
+        return "/_sql/close";
+    }
+
+    @Override
+    public VdbSqlResult querySql(String sql, int fetchSize) {
+        ObjectNode body = RestClient.getMapper().createObjectNode().put("query", sql);
+        if (fetchSize > 0) {
+            body.put("fetch_size", fetchSize);
+        }
+        return toSqlResult(postSql(body));
+    }
+
+    @Override
+    public VdbSqlResult nextSqlPage(String cursor) {
+        return toSqlResult(postSql(RestClient.getMapper().createObjectNode().put("cursor", cursor)));
+    }
+
+    @Override
+    public void closeSqlCursor(String cursor) {
+        if (StringUtils.isEmpty(cursor)) {
+            return;
+        }
+        try {
+            rest.post(sqlClosePath(), RestClient.getMapper().createObjectNode().put("cursor", cursor));
+        } catch (RestException e) {
+            // A cursor of the last page is closed by the server already
+            if (log.isDebugEnabled()) {
+                log.debug("Unable to close a SQL cursor: {}", e.getMessage());
+            }
+        }
+    }
+
+    private JsonNode postSql(ObjectNode body) {
+        try {
+            return rest.post(sqlPath(), body);
+        } catch (RestException e) {
+            throw new VdbException(sqlError(e.getMessage()), e);
+        }
+    }
+
+    /**
+     * The reason of an error of SQL which the server tells in its JSON, the whole message otherwise
+     */
+    static String sqlError(String message) {
+        java.util.regex.Matcher matcher = SQL_REASON.matcher(StringUtils.defaultString(message));
+        if (!matcher.find()) {
+            return message;
+        }
+        try {
+            return RestClient.getMapper().readValue("\"" + matcher.group(1) + "\"", String.class);
+        } catch (IOException e) {
+            return matcher.group(1);
+        }
+    }
+
+    /**
+     * Columns and rows of Elasticsearch (columns, rows) and of OpenSearch (schema, datarows), the cursor if more
+     * rows follow
+     */
+    static VdbSqlResult toSqlResult(JsonNode response) {
+        List<String[]> columns = new ArrayList<>();
+        JsonNode schema = response.has("columns") ? response.path("columns") : response.path("schema");
+        for (JsonNode column : schema) {
+            columns.add(new String[]{column.path("name").asText(), column.path("type").asText()});
+        }
+        List<List<Object>> rows = new ArrayList<>();
+        JsonNode data = response.has("rows") ? response.path("rows") : response.path("datarows");
+        for (JsonNode row : data) {
+            List<Object> values = new ArrayList<>(row.size());
+            for (JsonNode value : row) {
+                values.add(sqlValue(value));
+            }
+            rows.add(values);
+        }
+        String cursor = response.hasNonNull("cursor") ? StringUtils.trimToNull(response.path("cursor").asText())
+                : null;
+        return new VdbSqlResult(columns, rows, cursor);
+    }
+
+    /**
+     * A value of JSON as Java: text, a whole or decimal number, a boolean, null, arrays and objects as JSON text
+     */
+    static Object sqlValue(JsonNode value) {
+        if (value == null || value.isNull() || value.isMissingNode()) {
+            return null;
+        }
+        if (value.isTextual()) {
+            return value.asText();
+        }
+        if (value.isBoolean()) {
+            return value.asBoolean();
+        }
+        if (value.isIntegralNumber()) {
+            return value.canConvertToLong() ? (Object) value.asLong() : value.bigIntegerValue();
+        }
+        if (value.isNumber()) {
+            return value.decimalValue();
+        }
+        return value.toString();
     }
 }
