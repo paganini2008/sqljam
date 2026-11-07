@@ -170,6 +170,35 @@ public interface VdbClient extends AutoCloseable {
         boolean accept(List<Map<String, Object>> records, boolean last);
     }
 
+    /**
+     * Whether the server runs SQL queries, Elasticsearch and OpenSearch do. Their SQL reads only, it writes nothing
+     */
+    default boolean isSqlSupported() {
+        return false;
+    }
+
+    /**
+     * Runs a SQL query of the server and returns its first page, the cursor of the result reads the next pages
+     *
+     * @param fetchSize rows of a page
+     */
+    default VdbSqlResult querySql(String sql, int fetchSize) {
+        throw new VdbException(getType() + " runs no SQL");
+    }
+
+    /**
+     * The next page of a SQL query, its columns are those of the first page
+     */
+    default VdbSqlResult nextSqlPage(String cursor) {
+        throw new VdbException(getType() + " runs no SQL");
+    }
+
+    /**
+     * Closes the cursor of a SQL query which is not read to its end, a closed or unknown cursor is fine
+     */
+    default void closeSqlCursor(String cursor) {
+    }
+
     @Override
     default void close() {
     }

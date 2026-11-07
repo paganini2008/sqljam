@@ -39,6 +39,7 @@ SqlJam reads one metadata tree and generates SQL with a dialect chosen by target
 - **Custom and modern types** → PostgreSQL enums and domains, unions, maps, tuples and variants
 - **Embeddings move with their search** → vectors of pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse keep their dimensions, vector indexes keep their distances and options
 - **Embeddings live in a vector database** → Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma sit in the tree as vector databases. Browse their databases, collections, partitions, tenants and namespaces, page through the records, then import collections straight into a database with vectors: ids, vectors, a column of each field and the whole payload as JSON
+- **Rows of an Elasticsearch index for a table** → SQL Query on Elasticsearch or OpenSearch runs SQL on the indexes, the rows of a query are exported like a table into packages or any database. Vectors with their indexes take Import Vectors into Database
 - **Database behind a bastion host** → an SSH tunnel per data source with a password or a private key, host keys trusted on first use, a broken tunnel opens again by itself
 - **Which server, how healthy?** → Info shows the overview and the health of a data source or a vector database, and a Dashboard of live charts: sessions, transactions, rows, cache, locks, network, CPU and memory, collections and records of vector databases
 - **Long values, rows for a ticket** → one line per cell, a double click shows the whole value, Copy Rows As CSV, TSV, JSON or Markdown
@@ -76,7 +77,7 @@ Step 4. narrow the rows of a table on the Data tab and export just those rows. R
 
 ![Data query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/table-data.png)
 
-Step 5. open SQL Query on the toolbar, run a query with Ctrl+Enter (⌘+Enter on macOS) and press Export… to send all its rows to SQL, Parquet, CSV, Excel or another database:
+Step 5. open SQL Query on the toolbar, run a query with Ctrl+Enter (⌘+Enter on macOS), complete names of tables and columns with Ctrl+Space, and press Export… to send all its rows to SQL, Parquet, CSV, Excel or another database:
 
 ![SQL Query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sql-editor.png)
 
@@ -88,7 +89,7 @@ Step 7. load Parquet files of other tools into a table:
 
 ![Parquet files](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/import-parquet.png)
 
-Step 8. Create a data source of the Vector databases category, with an API key, a user and password or neither. Expand it in the tree to its databases, collections and partitions, open a collection to page through its records, narrowed by conditions, a native filter or a nearest neighbor search, and Import… writes the checked collections into a data source with vectors. Only such data sources are offered as targets.
+Step 8. Create a data source of the Vector databases category, with an API key, a user and password or neither. Expand it in the tree to its databases, collections and partitions, open a collection to page through its records, narrowed by conditions, a native filter or a nearest neighbor search, and Import… writes the checked collections into a data source with vectors. Only such data sources are offered as targets. SQL Query on an Elasticsearch or OpenSearch data source or index opens an editor for their read only SQL, and Export… sends all rows of a query to a package or a database as a plain table.
 
 ![Vector database collection](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/vdb-collection.png)
 

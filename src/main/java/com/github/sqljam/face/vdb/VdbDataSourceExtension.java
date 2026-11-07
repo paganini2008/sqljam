@@ -94,6 +94,20 @@ public class VdbDataSourceExtension implements DataSourceExtension {
         }
 
         /**
+         * Elasticsearch and OpenSearch run SQL on their indexes, the rows are exported like the rows of tables
+         */
+        @Override
+        public boolean isSqlSupported() {
+            return profile.getType() == VdbType.ELASTICSEARCH || profile.getType() == VdbType.OPENSEARCH;
+        }
+
+        @Override
+        public Tab openSqlTab(AppContext context, int number, SourceItem item, QueryExport export) {
+            return isSqlSupported() ? new VdbSqlTab(context, profile, number, item != null ? item.getName() : null,
+                    export) : null;
+        }
+
+        /**
          * Levels of the source: databases (Milvus, Chroma), collections, then their partitions (partitions of
          * Milvus, tenants of Weaviate, namespaces of Pinecone)
          */

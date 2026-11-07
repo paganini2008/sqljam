@@ -884,6 +884,48 @@ class ExportDialogTest {
      * Rows of a query of the SQL editor are exported as one table: the source is fixed, the table list is the
      * name of the table, options of tables are hidden, the same schema is a valid target
      */
+    /**
+     * The rows of a query of an index fetched into a DuckDB file which is no saved data source: the export names
+     * the table after the index and tells that the rows go as a table
+     */
+    @Test
+    void exportsRowsOfIndexFromUnsavedSource() throws Exception {
+        File file = new File(dir, "results.duckdb");
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection("jdbc:duckdb:" + file
+                .getAbsolutePath()); java.sql.Statement statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE \"logs\" (id VARCHAR, n INTEGER)");
+            statement.execute("INSERT INTO \"logs\" VALUES ('a', 1)");
+        }
+        ConnectionProfile results = new ConnectionProfile();
+        results.setName("Search query results");
+        results.setDbType(DbType.DUCKDB);
+        results.setDatabase(file.getAbsolutePath());
+        dialog = FxTestSupport.call(() -> {
+            ExportDialog exportDialog = ExportDialog.forQuery(stage, context, DbNode.connection(results),
+                    "SELECT * FROM \"logs\"");
+            exportDialog.setQueryTableName("logs");
+            exportDialog.setQueryNote("The rows of the index are exported as a table");
+            exportDialog.show();
+            return exportDialog;
+        });
+        assertEquals("logs", FxTestSupport.call(((TextField) node("queryTableField"))::getText));
+        Label note = node("queryNoteLabel");
+        assertTrue(FxTestSupport.call(note::isVisible));
+        assertEquals("The rows of the index are exported as a table", FxTestSupport.call(note::getText));
+        setText("directoryField", dir.getAbsolutePath());
+        FxTestSupport.waitUntil(() -> !startDisabled());
+        TransferRequest request = build();
+        assertEquals("Search query results", request.getSource().getName());
+        assertEquals("SELECT * FROM \"logs\"", request.getQueries().get("logs"));
+        // No note, no label, a blank name keeps the default
+        FxTestSupport.run(() -> {
+            dialog.setQueryNote(null);
+            dialog.setQueryTableName(" ");
+        });
+        assertFalse(FxTestSupport.call(note::isVisible));
+        assertEquals("logs", FxTestSupport.call(((TextField) node("queryTableField"))::getText));
+    }
+
     @Test
     void exportsQueryAsTable() throws Exception {
         dialog = FxTestSupport.call(() -> {

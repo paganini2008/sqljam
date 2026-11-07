@@ -48,6 +48,19 @@ public class OpenSearchClient extends ElasticsearchClient {
     /**
      * Indexes of the security audit log and of the query insights are of the server too
      */
+    /**
+     * The SQL plugin of OpenSearch answers in the JDBC format: schema, datarows and a cursor
+     */
+    @Override
+    protected String sqlPath() {
+        return "/_plugins/_sql";
+    }
+
+    @Override
+    protected String sqlClosePath() {
+        return "/_plugins/_sql/close";
+    }
+
     @Override
     protected boolean isSystemIndex(String name) {
         return super.isSystemIndex(name) || name.startsWith("security-auditlog-") || name.startsWith("top_queries-");

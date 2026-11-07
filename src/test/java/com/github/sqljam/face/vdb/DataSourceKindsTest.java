@@ -351,7 +351,7 @@ class DataSourceKindsTest {
                 item -> "Docs Chroma".equals(item.getValue().getLabel())).findFirst().orElseThrow());
         fire(contextMenu(chroma), "Edit Data Source");
         press(waitForDialog("vdbUrlField"), ButtonType.CANCEL);
-        fire(contextMenu(chroma), "Import into Database...");
+        fire(contextMenu(chroma), "Import Vectors into Database...");
         DialogPane importPane = waitForDialog("vdbSourceCombo");
         @SuppressWarnings("unchecked")
         ComboBox<VdbProfile> sources = (ComboBox<VdbProfile>) importPane.lookup("#vdbSourceCombo");
@@ -406,8 +406,32 @@ class DataSourceKindsTest {
 
         // A vector database is imported into a database, nothing is written into it
         TreeItem<DbNode> qdrant = FxTestSupport.call(() -> group("Vector databases").getChildren().get(0));
-        assertEquals(List.of("Import into Database...", "Refresh", "Info", "Edit Data Source", "Delete Data Source"),
-                FxTestSupport.call(() -> contextMenu(qdrant).getItems().stream().map(MenuItem::getText).filter(
-                        text -> text != null).collect(Collectors.toList())));
+        assertEquals(List.of("Import Vectors into Database...", "Refresh", "Info", "Edit Data Source",
+                "Delete Data Source"), FxTestSupport.call(() -> contextMenu(qdrant).getItems().stream()
+                .map(MenuItem::getText).filter(text -> text != null).collect(Collectors.toList())));
+
+        // Elasticsearch also runs SQL on its indexes, their rows are exported like tables
+        VdbProfile search = new VdbProfile();
+        search.setName("Logs Search");
+        search.setType(VdbType.ELASTICSEARCH);
+        search.setUrl("http://127.0.0.1:1");
+        try {
+            store.saveProfile(search, true);
+        } catch (java.io.IOException e) {
+            throw new AssertionError(e);
+        }
+        java.util.concurrent.atomic.AtomicReference<DbNode> queried = new java.util.concurrent.atomic
+                .AtomicReference<>();
+        FxTestSupport.run(() -> tree.setOnSqlQuery(queried::set));
+        fire(contextMenu(group("Vector databases")), "Refresh");
+        FxTestSupport.waitUntil(() -> labels(group("Vector databases")).contains("Logs Search"));
+        TreeItem<DbNode> logs = FxTestSupport.call(() -> group("Vector databases").getChildren().stream().filter(
+                item -> "Logs Search".equals(item.getValue().getLabel())).findFirst().orElseThrow());
+        assertEquals(List.of("Import Vectors into Database...", "SQL Query", "Refresh", "Info", "Edit Data Source",
+                "Delete Data Source"), FxTestSupport.call(() -> contextMenu(logs).getItems().stream()
+                .map(MenuItem::getText).filter(text -> text != null).collect(Collectors.toList())));
+        fire(contextMenu(logs), "SQL Query");
+        FxTestSupport.waitUntil(() -> queried.get() != null);
+        assertEquals("Logs Search", queried.get().getLabel());
     }
 }

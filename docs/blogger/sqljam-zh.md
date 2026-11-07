@@ -78,13 +78,13 @@ bin/
 
 右键数据源选 **Connect**，连上之后同一个菜单变成 **Disconnect**，断开时它的表页签一起关闭。导入导出选目标数据源时，旁边的 **+** 按钮可以当场新建一个。工具栏最右边是 **Exit**。**Help → About SqlJam** 里有版本、主页、仓库地址和作者联系方式，右下角的 GitHub 图标点一下直接打开仓库。
 
-工具栏的 **SQL Query** 为选中的数据源打开查询器。**Ctrl+Enter**（macOS 上是 **⌘+Enter**）执行光标所在的语句，**Ctrl+Shift+Enter** 执行全部，**Export…** 把查询的全部结果导出为 SQL、Parquet、CSV、Excel 或导入另一个数据库：
+工具栏的 **SQL Query** 为选中的数据源打开查询器。**Ctrl+Enter**（macOS 上是 **⌘+Enter**）执行光标所在的语句，**Ctrl+Shift+Enter** 执行全部，**Ctrl+Space** 或在表名、别名后输入点号可以补全表名和列名（**Help → Keyboard Shortcuts** 列出全部快捷键），**Export…** 把查询的全部结果导出为 SQL、Parquet、CSV、Excel 或导入另一个数据库：
 
 ![SQL Query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sql-editor.png)
 
 新建数据源先选类别：关系型、OLAP 或向量数据库，类型和字段随类别变化。勾选 **Connect through SSH tunnel** 可以经跳板机连接数据库，用密码或私钥认证。
 
-向量数据库是**向量数据库**类别的数据源，按各库的要求填 API key、用户和密码，或者都不填。在树中展开到数据库、集合和分区（Weaviate 的租户、Pinecone 的命名空间），打开集合就能看到字段和分页的记录，可以按条件、原生过滤或最近邻搜索筛选。**Import…** 打开导入向导，把勾选的集合写进支持向量的数据源。目标列表只显示支持向量的数据源。
+向量数据库是**向量数据库**类别的数据源，按各库的要求填 API key、用户和密码，或者都不填。在树中展开到数据库、集合和分区（Weaviate 的租户、Pinecone 的命名空间），打开集合就能看到字段和分页的记录，可以按条件、原生过滤或最近邻搜索筛选。**Import…** 打开导入向导，把勾选的集合写进支持向量的数据源。目标列表只显示支持向量的数据源。Elasticsearch 和 OpenSearch 还可以在数据源或索引上打开 **SQL Query**，用它们只读的 SQL 查询索引，**Export…** 把查询的全部结果当作普通表导出到导出包或任何数据库。向量连同向量索引要走 **Import Vectors into Database**。
 
 所有数据表格每格只显示一行，双击或 **Shift+Enter** 查看完整内容（JSON 自动缩进，向量显示维度），点表头对本页排序，**Copy Rows As** 把选中的行复制为 CSV、TSV、JSON 或 Markdown。工具栏的 **Info** 显示所选数据源的服务器、驱动、会话和健康状况。
 
@@ -354,4 +354,4 @@ schtasks /Create /TN "SqlJam sync" /SC MINUTE /MO 15 /TR "C:\SqlJam\sqljam.bat s
 9. Parquet、CSV、Excel 导出包与外部文件加载，DuckDB、ClickHouse 作为 OLAP 数据源，导入默认一个事务、出错整体回滚，支持按主键更新或插入。
 10. SQL Query 查询器的任意查询结果都能走同样的导出出口，来自表的列保留原类型。
 11. 表数据可查询，只导出查询结果，也能在同一 schema 内复制表。
-12. Milvus、Qdrant、Weaviate、Pinecone、Elasticsearch、OpenSearch、Chroma 的集合直接导入支持向量的数据库，导入前可按条件、原生过滤或最近邻搜索预览。
+12. Milvus、Qdrant、Weaviate、Pinecone、Elasticsearch、OpenSearch、Chroma 的集合直接导入支持向量的数据库，导入前可按条件、原生过滤或最近邻搜索预览。Elasticsearch、OpenSearch 的索引还能用 SQL 查询，结果按普通表导出。

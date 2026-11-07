@@ -405,7 +405,8 @@ public class MainView extends BorderPane {
                     selectConnection(profile);
                 }));
         restoreExample.setId("restoreExampleMenuItem");
-        MenuItem shortcuts = item("help.shortcuts", null, null, this::showShortcuts);
+        MenuItem shortcuts = item("help.shortcuts", null, shortcut(KeyCode.L, KeyCombination.SHIFT_DOWN),
+                this::showShortcuts);
         MenuItem about = item("action.about", Icons.INFO, null, () -> Dialogs.showAbout(getWindow(),
                 context::openDocument));
         return new Menu(Messages.get("menu.help"), null, videos, docs, guide, issue, new SeparatorMenuItem(),
@@ -454,6 +455,18 @@ public class MainView extends BorderPane {
         for (Menu menu : menuBar.getMenus()) {
             collectShortcuts(menu, rows);
         }
+        // Keys of the editors and tables, which have no menu item
+        String sql = Messages.get("shortcuts.sqlEditor") + " > ";
+        rows.add(new String[]{sql + Messages.get("sql.run"), SqlTab.RUN.getDisplayText()});
+        rows.add(new String[]{sql + Messages.get("sql.runAll"), SqlTab.RUN_ALL.getDisplayText()});
+        rows.add(new String[]{sql + Messages.get("shortcuts.complete"), SqlCompletion.COMPLETE.getDisplayText()});
+        rows.add(new String[]{sql + Messages.get("shortcuts.columns"), "."});
+        String table = Messages.get("shortcuts.dataTable") + " > ";
+        rows.add(new String[]{table + Messages.get("shortcuts.copy"), TableCopy.COPY.getDisplayText()});
+        rows.add(new String[]{table + Messages.get("shortcuts.copyHeaders"), TableCopy.COPY_WITH_HEADERS
+                .getDisplayText()});
+        rows.add(new String[]{table + Messages.get("shortcuts.value"), new KeyCodeCombination(KeyCode.ENTER,
+                KeyCombination.SHIFT_DOWN).getDisplayText()});
         return rows;
     }
 
@@ -719,6 +732,10 @@ public class MainView extends BorderPane {
      * is selected
      */
     void openSqlTab(DbNode node) {
+        if (node != null && node.getSource() != null && node.getSource().isSqlSupported()) {
+            openSourceSqlTab(node);
+            return;
+        }
         DbNode target = node;
         if (target == null || target.getProfile() == null) {
             if (context.getProfileRegistry().getProfiles().isEmpty()) {
@@ -733,6 +750,32 @@ public class MainView extends BorderPane {
         tab.setUserData(target.getProfile().getId() + "|sql|" + sqlTabCount);
         tabPane.getTabs().add(tab);
         tabPane.getSelectionModel().select(tab);
+    }
+
+    /**
+     * Opens the SQL editor of a source, e.g. of the indexes of Elasticsearch, a collection fills in its query
+     */
+    private void openSourceSqlTab(DbNode node) {
+        SourceItem item = node.getKind() == DbNode.Kind.SOURCE_ITEM ? node.getItem() : null;
+        Tab tab = node.getSource().openSqlTab(context, ++sqlTabCount, item, this::showQueryExportDialog);
+        if (tab == null) {
+            return;
+        }
+        tab.setUserData(node.getSource().getId() + "|sql|" + sqlTabCount);
+        tabPane.getTabs().add(tab);
+        tabPane.getSelectionModel().select(tab);
+    }
+
+    /**
+     * Exports all rows of a query of the SQL editor of a source as a table named after the query, with a note
+     */
+    private void showQueryExportDialog(DbNode node, String sql, String tableName, String note) {
+        ExportDialog dialog = ExportDialog.forQuery(getWindow(), context, node, sql);
+        dialog.setQueryTableName(tableName);
+        dialog.setQueryNote(note);
+        Optional<TransferRequest> request = dialog.showAndWait();
+        connectionTree.addNewConnections();
+        request.ifPresent(transferRequest -> startTransfer(transferRequest, 1));
     }
 
     /**

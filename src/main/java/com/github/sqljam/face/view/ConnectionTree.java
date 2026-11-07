@@ -947,7 +947,14 @@ public class ConnectionTree extends TreeView<DbNode> {
                     MenuItem open = new MenuItem(node.getExtension().getOpenText(), Icons.of(Icons.IMPORT));
                     open.setId("openSourceMenuItem");
                     open.setOnAction(event -> node.getSource().open(getScene().getWindow(), context));
-                    menu.getItems().addAll(open, menuItem("action.refresh", Icons.REFRESH,
+                    menu.getItems().add(open);
+                    if (node.getSource().isSqlSupported()) {
+                        // Rows of indexes are exported like tables, vectors are imported by the main action
+                        MenuItem sql = menuItem("action.sqlQuery", Icons.SQL, () -> fire(onSqlQuery, node));
+                        sql.setId("sourceSqlMenuItem");
+                        menu.getItems().add(sql);
+                    }
+                    menu.getItems().addAll(menuItem("action.refresh", Icons.REFRESH,
                             ConnectionTree.this::refreshSelected), menuItem("action.info", Icons.INFO,
                             () -> fire(onInfo, node)), new SeparatorMenuItem(),
                             menuItem("action.editConnection", Icons.EDIT, () -> editSource(node)),
@@ -967,6 +974,11 @@ public class ConnectionTree extends TreeView<DbNode> {
                         openItem.setId("openSourceItemMenuItem");
                         openItem.setOnAction(event -> fire(onOpenSourceItem, node));
                         menu.getItems().addAll(openItem, importItem);
+                        if (node.getSource().isSqlSupported()) {
+                            MenuItem sql = menuItem("action.sqlQuery", Icons.SQL, () -> fire(onSqlQuery, node));
+                            sql.setId("sourceItemSqlMenuItem");
+                            menu.getItems().add(sql);
+                        }
                     }
                     break;
                 default:

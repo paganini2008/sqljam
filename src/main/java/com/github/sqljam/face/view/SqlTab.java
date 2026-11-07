@@ -28,6 +28,8 @@ import java.util.stream.Collectors;
 import org.apache.commons.lang3.StringUtils;
 import lombok.extern.slf4j.Slf4j;
 import com.github.sqljam.face.model.ConnectionProfile;
+import com.github.sqljam.face.model.ColumnInfo;
+import com.github.sqljam.face.model.TableInfo;
 import com.github.sqljam.face.model.SqlResult;
 import com.github.sqljam.face.service.DatabaseSession;
 import com.github.sqljam.face.service.SqlStatements;
@@ -62,7 +64,8 @@ import javafx.scene.layout.Region;
 /**
  * @Description: SqlTab runs SQL on a data source and exports the rows of a query, SqlJam is an import and export
  *               tool, the editor serves exports: Ctrl+Enter runs the selected text or the statement at the caret,
- *               Ctrl+Shift+Enter runs all statements, every statement is committed at once. The first rows of the
+ *               Ctrl+Shift+Enter runs all statements, every statement is committed at once. Ctrl+Space and a dot
+ *               complete the names of tables and columns. The first rows of the
  *               last query are shown, Export sends the query to the export wizard which reads all its rows. The
  *               tab has a connection of its own, so session settings and temporary tables stay between runs.
  * @Author: Fred Feng
@@ -76,8 +79,8 @@ public class SqlTab extends Tab {
      * Rows of a query shown in the editor, an export reads all of them
      */
     static final int MAX_ROWS = 500;
-    private static final KeyCombination RUN = new KeyCodeCombination(KeyCode.ENTER, KeyCombination.SHORTCUT_DOWN);
-    private static final KeyCombination RUN_ALL = new KeyCodeCombination(KeyCode.ENTER,
+    static final KeyCombination RUN = new KeyCodeCombination(KeyCode.ENTER, KeyCombination.SHORTCUT_DOWN);
+    static final KeyCombination RUN_ALL = new KeyCodeCombination(KeyCode.ENTER,
             KeyCombination.SHORTCUT_DOWN, KeyCombination.SHIFT_DOWN);
 
     private final ConnectionProfile profile;
@@ -109,6 +112,7 @@ public class SqlTab extends Tab {
     private String lastQuery;
     private boolean busy;
     private BiConsumer<DbNode, String> onExport;
+    private SqlCompletion completion;
 
     private static class LogEntry {
 
@@ -168,6 +172,20 @@ public class SqlTab extends Tab {
             this.schema = StringUtils.defaultIfBlank(tableSchema, schema);
         }
 
+        // Tables and columns of the database and schema of the editor
+        completion = SqlCompletion.attach(editor, new SqlCompletion.Source() {
+            @Override
+            public List<String> tables() throws Exception {
+                return session.getTables(catalog, schema).stream().map(TableInfo::getName).collect(Collectors
+                        .toList());
+            }
+
+            @Override
+            public List<String> columns(String table) throws Exception {
+                return session.getColumns(catalog, schema, table).stream().map(ColumnInfo::getName).collect(
+                        Collectors.toList());
+            }
+        });
         targetLabel.setText(profile.getName());
         targetLabel.setId("sqlTargetLabel");
         targetLabel.getStyleClass().add("muted");
@@ -274,6 +292,9 @@ public class SqlTab extends Tab {
         boolean otherDatabase = !StringUtils.equals(newCatalog, catalog);
         catalog = newCatalog;
         schema = newSchema;
+        if (completion != null) {
+            completion.reset();
+        }
         setTooltip(new Tooltip(describeTarget()));
         Connection open = connection;
         if (open == null) {
@@ -315,6 +336,10 @@ public class SqlTab extends Tab {
 
     SqlEditor getEditor() {
         return editor;
+    }
+
+    SqlCompletion getCompletion() {
+        return completion;
     }
 
     String getLastQuery() {

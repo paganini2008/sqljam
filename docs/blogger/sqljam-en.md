@@ -42,6 +42,7 @@ SqlJam reads **one metadata tree** and generates SQL with a **dialect chosen by 
 | Custom and modern types | PostgreSQL enums and domains, unions, maps, tuples and variants |
 | Embeddings move with their search | Vectors of pgvector, MySQL, MariaDB, Oracle, SQL Server, Db2, DuckDB and ClickHouse keep their dimensions, vector indexes keep their distances and options |
 | Embeddings live in a vector database | Milvus, Qdrant, Weaviate, Pinecone, Elasticsearch, OpenSearch and Chroma sit in the tree as **vector databases**: browse their databases, collections, partitions, tenants and namespaces, page through the records, then import collections straight into a database with vectors: ids, vectors, a column of each field and the whole payload as JSON |
+| Rows of an Elasticsearch index for a table | **SQL Query** on Elasticsearch or OpenSearch runs SQL on the indexes, the rows of a query are exported like a table into packages or any database. Vectors with their indexes take **Import Vectors into Database** |
 | Database behind a bastion host | **SSH tunnel** per data source with a password or a private key, host keys trusted on first use, a broken tunnel opens again by itself |
 | Which server, how healthy? | **Info** shows the overview and the health of a data source or a vector database, and a **Dashboard** of live charts: sessions, transactions, rows, cache, locks, network, CPU and memory, collections and records of vector databases |
 | Long values, rows for a ticket | One line per cell, a double click shows the whole value, **Copy Rows As** CSV, TSV, JSON or Markdown |
@@ -78,13 +79,13 @@ SqlJam opens its main window like DBeaver and DataGrip, where it was closed, wit
 
 Right-click a data source to **Connect**, and once it is connected the same menu offers **Disconnect**, which also closes its table tabs. When an import or export needs a target data source, the **+** button next to it creates one on the spot. **Exit** sits at the right end of the toolbar. **Help → About SqlJam** shows the version, the home page, the repository and how to reach the author, and the GitHub icon at the bottom right opens the repository.
 
-**SQL Query** on the toolbar opens an editor for the selected data source. **Ctrl+Enter** (**⌘+Enter** on macOS) runs the statement at the caret, **Ctrl+Shift+Enter** runs them all, and **Export…** sends all rows of the query to SQL, Parquet, CSV, Excel or another database:
+**SQL Query** on the toolbar opens an editor for the selected data source. **Ctrl+Enter** (**⌘+Enter** on macOS) runs the statement at the caret, **Ctrl+Shift+Enter** runs them all, **Ctrl+Space** or a dot completes the names of tables and columns (**Help → Keyboard Shortcuts** lists every key), and **Export…** sends all rows of the query to SQL, Parquet, CSV, Excel or another database:
 
 ![SQL Query](https://raw.githubusercontent.com/paganini2008/sqljam/master/docs/assets/sql-editor.png)
 
 A new data source starts with its category: relational, OLAP or vector databases, and the types and fields follow it. **Connect through SSH tunnel** reaches a database behind a bastion host with a password or a private key.
 
-A vector database is a data source of the **Vector databases** category, with an API key, a user and password or neither. Expand it in the tree to its databases, collections and partitions (tenants of Weaviate, namespaces of Pinecone) and open a collection: its fields, and its records page by page, narrowed by conditions, a native filter or a nearest neighbor search. **Import…** opens the wizard which writes the checked collections into a data source with vectors. Only such data sources are offered as targets.
+A vector database is a data source of the **Vector databases** category, with an API key, a user and password or neither. Expand it in the tree to its databases, collections and partitions (tenants of Weaviate, namespaces of Pinecone) and open a collection: its fields, and its records page by page, narrowed by conditions, a native filter or a nearest neighbor search. **Import…** opens the wizard which writes the checked collections into a data source with vectors. Only such data sources are offered as targets. **SQL Query** on an Elasticsearch or OpenSearch data source or index opens an editor for their read only SQL, and **Export…** sends all rows of a query to a package or a database as a plain table.
 
 Every data table shows one line per cell. A double click or **Shift+Enter** opens the whole value with JSON indented and vectors described, a header sorts the rows of the page, and **Copy Rows As** copies the selected rows as CSV, TSV, JSON or Markdown. **Info** on the toolbar shows the server, the driver, the session and the health of the selected data source.
 

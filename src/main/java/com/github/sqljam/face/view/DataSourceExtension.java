@@ -64,6 +64,26 @@ public interface DataSourceExtension {
         void open(Window owner, AppContext context);
 
         /**
+         * Whether the source runs SQL queries whose rows are exported like the rows of a table, e.g. the indexes
+         * of Elasticsearch and OpenSearch
+         */
+        default boolean isSqlSupported() {
+            return false;
+        }
+
+        /**
+         * A SQL editor of the source, null for sources which run no SQL
+         *
+         * @param number number of the editor in its title
+         * @param item collection whose rows the editor queries first, null for none
+         * @param export receives the rows of a query to export: a data source holding them, the SQL reading them
+         *               and the name of their table
+         */
+        default Tab openSqlTab(AppContext context, int number, SourceItem item, QueryExport export) {
+            return null;
+        }
+
+        /**
          * Metrics of the dashboard of the info of the source, null for sources without
          */
         default java.util.function.Supplier<com.github.sqljam.face.service.MetricSource> getDashboard() {
@@ -118,6 +138,19 @@ public interface DataSourceExtension {
     /**
      * Fields of a source of the kind below its name and type, shown by the data source form
      */
+    /**
+     * Export of the rows of a query of a source: the data source holding the rows, the SQL reading them, the name
+     * of their table in the target and a note of the export
+     */
+    @FunctionalInterface
+    interface QueryExport {
+
+        /**
+         * @param note shown with the query in the export wizard, e.g. that vectors are exported as text
+         */
+        void export(DbNode node, String sql, String tableName, String note);
+    }
+
     interface SourceForm {
 
         Node getNode();

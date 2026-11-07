@@ -17,6 +17,7 @@ package com.github.sqljam.face.view;
 
 import java.util.Collection;
 import java.util.Collections;
+import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -34,7 +35,7 @@ import javafx.scene.Node;
  * @Date: 17/10/2026
  * @Version 1.0.0
  */
-final class SqlEditor {
+public final class SqlEditor {
 
     private static final String[] KEYWORDS = {
             "ADD", "ALL", "ALTER", "AND", "ANY", "AS", "ASC", "BEGIN", "BETWEEN", "BY", "CALL", "CASE", "CAST",
@@ -56,39 +57,48 @@ final class SqlEditor {
                     + "|(?<KEYWORD>\\b(?i:" + String.join("|", KEYWORDS) + ")\\b)"
                     + "|(?<NUMBER>\\b\\d+(\\.\\d+)?\\b)");
 
+    private static final List<String> KEYWORD_LIST = List.of(KEYWORDS);
+
     private final CodeArea codeArea = new CodeArea();
     private final VirtualizedScrollPane<CodeArea> scrollPane = new VirtualizedScrollPane<>(codeArea);
 
-    SqlEditor() {
+    public SqlEditor() {
         codeArea.setId("sqlEditor");
         codeArea.getStyleClass().add("sql-editor");
         codeArea.setParagraphGraphicFactory(LineNumberFactory.get(codeArea));
         codeArea.textProperty().addListener((obs, oldText, text) -> codeArea.setStyleSpans(0, highlight(text)));
     }
 
-    Node getNode() {
+    public Node getNode() {
         return scrollPane;
     }
 
-    CodeArea getCodeArea() {
+    public CodeArea getCodeArea() {
         return codeArea;
     }
 
-    String getText() {
+    public String getText() {
         return codeArea.getText();
     }
 
-    void setText(String text) {
+    public void setText(String text) {
         codeArea.replaceText(text != null ? text : "");
         codeArea.moveTo(codeArea.getLength());
     }
 
-    String getSelectedText() {
+    public String getSelectedText() {
         return codeArea.getSelectedText();
     }
 
-    int getCaretPosition() {
+    public int getCaretPosition() {
         return codeArea.getCaretPosition();
+    }
+
+    /**
+     * Keywords of the highlighting, offered by the completion
+     */
+    static List<String> keywords() {
+        return KEYWORD_LIST;
     }
 
     /**

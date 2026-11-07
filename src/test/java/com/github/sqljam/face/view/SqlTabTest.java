@@ -344,4 +344,33 @@ class SqlTabTest {
         FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> results().getItems().size() == 1));
         assertEquals("0", FxTestSupport.call(() -> results().getItems().get(0).get(0)));
     }
+
+    /**
+     * Ctrl+Space lists the tables of the schema of the editor, a dot after an alias the columns of its table
+     */
+    @Test
+    void completesTablesAndColumns() {
+        open(schemaNode());
+        type("SELECT * FROM T_O", 17);
+        FxTestSupport.run(() -> tab.getEditor().getCodeArea().requestFocus());
+        FxTestSupport.run(() -> javafx.event.Event.fireEvent(tab.getEditor().getCodeArea(), new javafx.scene.input
+                .KeyEvent(javafx.scene.input.KeyEvent.KEY_PRESSED, " ", " ", javafx.scene.input.KeyCode.SPACE, false,
+                true, false, false)));
+        javafx.scene.control.ContextMenu menu = tab.getCompletion().getMenu();
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(menu::isShowing));
+        List<String> names = FxTestSupport.call(() -> menu.getItems().stream().map(item -> ((Label)
+                ((javafx.scene.control.CustomMenuItem) item).getContent()).getText()).toList());
+        assertTrue(names.contains("T_ONE"), names.toString());
+        FxTestSupport.run(() -> menu.getItems().stream().filter(item -> "T_ONE".equals(((Label)
+                ((javafx.scene.control.CustomMenuItem) item).getContent()).getText())).findFirst().orElseThrow()
+                .fire());
+        assertEquals("SELECT * FROM T_ONE", FxTestSupport.call(() -> tab.getEditor().getText()));
+
+        type("SELECT t. FROM T_ONE t", 9);
+        FxTestSupport.run(() -> tab.getCompletion().show());
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> menu.isShowing() && menu.getItems().stream()
+                .anyMatch(item -> "ID".equals(((Label) ((javafx.scene.control.CustomMenuItem) item).getContent())
+                        .getText()))));
+        FxTestSupport.run(menu::hide);
+    }
 }
