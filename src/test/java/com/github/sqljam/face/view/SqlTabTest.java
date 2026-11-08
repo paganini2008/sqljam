@@ -351,6 +351,9 @@ class SqlTabTest {
     @Test
     void completesTablesAndColumns() {
         open(schemaNode());
+        // The editor is in the window after the tab pane lays out its new tab, slow machines take a while
+        FxTestSupport.waitUntil(() -> FxTestSupport.call(() -> tab.getEditor().getCodeArea().localToScreen(0, 0)
+                != null));
         type("SELECT * FROM T_O", 17);
         FxTestSupport.run(() -> tab.getEditor().getCodeArea().requestFocus());
         FxTestSupport.run(() -> javafx.event.Event.fireEvent(tab.getEditor().getCodeArea(), new javafx.scene.input

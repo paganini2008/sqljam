@@ -16,6 +16,7 @@
 package com.github.sqljam.face.view;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -135,5 +136,31 @@ class SqlCompletionTest {
             completion.insert(SqlCompletion.contextAt(editor.getText(), 3), "SELECT");
         });
         assertEquals("SELECT", FxTestSupport.call(editor::getText));
+    }
+
+    /**
+     * An editor which is not shown, e.g. its tab is closed while the names are read, opens no menu
+     */
+    @Test
+    void showsNothingForEditorNotShown() {
+        AtomicInteger tableReads = new AtomicInteger();
+        SqlEditor hidden = FxTestSupport.call(SqlEditor::new);
+        SqlCompletion completion = FxTestSupport.call(() -> SqlCompletion.attach(hidden, new SqlCompletion.Source() {
+            @Override
+            public List<String> tables() {
+                tableReads.incrementAndGet();
+                return List.of("orders");
+            }
+
+            @Override
+            public List<String> columns(String table) {
+                return List.of();
+            }
+        }));
+        FxTestSupport.run(completion::show);
+        FxTestSupport.waitUntil(() -> tableReads.get() == 1);
+        // After the names are handed to the FX thread
+        org.testfx.util.WaitForAsyncUtils.waitForFxEvents();
+        assertFalse(FxTestSupport.call(completion.getMenu()::isShowing));
     }
 }
