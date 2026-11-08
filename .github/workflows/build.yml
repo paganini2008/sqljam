@@ -1,8 +1,9 @@
 # Builds SqlJam. The ci environment runs the integration tests of H2, SQLite, DuckDB and Access, and of the main
 # database servers where they run in Docker (.github/workflows/databases.sh), the others are skipped.
 #
-#   check      pull requests: one Linux build with all tests against PostgreSQL, MySQL, Oracle, SQL Server, Qdrant
-#              and Weaviate in Docker, the check of merging
+#   check      pull requests: all tests in five shards at the same time on Linux, against PostgreSQL, MySQL, Oracle,
+#              SQL Server, Qdrant and Weaviate in Docker, the check of merging
+#   coverage   pull requests: the line coverage of all shards together
 #   platforms  tags v* and manual runs (Actions > build > Run workflow): Windows, macOS and Linux build, start the
 #              runnable jar and take screenshots, packages for download (src/packaging/package.sh)
 #   release    tags v*: a GitHub release with the packages of every platform and their SHA-256 checksums
@@ -26,10 +27,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The tests of a pull request run in shards at the same time, like the database test matrices of mainstream
+  # projects. Each shard of integration tests starts all databases, so imports between any two of them are
+  # tested as before. Shards are balanced by the time of their tests (about 3 to 5 minutes each), it-rest takes
+  # the integration tests of packages added later. The tests run as before (mvn verify -Dit.env=local) on a
+  # computer, these shards are for pull requests only.
   check:
     if: github.event_name == 'pull_request'
+    name: check (${{ matrix.shard }})
+    strategy:
+      # The failures of all shards at once
+      fail-fast: false
+      matrix:
+        include:
+          - shard: unit-ui
+            tests: '**/*Test'
+          - shard: it-cross
+            tests: 'com/github/sqljam/it/**/*IT,com/github/sqljam/vdb/**/*IT,com/github/sqljam/face/**/*IT'
+            databases: true
+          - shard: it-oracle
+            tests: 'com/github/sqljam/oracle/**/*IT,com/github/sqljam/sqlserver/**/*IT,com/github/sqljam/access/**/*IT'
+            databases: true
+          - shard: it-pg
+            tests: 'com/github/sqljam/postgresql/**/*IT,com/github/sqljam/mysql/**/*IT,com/github/sqljam/h2/**/*IT'
+            databases: true
+          - shard: it-rest
+            tests: >-
+              **/*IT,!com/github/sqljam/it/**,!com/github/sqljam/vdb/**,!com/github/sqljam/face/**,
+              !com/github/sqljam/oracle/**,!com/github/sqljam/sqlserver/**,!com/github/sqljam/access/**,
+              !com/github/sqljam/postgresql/**,!com/github/sqljam/mysql/**,!com/github/sqljam/h2/**
+            databases: true
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -45,20 +74,74 @@ jobs:
         shell: bash
         run: |
           for attempt in 1 2 3; do
-            ./mvnw -B -ntp dependency:go-offline dependency:unpack@unpack-javafx && exit 0
+            ./mvnw -B -ntp dependency:go-offline && exit 0
             sleep 30
           done
           exit 1
 
-      # The databases start while SqlJam is compiled
-      - name: Build and test against the main databases (UI tests run headless)
+      # The databases start while SqlJam is compiled. No packages, they are built for tags
+      - name: Test ${{ matrix.shard }} (UI tests run headless)
+        env:
+          TESTS: ${{ matrix.tests }}
         run: |
-          bash .github/workflows/databases.sh > databases.log 2>&1 &
-          DATABASES=$!
+          if [ "${{ matrix.databases }}" = true ]; then
+            bash .github/workflows/databases.sh > databases.log 2>&1 &
+            DATABASES=$!
+          fi
           ./mvnw -B -ntp test-compile
-          wait $DATABASES || { cat databases.log; exit 1; }
-          cat databases.log
-          ./mvnw -B -ntp verify -Dit.env=ci -Djacoco.haltOnFailure=false
+          if [ -n "$DATABASES" ]; then
+            wait $DATABASES || { cat databases.log; exit 1; }
+            cat databases.log
+          fi
+          ./mvnw -B -ntp test -Dit.env=ci -Dtest="$(echo "$TESTS" | tr -d ' ')" \
+            -Dsurefire.failIfNoSpecifiedTests=false
+
+      # The coverage data of the shard and its classes
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.shard }}
+          path: |
+            target/jacoco.exec
+            target/classes
+          if-no-files-found: error
+
+  # The line coverage of all shards together, checked like mvn verify does (at least 90%)
+  coverage:
+    if: github.event_name == 'pull_request'
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: shards
+
+      # The JaCoCo command line of the version of jacoco-maven-plugin in pom.xml merges the data of the shards
+      - name: Merge and check the coverage
+        run: |
+          JACOCO=$(grep -A1 '<artifactId>jacoco-maven-plugin</artifactId>' pom.xml | grep -o '[0-9][0-9.]*[0-9]' | head -1)
+          ./mvnw -B -ntp dependency:copy -Dartifact=org.jacoco:org.jacoco.cli:$JACOCO:jar:nodeps \
+            -DoutputDirectory=target/jacoco-cli
+          cp -r shards/coverage-unit-ui/classes target/classes
+          java -jar target/jacoco-cli/org.jacoco.cli-$JACOCO-nodeps.jar merge shards/*/jacoco.exec \
+            --destfile target/jacoco.exec
+          ./mvnw -B -ntp jacoco:report@report jacoco:check@check -Djacoco.haltOnFailure=false
+          awk -F, 'NR > 1 { missed += $8; covered += $9 } END { printf "Line coverage: %.2f%%\n",
+            100 * covered / (missed + covered) }' target/site/jacoco/jacoco.csv | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: target/site/jacoco/
 
   platforms:
     if: github.event_name != 'pull_request'
@@ -85,6 +168,36 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
+
+      # jpackage builds the msi installer with the WiX Toolset 3.14.1, the binaries are used without installing them.
+      # Downloaded before the build, from NuGet and else from the release of WiX on GitHub (it timed out at times),
+      # each checked by its SHA-256
+      - name: Install the WiX Toolset for the msi installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $wix = Join-Path $env:RUNNER_TEMP "wix"
+          $sources = @(
+            @{ Uri = "https://www.nuget.org/api/v2/package/wix/3.14.1"; Bin = "tools";
+               Sha256 = "15d50463c73dce31fbea5440ac33af47e92d54d4188166d207e9e39577b8fe0f" },
+            @{ Uri = "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip"; Bin = ".";
+               Sha256 = "6ac824e1642d6f7277d0ed7ea09411a508f6116ba6fae0aa5f2c7daa2ff43d31" })
+          foreach ($source in $sources) {
+            try {
+              Invoke-WebRequest -Uri $source.Uri -OutFile "$wix.zip" -MaximumRetryCount 3 -RetryIntervalSec 15
+              $hash = (Get-FileHash -Path "$wix.zip" -Algorithm SHA256).Hash
+              if ($hash -ne $source.Sha256) { throw "SHA-256 $hash is not $($source.Sha256)" }
+              Expand-Archive -Path "$wix.zip" -DestinationPath $wix -Force
+              $bin = Join-Path $wix $source.Bin
+              if (Test-Path (Join-Path $bin "candle.exe")) {
+                $bin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+                exit 0
+              }
+            } catch {
+              Write-Warning "$($source.Uri): $_"
+            }
+          }
+          exit 1
 
       # Maven Central drops connections at times: the dependencies and plugins of the build are downloaded first
       # and again after a failure, not when the tests ran already
@@ -136,17 +249,6 @@ jobs:
           kill $PID 2>/dev/null || taskkill //F //PID $PID 2>/dev/null || true
           grep -q ":: SqlJam ::" run.log
           if grep -E "Exception|ERROR" run.log; then exit 1; fi
-
-      # jpackage builds the msi installer with the WiX Toolset 3, the binaries are used without installing them
-      - name: Install the WiX Toolset for the msi installer
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $wix = Join-Path $env:RUNNER_TEMP "wix"
-          Invoke-WebRequest -Uri "https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip" `
-            -OutFile "$wix.zip" -MaximumRetryCount 5 -RetryIntervalSec 15
-          Expand-Archive -Path "$wix.zip" -DestinationPath $wix
-          $wix | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
       # Packages of a tag are named by it (v1.0.0-rc1: SqlJam-1.0.0-rc1-...), of a manual run by its version input,
       # others by the version of pom.xml. Pre-releases have no msi installer.
