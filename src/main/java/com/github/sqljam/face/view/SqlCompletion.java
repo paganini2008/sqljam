@@ -219,7 +219,11 @@ public final class SqlCompletion {
         if (caret.isPresent()) {
             menu.show(area, caret.get().getMinX(), caret.get().getMaxY());
         } else {
+            // No place on the screen while the editor is not shown, e.g. its tab is closed meanwhile
             Bounds bounds = area.localToScreen(area.getBoundsInLocal());
+            if (bounds == null) {
+                return;
+            }
             menu.show(area, bounds.getMinX(), bounds.getMinY());
         }
         // The first suggestion is chosen by Enter
